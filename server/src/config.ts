@@ -1,0 +1,13 @@
+export const config = {
+  port: parseInt(process.env.PORT || '3001', 10),
+  databaseUrl: process.env.DATABASE_URL || 'postgres://oblihub:changeme@localhost:5432/oblihub',
+  sessionSecret: process.env.SESSION_SECRET || 'change-this',
+  clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  nodeEnv: process.env.NODE_ENV || 'development',
+  defaultAdminUsername: process.env.DEFAULT_ADMIN_USERNAME || 'admin',
+  defaultAdminPassword: process.env.DEFAULT_ADMIN_PASSWORD || 'admin123',
+  dockerSocket: process.env.DOCKER_SOCKET || '/var/run/docker.sock',
+  discoveryIntervalMs: parseInt(process.env.DISCOVERY_INTERVAL || '30000', 10),
+  defaultCheckIntervalSeconds: parseInt(process.env.DEFAULT_CHECK_INTERVAL || '60', 10),
+  appName: process.env.APP_NAME || 'Oblihub',
+};

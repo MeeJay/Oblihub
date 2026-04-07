@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --c-bg-primary: 13 17 23;
+  --c-bg-secondary: 22 27 34;
+  --c-bg-tertiary: 28 35 51;
+  --c-bg-hover: 33 38 45;
+  --c-border: 48 54 61;
+  --c-text-primary: 230 237 243;
+  --c-text-secondary: 139 148 158;
+  --c-text-muted: 110 118 129;
+  --c-status-up: 46 160 67;
+  --c-status-up-bg: 13 40 24;
+  --c-status-down: 248 81 73;
+  --c-status-down-bg: 61 20 24;
+  --c-status-pending: 210 153 34;
+  --c-status-pending-bg: 46 33 17;
+  --c-accent: 88 166 255;
+  --c-accent-hover: 121 192 255;
+}
+
+@layer base {
+  body {
+    @apply bg-bg-primary text-text-primary antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+}

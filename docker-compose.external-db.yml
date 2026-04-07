@@ -1,0 +1,31 @@
+# Use this compose file if you already have PostgreSQL running.
+# Usage: docker compose -f docker-compose.external-db.yml up -d
+#
+# Required .env variables:
+#   DATABASE_URL=postgres://oblihub:<password>@<host>:5432/oblihub
+#   SESSION_SECRET=<random-string>
+
+services:
+  server:
+    image: meejay/oblihub-server:${OBLIHUB_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: ${DATABASE_URL}
+      SESSION_SECRET: ${SESSION_SECRET}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost}
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
+      DOCKER_SOCKET: /var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  client:
+    image: meejay/oblihub-client:${OBLIHUB_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "${LISTEN_PORT:-3100}:80"
