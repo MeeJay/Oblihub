@@ -368,7 +368,7 @@ function SystemInfoSection() {
         <div>
           <span className="text-xs text-text-muted">Docker Version</span>
           <p className="text-sm text-text-primary mt-1">
-            {info?.dockerVersion?.Version || info?.dockerVersion || 'N/A'}
+            {info?.dockerVersion?.version || info?.dockerVersion?.Version || 'N/A'}
           </p>
         </div>
         <div>
