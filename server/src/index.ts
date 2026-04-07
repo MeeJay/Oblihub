@@ -9,6 +9,7 @@ import { authService } from './services/auth.service';
 import { setUpdateServiceIO } from './services/update.service';
 import { startDiscoveryWorker, stopDiscoveryWorker } from './workers/DiscoveryWorker';
 import { schedulerService } from './services/scheduler.service';
+import { dockerService } from './services/docker.service';
 
 async function main() {
   logger.info('Running database migrations...');
@@ -16,6 +17,9 @@ async function main() {
   logger.info('Migrations complete');
 
   await authService.ensureDefaultAdmin(config.defaultAdminUsername, config.defaultAdminPassword);
+
+  // Clean up old containers left from self-updates
+  await dockerService.cleanupOldSelfContainers();
 
   const app = createApp();
   const server = http.createServer(app);

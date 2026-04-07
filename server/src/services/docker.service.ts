@@ -203,8 +203,33 @@ export const dockerService = {
     const docker = getDocker();
     const container = docker.getContainer(dockerId);
     logger.info({ dockerId }, 'Restarting container...');
-    await container.restart({ t: 10 });
+    await container.restart();
     logger.info({ dockerId }, 'Container restarted');
+  },
+
+  /**
+   * Clean up old renamed containers left over from a self-update.
+   * Called on startup. Finds containers whose name contains "-old-" and removes them.
+   */
+  async cleanupOldSelfContainers(): Promise<void> {
+    try {
+      const docker = getDocker();
+      const containers = await docker.listContainers({ all: true });
+      for (const c of containers) {
+        const name = (c.Names?.[0] || '').replace(/^\//, '');
+        if (name.match(/-old-\d+$/)) {
+          logger.info({ name, id: c.Id.substring(0, 12), state: c.State }, 'Cleaning up old self-update container');
+          const container = docker.getContainer(c.Id);
+          try {
+            if (c.State === 'running') await container.stop({ t: 5 });
+          } catch { /* already stopped */ }
+          await container.remove({ force: true });
+          logger.info({ name }, 'Old container removed');
+        }
+      }
+    } catch (err) {
+      logger.warn(err, 'Failed to clean up old self-update containers');
+    }
   },
 
   /** Check if Docker socket is accessible */
@@ -318,15 +343,11 @@ export const dockerService = {
     await newContainer.start();
     logger.info('Self-update: new container started. Shutting down old instance...');
 
-    // 7. Schedule self-removal: the new container will clean up the old renamed one
-    // (or Docker's restart policy won't restart us since we exit cleanly)
-    // Give a small delay for the new container to fully boot
+    // 7. Exit — the old container (us) stops. The new container cleans up
+    // old renamed containers on startup via cleanupOldSelfContainers().
     setTimeout(() => {
-      // Try to remove our old (renamed) container from the new one's perspective
-      // This runs before we die, but if it fails, the old container just stays stopped
-      self.remove({ force: true }).catch(() => {});
       process.exit(0);
-    }, 3000);
+    }, 2000);
   },
 
   /** Get Docker engine version info */

@@ -52,16 +52,19 @@ export const stackController = {
       const id = parseInt(req.params.id, 10);
       const stack = await stackService.getById(id);
       if (!stack) throw new AppError(404, 'Stack not found');
-      // Restart all containers in the stack sequentially
+      // Run restart in background — containers can take 10+ seconds each
       const { dockerService } = await import('../services/docker.service');
-      for (const c of stack.containers) {
-        try {
-          await dockerService.restartContainer(c.dockerId);
-        } catch (err) {
-          logger.error({ containerId: c.id, err }, 'Failed to restart container');
+      (async () => {
+        for (const c of stack.containers) {
+          try {
+            await dockerService.restartContainer(c.dockerId);
+            logger.info({ containerName: c.containerName, dockerId: c.dockerId }, 'Container restarted');
+          } catch (err) {
+            logger.error({ containerName: c.containerName, dockerId: c.dockerId, err }, 'Failed to restart container');
+          }
         }
-      }
-      res.json({ success: true, message: 'Stack restarted' });
+      })().catch(() => {});
+      res.json({ success: true, message: 'Restart started' });
     } catch (err) { next(err); }
   },
 

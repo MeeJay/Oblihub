@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { LayoutDashboard, Settings, User, LogOut } from 'lucide-react';
+import { LayoutDashboard, Settings, User, LogOut, ArrowLeftRight } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
+import { settingsApi } from '@/api/settings.api';
 import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { StackDetailPage } from '@/pages/StackDetailPage';
@@ -32,14 +33,36 @@ function SidebarLink({ href, icon: Icon, label, active }: { href: string; icon: 
   );
 }
 
+interface ConnectedApp {
+  appType: string;
+  name: string;
+  baseUrl: string;
+}
+
 function AppLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
   const isAdmin = user?.role === 'admin';
 
+  const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
+  const [obligateUrl, setObligateUrl] = useState<string | null>(null);
+
+  // Fetch connected apps + Obligate URL for cross-app nav
+  useEffect(() => {
+    fetch('/api/auth/connected-apps', { credentials: 'include' })
+      .then(r => r.json())
+      .then((d: { success: boolean; data?: ConnectedApp[] }) => {
+        if (d.success && d.data) setConnectedApps(d.data.filter(a => a.appType !== 'oblihub'));
+      })
+      .catch(() => {});
+
+    settingsApi.getAll()
+      .then(cfg => setObligateUrl(cfg.obligate_url ?? null))
+      .catch(() => {});
+  }, []);
+
   const displayName = user?.displayName || user?.username || 'User';
-  // Strip og_ prefix for SSO users
   const cleanName = displayName.startsWith('og_') ? displayName.slice(3) : displayName;
 
   const handleLogout = async () => {
@@ -62,6 +85,23 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             <SidebarLink href="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} />
           )}
         </nav>
+
+        {/* Cross-app navigation */}
+        {obligateUrl && connectedApps.length > 0 && (
+          <div className="px-3 pb-2 space-y-1">
+            <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3 mb-1">Apps</div>
+            {connectedApps.map(app => (
+              <button
+                key={app.appType}
+                onClick={() => { window.location.href = `${app.baseUrl}/auth/sso-redirect`; }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg text-text-secondary hover:text-accent hover:bg-accent/10 transition-colors"
+              >
+                <ArrowLeftRight size={12} />
+                {app.name}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Bottom section: profile + logout */}
         <div className="p-3 border-t border-border space-y-1">
