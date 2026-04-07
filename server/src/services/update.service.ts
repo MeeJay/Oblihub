@@ -2,6 +2,7 @@ import { db } from '../db';
 import { dockerService } from './docker.service';
 import { registryService } from './registry.service';
 import { stackService } from './stack.service';
+import { appConfigService } from './appConfig.service';
 import { logger } from '../utils/logger';
 import type { Server as SocketIOServer } from 'socket.io';
 import { SOCKET_EVENTS } from '@oblihub/shared';
@@ -100,8 +101,9 @@ export const updateService = {
       _io.emit(SOCKET_EVENTS.STACK_STATUS_CHANGED, { stackId });
     }
 
-    // Auto-update if enabled
-    if (stack.autoUpdate) {
+    // Auto-update: per-stack toggle OR global toggle
+    const globalAutoUpdate = (await appConfigService.get('global_auto_update')) === 'true';
+    if (stack.autoUpdate || globalAutoUpdate) {
       const updatedStack = await stackService.getById(stackId);
       const hasUpdates = updatedStack?.containers.some(c => c.status === 'update_available');
       if (hasUpdates) {

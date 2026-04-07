@@ -89,19 +89,61 @@ export function StackDetailPage() {
 
       {/* Config */}
       <div className="rounded-xl border border-border bg-bg-secondary mb-6 p-4">
-        <h2 className="text-sm font-semibold text-text-secondary mb-3 flex items-center gap-1.5"><Settings2 size={14} /> Configuration</h2>
-        <div className="grid grid-cols-3 gap-4 text-sm">
-          <div>
-            <span className="text-text-muted">Check Interval</span>
-            <div className="text-text-primary font-medium">{stack.checkInterval}s</div>
+        <h2 className="text-sm font-semibold text-text-secondary mb-4 flex items-center gap-1.5"><Settings2 size={14} /> Configuration</h2>
+        <div className="space-y-4">
+          {/* Check Interval */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-text-primary">Check Interval</div>
+              <div className="text-xs text-text-muted">How often to check for updates</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="number" min={10} max={86400} value={stack.checkInterval}
+                onChange={async (e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (val >= 10) {
+                    const updated = await stacksApi.update(stack.id, { checkInterval: val });
+                    setStack(updated);
+                  }
+                }}
+                onBlur={load}
+                className="w-24 rounded-lg border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary text-right focus:outline-none focus:ring-1 focus:ring-accent" />
+              <span className="text-xs text-text-muted">seconds</span>
+            </div>
           </div>
-          <div>
-            <span className="text-text-muted">Auto-Update</span>
-            <div className={`font-medium ${stack.autoUpdate ? 'text-status-up' : 'text-text-muted'}`}>{stack.autoUpdate ? 'Enabled' : 'Disabled'}</div>
+
+          {/* Auto-Update toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-text-primary">Auto-Update</div>
+              <div className="text-xs text-text-muted">Automatically pull and recreate containers when updates are detected</div>
+            </div>
+            <button
+              onClick={async () => {
+                const updated = await stacksApi.update(stack.id, { autoUpdate: !stack.autoUpdate });
+                setStack(updated);
+                toast.success(updated.autoUpdate ? 'Auto-update enabled' : 'Auto-update disabled');
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.autoUpdate ? 'bg-accent' : 'bg-bg-tertiary border border-border'}`}>
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.autoUpdate ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
           </div>
-          <div>
-            <span className="text-text-muted">Monitoring</span>
-            <div className={`font-medium ${stack.enabled ? 'text-status-up' : 'text-status-down'}`}>{stack.enabled ? 'Active' : 'Paused'}</div>
+
+          {/* Monitoring toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-text-primary">Monitoring</div>
+              <div className="text-xs text-text-muted">Enable or pause update checks for this stack</div>
+            </div>
+            <button
+              onClick={async () => {
+                const updated = await stacksApi.update(stack.id, { enabled: !stack.enabled });
+                setStack(updated);
+                toast.success(updated.enabled ? 'Monitoring enabled' : 'Monitoring paused');
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.enabled ? 'bg-status-up' : 'bg-bg-tertiary border border-border'}`}>
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
           </div>
         </div>
       </div>

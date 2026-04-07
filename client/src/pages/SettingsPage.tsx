@@ -94,6 +94,24 @@ function DefaultSettingsSection({ config, setConfig, onSave, saving }: {
           className="w-48 rounded-md border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent" />
         <p className="text-xs text-text-muted mt-1">How often stacks are checked for updates (minimum 10s)</p>
       </div>
+
+      {/* Global Auto-Update */}
+      <div className="mb-4 flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-3">
+        <div>
+          <div className="text-sm font-medium text-text-primary">Global Auto-Update</div>
+          <div className="text-xs text-text-muted">Automatically update ALL stacks when new images are detected</div>
+          <div className="text-xs text-status-down mt-1 font-medium">Not recommended — prefer per-stack auto-update</div>
+        </div>
+        <button
+          onClick={() => {
+            const current = config.global_auto_update === 'true';
+            setConfig({ ...config, global_auto_update: current ? 'false' : 'true' });
+          }}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ml-4 ${config.global_auto_update === 'true' ? 'bg-status-down' : 'bg-bg-hover border border-border'}`}>
+          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${config.global_auto_update === 'true' ? 'translate-x-6' : 'translate-x-1'}`} />
+        </button>
+      </div>
+
       <button onClick={onSave} disabled={saving}
         className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50 transition-colors">
         <Save size={14} /> {saving ? 'Saving...' : 'Save'}
