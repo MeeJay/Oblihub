@@ -264,10 +264,12 @@ export const dockerService = {
   },
 
   /**
-   * Self-update: recreate our own container with a new image.
-   * Strategy: rename old → create new with original name → start new → exit process.
-   * The old container (us) dies when process.exit() runs; Docker won't restart it
-   * because we renamed it (restart policy stays but the new container has the original name).
+   * Self-update: pull new image, then use a helper container with docker CLI
+   * to run `docker compose up -d` on the host. This preserves compose networking.
+   *
+   * Strategy: spawn a short-lived `docker/cli` container that mounts the Docker
+   * socket and the compose project dir, then runs `docker compose up -d --no-deps <service>`.
+   * This container outlives us (our container gets recreated by compose).
    */
   async selfUpdate(newImage: string, newTag: string): Promise<void> {
     const selfId = this.getSelfContainerId();
@@ -276,78 +278,55 @@ export const dockerService = {
     const docker = getDocker();
     const self = docker.getContainer(selfId);
     const info = await self.inspect();
-    const originalName = info.Name.replace(/^\//, '');
-    const tempName = `${originalName}-old-${Date.now()}`;
+    const labels = info.Config.Labels || {};
+    const composeProject = labels['com.docker.compose.project'] || null;
+    const composeWorkdir = labels['com.docker.compose.project.working_dir'] || null;
+    const composeService = labels['com.docker.compose.service'] || 'server';
 
-    logger.info({ selfId, originalName, newImage: `${newImage}:${newTag}` }, 'Self-update: starting...');
+    logger.info({ selfId, composeProject, composeService, newImage: `${newImage}:${newTag}` }, 'Self-update: starting...');
 
-    // 1. Pull the new image first (while we're still running)
+    // 1. Pull the new image (while we're still running)
     await this.pullImage(newImage, newTag);
+    logger.info('Self-update: image pulled');
 
-    // 2. Rename ourselves so the original name is free
-    await self.rename({ name: tempName });
-    logger.info({ oldName: originalName, tempName }, 'Self-update: renamed self');
-
-    // 3. Build create options from our own config
-    const createOpts: Docker.ContainerCreateOptions = {
-      name: originalName,
-      Image: `${newImage}:${newTag}`,
-      Cmd: info.Config.Cmd || undefined,
-      Entrypoint: info.Config.Entrypoint || undefined,
-      Env: info.Config.Env || [],
-      Labels: info.Config.Labels || {},
-      ExposedPorts: info.Config.ExposedPorts || {},
-      WorkingDir: info.Config.WorkingDir || undefined,
-      User: info.Config.User || undefined,
-      HostConfig: info.HostConfig as Docker.HostConfig,
-      NetworkingConfig: undefined as unknown as Record<string, unknown>,
-    };
-
-    // Rebuild network config
-    const networks = info.NetworkSettings?.Networks;
-    if (networks && Object.keys(networks).length > 0) {
-      const networkNames = Object.keys(networks);
-      const primaryNet = networkNames[0];
-      const primaryConfig = networks[primaryNet];
-      createOpts.NetworkingConfig = {
-        EndpointsConfig: {
-          [primaryNet]: {
-            Aliases: primaryConfig.Aliases || [],
-            IPAMConfig: primaryConfig.IPAMConfig || undefined,
-          } as Docker.EndpointSettings,
-        },
-      };
+    if (!composeProject || !composeWorkdir) {
+      throw new Error('Self-update requires a Docker Compose project. Update manually with: docker compose pull && docker compose up -d');
     }
 
-    // 4. Create the replacement container
-    const newContainer = await docker.createContainer(createOpts);
-    logger.info({ newId: newContainer.id.substring(0, 12) }, 'Self-update: new container created');
+    // 2. Spawn a helper container that runs docker compose up -d
+    // The helper mounts the Docker socket and the compose project dir,
+    // runs the compose command, then exits. Because it's a separate container,
+    // it survives the recreation of our own container.
+    const helperImage = 'docker:cli';
 
-    // 5. Connect additional networks
-    if (networks) {
-      const networkNames = Object.keys(networks);
-      for (const netName of networkNames.slice(1)) {
-        try {
-          const network = docker.getNetwork(netName);
-          await network.connect({
-            Container: newContainer.id,
-            EndpointConfig: {
-              Aliases: networks[netName].Aliases || [],
-            } as Docker.EndpointSettings,
-          });
-        } catch { /* best effort */ }
-      }
+    // Ensure the helper image is available
+    try {
+      await docker.getImage(helperImage).inspect();
+    } catch {
+      logger.info('Self-update: pulling docker:cli helper image...');
+      await this.pullImage('docker', 'cli');
     }
 
-    // 6. Start the new container
-    await newContainer.start();
-    logger.info('Self-update: new container started. Shutting down old instance...');
+    const helperContainer = await docker.createContainer({
+      Image: helperImage,
+      Cmd: ['sh', '-c', `sleep 2 && docker compose -p ${composeProject} up -d --no-deps ${composeService}`],
+      HostConfig: {
+        Binds: [
+          '/var/run/docker.sock:/var/run/docker.sock',
+          `${composeWorkdir}:${composeWorkdir}`,
+        ],
+        AutoRemove: true,
+      } as Docker.HostConfig,
+      WorkingDir: composeWorkdir,
+    });
 
-    // 7. Exit — the old container (us) stops. The new container cleans up
-    // old renamed containers on startup via cleanupOldSelfContainers().
+    await helperContainer.start();
+    logger.info('Self-update: helper container started, will recreate us via compose. Exiting...');
+
+    // 3. Exit — the helper container will docker compose up -d us with proper networking
     setTimeout(() => {
       process.exit(0);
-    }, 2000);
+    }, 1000);
   },
 
   /** Get Docker engine version info */

@@ -37,8 +37,14 @@ export function createApp() {
 
   app.use(apiLimiter);
 
-  app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', app: 'oblihub' });
+  app.get('/health', async (_req, res) => {
+    try {
+      const { db } = await import('./db');
+      await db.raw('SELECT 1');
+      res.json({ status: 'ok', app: 'oblihub' });
+    } catch {
+      res.status(503).json({ status: 'error', app: 'oblihub', error: 'database unreachable' });
+    }
   });
 
   // Obligate SSO routes — browser redirects at /auth, API calls at /api/auth
