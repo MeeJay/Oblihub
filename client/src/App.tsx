@@ -48,7 +48,6 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
   const [obligateUrl, setObligateUrl] = useState<string | null>(null);
 
-  // Fetch connected apps + Obligate URL for cross-app nav
   useEffect(() => {
     fetch('/api/auth/connected-apps', { credentials: 'include' })
       .then(r => r.json())
@@ -71,57 +70,65 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex h-screen">
-      <aside className="w-56 shrink-0 border-r border-border bg-bg-secondary flex flex-col">
-        {/* Logo */}
-        <div className="flex h-14 items-center px-4 border-b border-border">
+    <div className="flex h-screen flex-col">
+      {/* Top header bar */}
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-bg-secondary px-4">
+        <div className="flex items-center gap-3">
           <img src="/logo.svg" alt="Oblihub" className="h-10 w-10 rounded-lg" />
+
+          {/* Cross-app switch buttons */}
+          {obligateUrl && connectedApps.length > 0 && connectedApps.map(app => (
+            <button
+              key={app.appType}
+              onClick={() => { window.location.href = `${app.baseUrl}/auth/sso-redirect`; }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold border transition-all
+                text-accent bg-accent/10 border-accent/30
+                hover:text-white hover:bg-accent/20 hover:border-accent/60"
+            >
+              <ArrowLeftRight size={12} />
+              {app.name}
+            </button>
+          ))}
         </div>
 
-        {/* Nav links */}
-        <nav className="flex-1 p-3 space-y-1">
-          <SidebarLink href="/" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/' || location.pathname.startsWith('/stack/')} />
-          {isAdmin && (
-            <SidebarLink href="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} />
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-text-secondary">{cleanName}</span>
+          {user?.role === 'admin' && (
+            <span className="text-xs bg-accent/20 text-accent px-2 py-0.5 rounded">admin</span>
           )}
-        </nav>
-
-        {/* Cross-app navigation */}
-        {obligateUrl && connectedApps.length > 0 && (
-          <div className="px-3 pb-2 space-y-1">
-            <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3 mb-1">Apps</div>
-            {connectedApps.map(app => (
-              <button
-                key={app.appType}
-                onClick={() => { window.location.href = `${app.baseUrl}/auth/sso-redirect`; }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg text-text-secondary hover:text-accent hover:bg-accent/10 transition-colors"
-              >
-                <ArrowLeftRight size={12} />
-                {app.name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Bottom section: profile + logout */}
-        <div className="p-3 border-t border-border space-y-1">
-          <button onClick={() => navigate('/profile')}
-            className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
-              location.pathname === '/profile'
-                ? 'bg-accent/10 text-accent font-medium'
-                : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
-            }`}>
-            <User size={16} />
-            <span className="truncate">{cleanName}</span>
-          </button>
           <button onClick={handleLogout}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:text-status-down hover:bg-status-down/10 rounded-lg transition-colors">
-            <LogOut size={16} />
-            Logout
+            className="rounded-md p-1.5 text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
+            title="Logout">
+            <LogOut size={18} />
           </button>
         </div>
-      </aside>
-      <main className="flex-1 overflow-auto">{children}</main>
+      </header>
+
+      {/* Main content with sidebar */}
+      <div className="flex flex-1 overflow-hidden">
+        <aside className="w-52 shrink-0 border-r border-border bg-bg-secondary flex flex-col">
+          <nav className="flex-1 p-3 space-y-1">
+            <SidebarLink href="/" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/' || location.pathname.startsWith('/stack/')} />
+            {isAdmin && (
+              <SidebarLink href="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} />
+            )}
+          </nav>
+
+          <div className="p-3 border-t border-border">
+            <button onClick={() => navigate('/profile')}
+              className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
+                location.pathname === '/profile'
+                  ? 'bg-accent/10 text-accent font-medium'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
+              }`}>
+              <User size={16} />
+              <span className="truncate">{cleanName}</span>
+            </button>
+          </div>
+        </aside>
+
+        <main className="flex-1 overflow-auto">{children}</main>
+      </div>
     </div>
   );
 }
