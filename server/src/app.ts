@@ -41,16 +41,9 @@ export function createApp() {
     res.json({ status: 'ok', app: 'oblihub' });
   });
 
-  // Obligate SSO routes (mounted at /auth, before /api)
+  // Obligate SSO routes — browser redirects at /auth, API calls at /api/auth
   app.use('/auth', obligateCallbackRoutes);
-
-  // Also expose SSO config under /api/auth for the client
-  app.get('/api/auth/sso-config', async (_req, res) => {
-    try {
-      const ssoConfig = await obligateService.getSsoConfig();
-      res.json({ success: true, data: ssoConfig });
-    } catch { res.json({ success: true, data: { obligateUrl: null, obligateReachable: false, obligateEnabled: false } }); }
-  });
+  app.use('/api/auth', obligateCallbackRoutes);
 
   app.use('/api', routes);
   app.use(errorHandler);
