@@ -209,6 +209,117 @@ export const dockerService = {
     }
   },
 
+  /**
+   * Get our own container ID by reading /proc/self/cgroup or HOSTNAME env.
+   * Returns null if not running in Docker.
+   */
+  getSelfContainerId(): string | null {
+    // Docker sets HOSTNAME to the container ID (first 12 chars)
+    const hostname = process.env.HOSTNAME;
+    if (hostname && /^[a-f0-9]{12,}$/.test(hostname)) {
+      return hostname.substring(0, 12);
+    }
+    // Fallback: read from cgroup
+    try {
+      const fs = require('fs');
+      const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8') as string;
+      const match = cgroup.match(/docker[/-]([a-f0-9]{12,64})/);
+      if (match) return match[1].substring(0, 12);
+    } catch { /* not in Docker */ }
+    return null;
+  },
+
+  /**
+   * Self-update: recreate our own container with a new image.
+   * Strategy: rename old → create new with original name → start new → exit process.
+   * The old container (us) dies when process.exit() runs; Docker won't restart it
+   * because we renamed it (restart policy stays but the new container has the original name).
+   */
+  async selfUpdate(newImage: string, newTag: string): Promise<void> {
+    const selfId = this.getSelfContainerId();
+    if (!selfId) throw new Error('Cannot determine own container ID — not running in Docker?');
+
+    const docker = getDocker();
+    const self = docker.getContainer(selfId);
+    const info = await self.inspect();
+    const originalName = info.Name.replace(/^\//, '');
+    const tempName = `${originalName}-old-${Date.now()}`;
+
+    logger.info({ selfId, originalName, newImage: `${newImage}:${newTag}` }, 'Self-update: starting...');
+
+    // 1. Pull the new image first (while we're still running)
+    await this.pullImage(newImage, newTag);
+
+    // 2. Rename ourselves so the original name is free
+    await self.rename({ name: tempName });
+    logger.info({ oldName: originalName, tempName }, 'Self-update: renamed self');
+
+    // 3. Build create options from our own config
+    const createOpts: Docker.ContainerCreateOptions = {
+      name: originalName,
+      Image: `${newImage}:${newTag}`,
+      Cmd: info.Config.Cmd || undefined,
+      Entrypoint: info.Config.Entrypoint || undefined,
+      Env: info.Config.Env || [],
+      Labels: info.Config.Labels || {},
+      ExposedPorts: info.Config.ExposedPorts || {},
+      WorkingDir: info.Config.WorkingDir || undefined,
+      User: info.Config.User || undefined,
+      HostConfig: info.HostConfig as Docker.HostConfig,
+      NetworkingConfig: undefined as unknown as Record<string, unknown>,
+    };
+
+    // Rebuild network config
+    const networks = info.NetworkSettings?.Networks;
+    if (networks && Object.keys(networks).length > 0) {
+      const networkNames = Object.keys(networks);
+      const primaryNet = networkNames[0];
+      const primaryConfig = networks[primaryNet];
+      createOpts.NetworkingConfig = {
+        EndpointsConfig: {
+          [primaryNet]: {
+            Aliases: primaryConfig.Aliases || [],
+            IPAMConfig: primaryConfig.IPAMConfig || undefined,
+          } as Docker.EndpointSettings,
+        },
+      };
+    }
+
+    // 4. Create the replacement container
+    const newContainer = await docker.createContainer(createOpts);
+    logger.info({ newId: newContainer.id.substring(0, 12) }, 'Self-update: new container created');
+
+    // 5. Connect additional networks
+    if (networks) {
+      const networkNames = Object.keys(networks);
+      for (const netName of networkNames.slice(1)) {
+        try {
+          const network = docker.getNetwork(netName);
+          await network.connect({
+            Container: newContainer.id,
+            EndpointConfig: {
+              Aliases: networks[netName].Aliases || [],
+            } as Docker.EndpointSettings,
+          });
+        } catch { /* best effort */ }
+      }
+    }
+
+    // 6. Start the new container
+    await newContainer.start();
+    logger.info('Self-update: new container started. Shutting down old instance...');
+
+    // 7. Schedule self-removal: the new container will clean up the old renamed one
+    // (or Docker's restart policy won't restart us since we exit cleanly)
+    // Give a small delay for the new container to fully boot
+    setTimeout(() => {
+      // Try to remove our old (renamed) container from the new one's perspective
+      // This runs before we die, but if it fails, the old container just stays stopped
+      self.remove({ force: true }).catch(() => {});
+      process.exit(0);
+    }, 3000);
+  },
+
   /** Get Docker engine version info */
   async getVersion(): Promise<{ version: string; apiVersion: string } | null> {
     try {

@@ -160,6 +160,25 @@ export const updateService = {
         });
       }
 
+      // Check if this is a self-update (our own container)
+      const selfId = dockerService.getSelfContainerId();
+      const isSelfUpdate = selfId !== null && container.dockerId === selfId;
+
+      if (isSelfUpdate) {
+        logger.info({ containerId, containerName: container.containerName }, 'Self-update detected — using special self-update path');
+        await db('update_history').where({ id: historyId }).update({ status: 'recreating' });
+        if (_io) {
+          _io.emit(SOCKET_EVENTS.UPDATE_PROGRESS, {
+            stackId, containerId, phase: 'self_update',
+            message: 'Self-updating Oblihub — the service will restart momentarily...',
+          });
+        }
+        // selfUpdate pulls, renames, creates new, starts it, then exits this process
+        await dockerService.selfUpdate(container.image, container.imageTag);
+        // We never reach here — process.exit() is called inside selfUpdate
+        return;
+      }
+
       // 1. Pull new image
       await dockerService.pullImage(container.image, container.imageTag);
 
