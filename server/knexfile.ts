@@ -9,9 +9,10 @@ const config: Knex.Config = {
   connection: process.env.DATABASE_URL,
   migrations: {
     directory: isCompiled
-      ? path.resolve(__dirname, 'src/db/migrations')   // dist/src/db/migrations (production)
-      : path.resolve(__dirname, 'src/db/migrations'),  // src/db/migrations (dev with tsx)
+      ? path.resolve(__dirname, 'src/db/migrations')
+      : path.resolve(__dirname, 'src/db/migrations'),
     extension: isCompiled ? 'js' : 'ts',
+    loadExtensions: isCompiled ? ['.js'] : ['.ts'],
   },
 };
 
