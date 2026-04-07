@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package } from 'lucide-react';
+import { RefreshCw, Play, Package, Search } from 'lucide-react';
 import { stacksApi } from '@/api/stacks.api';
 import type { Stack } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -60,9 +60,23 @@ export function DashboardPage() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-text-primary">Docker Stacks</h1>
-        <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover transition-colors">
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              toast.loading('Checking all stacks...', { id: 'check-all' });
+              try {
+                for (const s of stacks) { await stacksApi.check(s.id); }
+                toast.success('All checks started', { id: 'check-all' });
+                setTimeout(load, 3000);
+              } catch { toast.error('Check failed', { id: 'check-all' }); }
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors">
+            <Search size={14} /> Check All
+          </button>
+          <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover transition-colors">
+            <RefreshCw size={14} /> Refresh
+          </button>
+        </div>
       </div>
 
       {loading ? (
