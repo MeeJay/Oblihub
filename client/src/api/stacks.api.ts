@@ -20,6 +20,9 @@ export const stacksApi = {
   async triggerUpdate(id: number): Promise<void> {
     await apiClient.post(`/stacks/${id}/update`);
   },
+  async restart(id: number): Promise<void> {
+    await apiClient.post(`/stacks/${id}/restart`);
+  },
   async getHistory(id: number, limit = 50, offset = 0): Promise<UpdateHistoryEntry[]> {
     const res = await apiClient.get<ApiResponse<UpdateHistoryEntry[]>>(`/stacks/${id}/history?limit=${limit}&offset=${offset}`);
     return res.data.data!;

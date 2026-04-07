@@ -198,6 +198,15 @@ export const dockerService = {
     return newId;
   },
 
+  /** Restart a container (stop + start) */
+  async restartContainer(dockerId: string): Promise<void> {
+    const docker = getDocker();
+    const container = docker.getContainer(dockerId);
+    logger.info({ dockerId }, 'Restarting container...');
+    await container.restart({ t: 10 });
+    logger.info({ dockerId }, 'Container restarted');
+  },
+
   /** Check if Docker socket is accessible */
   async ping(): Promise<boolean> {
     try {

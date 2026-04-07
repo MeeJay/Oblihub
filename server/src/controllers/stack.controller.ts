@@ -3,6 +3,7 @@ import { stackService } from '../services/stack.service';
 import { updateService } from '../services/update.service';
 import { schedulerService } from '../services/scheduler.service';
 import { AppError } from '../middleware/errorHandler';
+import { logger } from '../utils/logger';
 
 export const stackController = {
   async list(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -43,6 +44,24 @@ export const stackController = {
       // Run check in background, return immediately
       updateService.checkStack(id).catch(() => {});
       res.json({ success: true, message: 'Check started' });
+    } catch (err) { next(err); }
+  },
+
+  async restart(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const stack = await stackService.getById(id);
+      if (!stack) throw new AppError(404, 'Stack not found');
+      // Restart all containers in the stack sequentially
+      const { dockerService } = await import('../services/docker.service');
+      for (const c of stack.containers) {
+        try {
+          await dockerService.restartContainer(c.dockerId);
+        } catch (err) {
+          logger.error({ containerId: c.id, err }, 'Failed to restart container');
+        }
+      }
+      res.json({ success: true, message: 'Stack restarted' });
     } catch (err) { next(err); }
   },
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package, Search } from 'lucide-react';
+import { RefreshCw, Play, Package, Search, RotateCcw } from 'lucide-react';
 import { stacksApi } from '@/api/stacks.api';
 import type { Stack } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -115,9 +115,13 @@ export function DashboardPage() {
                   ))}
                 </div>
                 <div className="mt-3 flex items-center gap-2">
-                  <button onClick={(e) => { e.stopPropagation(); stacksApi.check(stack.id).then(load).catch(() => toast.error('Check failed')); }}
+                  <button onClick={(e) => { e.stopPropagation(); stacksApi.check(stack.id).then(() => setTimeout(load, 2000)).catch(() => toast.error('Check failed')); }}
                     className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-border text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors">
                     <RefreshCw size={10} /> Check
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); stacksApi.restart(stack.id).then(() => { toast.success(`${stack.name} restarted`); load(); }).catch(() => toast.error('Restart failed')); }}
+                    className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-border text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors">
+                    <RotateCcw size={10} /> Restart
                   </button>
                   {status === 'update_available' && (
                     <button onClick={(e) => { e.stopPropagation(); stacksApi.triggerUpdate(stack.id).then(load).catch(() => toast.error('Update failed')); }}
