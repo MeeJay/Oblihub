@@ -107,7 +107,9 @@ router.get('/app-info', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) { res.status(401).json({ success: false, error: 'Missing Bearer token' }); return; }
     const raw = await appConfigService.getObligateRaw();
-    if (!raw.apiKey || authHeader.slice(7) !== raw.apiKey) { res.status(401).json({ success: false, error: 'Invalid API key' }); return; }
+    const receivedKey = authHeader.slice(7);
+    logger.info({ hasStoredKey: !!raw.apiKey, storedKeyLen: raw.apiKey?.length, receivedKeyLen: receivedKey.length, match: receivedKey === raw.apiKey }, 'app-info auth check');
+    if (!raw.apiKey || receivedKey !== raw.apiKey) { res.status(401).json({ success: false, error: 'Invalid API key' }); return; }
     res.json({ success: true, data: { roles: ['admin', 'user'], teams: [], tenants: [] } });
   } catch (err) {
     logger.error(err, 'app-info error');
