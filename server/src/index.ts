@@ -11,7 +11,24 @@ import { startDiscoveryWorker, stopDiscoveryWorker } from './workers/DiscoveryWo
 import { schedulerService } from './services/scheduler.service';
 import { dockerService } from './services/docker.service';
 
+async function waitForDatabase(maxRetries = 30, delayMs = 2000): Promise<void> {
+  for (let i = 1; i <= maxRetries; i++) {
+    try {
+      await db.raw('SELECT 1');
+      logger.info(`Database connected (attempt ${i})`);
+      return;
+    } catch {
+      logger.warn(`Database not ready (attempt ${i}/${maxRetries}), retrying in ${delayMs / 1000}s...`);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw new Error(`Database unreachable after ${maxRetries} attempts`);
+}
+
 async function main() {
+  // Wait for PostgreSQL to be ready (up to 60s)
+  await waitForDatabase();
+
   logger.info('Running database migrations...');
   await db.migrate.latest();
   logger.info('Migrations complete');
