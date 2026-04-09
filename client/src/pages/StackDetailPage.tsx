@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info, Trash2, ExternalLink } from 'lucide-react';
 import { stacksApi, containersApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
-import { dockerApi } from '@/api/docker.api';
 import { ContainerLogs } from '@/components/ContainerLogs';
 import { ContainerConsole } from '@/components/ContainerConsole';
 import type { Stack, Container, UpdateHistoryEntry, ManagedStack, DockerNetwork } from '@oblihub/shared';
@@ -126,28 +125,34 @@ export function StackDetailPage() {
               <FileEdit size={14} /> Edit Compose
             </button>
           )}
-          {allowStack && !managedStack && stack.composeProject && (
-            <button
-              onClick={async () => {
-                try {
-                  const created = await managedStacksApi.create({
-                    name: stack.name,
-                    composeContent: `# Imported stack: ${stack.name}\n# Add your docker-compose.yml content here\nversion: "3.8"\n\nservices:\n  # ...\n`,
-                  });
-                  navigate(`/stack-editor/${created.id}`);
-                } catch { toast.error('Failed to create managed stack'); }
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover"
-            >
-              <FileEdit size={14} /> Manage Compose
-            </button>
-          )}
           <button onClick={() => stacksApi.check(stack.id).then(load)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
             <RefreshCw size={14} /> Check Now
           </button>
           <button onClick={() => stacksApi.triggerUpdate(stack.id).then(load)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">
             <Play size={14} /> Update All
           </button>
+          {allowStack && (
+            <button
+              onClick={async () => {
+                const msg = managedStack
+                  ? 'Delete this managed stack? This will run "docker compose down" and remove all containers.'
+                  : 'Remove this stack from Oblihub? The containers will keep running but won\'t be tracked anymore.';
+                if (!confirm(msg)) return;
+                try {
+                  if (managedStack) {
+                    await managedStacksApi.delete(managedStack.id);
+                  }
+                  // TODO: remove discovered stack from DB if needed
+                  toast.success('Stack deleted');
+                  navigate('/');
+                } catch { toast.error('Failed to delete stack'); }
+              }}
+              className="p-1.5 rounded-lg text-text-muted hover:text-status-down hover:bg-bg-hover"
+              title="Delete stack"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -200,19 +205,15 @@ export function StackDetailPage() {
                   >
                     <Info size={14} />
                   </button>
-                  <button
-                    onClick={() => {
-                      if (!allowConsole) {
-                        toast.error('Console disabled. Set ALLOW_CONSOLE=true on server.');
-                        return;
-                      }
-                      togglePanel(c.id, 'console');
-                    }}
-                    className={`p-1.5 rounded-md transition-colors ${openPanels[c.id] === 'console' ? 'bg-accent/20 text-accent' : allowConsole ? 'text-text-muted hover:text-text-primary hover:bg-bg-hover' : 'text-text-muted/30 hover:text-text-muted hover:bg-bg-hover'}`}
-                    title={allowConsole ? 'Console' : 'Console (disabled)'}
-                  >
-                    <Terminal size={14} />
-                  </button>
+                  {allowConsole && (
+                    <button
+                      onClick={() => togglePanel(c.id, 'console')}
+                      className={`p-1.5 rounded-md transition-colors ${openPanels[c.id] === 'console' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'}`}
+                      title="Console"
+                    >
+                      <Terminal size={14} />
+                    </button>
+                  )}
                   <button
                     onClick={() => handleRestart(c)}
                     className="p-1.5 rounded-md text-text-muted hover:text-status-pending hover:bg-bg-hover transition-colors"
@@ -337,6 +338,31 @@ export function StackDetailPage() {
       <div className="rounded-xl border border-border bg-bg-secondary mb-6 p-4">
         <h2 className="text-sm font-semibold text-text-secondary mb-4 flex items-center gap-1.5"><Settings2 size={14} /> Configuration</h2>
         <div className="space-y-4">
+          {/* Stack URL */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-text-primary">Stack URL</div>
+              <div className="text-xs text-text-muted">Quick access link shown on dashboard</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="url"
+                value={stack.url || ''}
+                onChange={async (e) => {
+                  const updated = await stacksApi.update(stack.id, { url: e.target.value || null });
+                  setStack(updated);
+                }}
+                placeholder="https://..."
+                className="w-64 rounded-lg border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              {stack.url && (
+                <a href={stack.url} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded-md text-accent hover:bg-accent/10" title="Open">
+                  <ExternalLink size={14} />
+                </a>
+              )}
+            </div>
+          </div>
+
           {/* Check Interval */}
           <div className="flex items-center justify-between">
             <div>

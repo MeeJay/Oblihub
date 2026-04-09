@@ -10,7 +10,7 @@ export const stacksApi = {
     const res = await apiClient.get<ApiResponse<Stack>>(`/stacks/${id}`);
     return res.data.data!;
   },
-  async update(id: number, data: Partial<Pick<Stack, 'name' | 'checkInterval' | 'autoUpdate' | 'enabled'>>): Promise<Stack> {
+  async update(id: number, data: Partial<Pick<Stack, 'name' | 'checkInterval' | 'autoUpdate' | 'enabled' | 'url'>>): Promise<Stack> {
     const res = await apiClient.patch<ApiResponse<Stack>>(`/stacks/${id}`, data);
     return res.data.data!;
   },
@@ -50,8 +50,8 @@ export const systemApi = {
     const res = await apiClient.get<ApiResponse<{ dockerConnected: boolean; dockerVersion: { version: string; apiVersion: string } | null; stackCount: number; containerCount: number; allowConsole: boolean; allowStack: boolean }>>('/system');
     return res.data.data!;
   },
-  async getFeatures(): Promise<{ allowConsole: boolean; allowStack: boolean }> {
-    const res = await apiClient.get<ApiResponse<{ allowConsole: boolean; allowStack: boolean }>>('/system/features');
+  async getFeatures(): Promise<{ allowConsole: boolean; allowStack: boolean; selfProject: string | null }> {
+    const res = await apiClient.get<ApiResponse<{ allowConsole: boolean; allowStack: boolean; selfProject: string | null }>>('/system/features');
     return res.data.data!;
   },
 };

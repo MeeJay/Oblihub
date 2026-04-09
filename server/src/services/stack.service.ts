@@ -10,6 +10,7 @@ interface StackRow {
   check_interval: number;
   auto_update: boolean;
   enabled: boolean;
+  url: string | null;
   last_checked_at: Date | null;
   last_updated_at: Date | null;
   created_at: Date;
@@ -63,6 +64,7 @@ function rowToStack(row: StackRow, containers: Container[] = []): Stack {
     checkInterval: row.check_interval,
     autoUpdate: row.auto_update,
     enabled: row.enabled,
+    url: row.url || null,
     lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
     lastUpdatedAt: row.last_updated_at?.toISOString() ?? null,
     containers,
@@ -173,12 +175,13 @@ export const stackService = {
   },
 
   /** Update stack config */
-  async update(id: number, data: { name?: string; checkInterval?: number; autoUpdate?: boolean; enabled?: boolean }): Promise<Stack | null> {
+  async update(id: number, data: { name?: string; checkInterval?: number; autoUpdate?: boolean; enabled?: boolean; url?: string | null }): Promise<Stack | null> {
     const update: Record<string, unknown> = { updated_at: new Date() };
     if (data.name !== undefined) update.name = data.name;
     if (data.checkInterval !== undefined) update.check_interval = data.checkInterval;
     if (data.autoUpdate !== undefined) update.auto_update = data.autoUpdate;
     if (data.enabled !== undefined) update.enabled = data.enabled;
+    if (data.url !== undefined) update.url = data.url;
     await db('stacks').where({ id }).update(update);
     return this.getById(id);
   },

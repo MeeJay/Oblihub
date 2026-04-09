@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code } from 'lucide-react';
+import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code, Link, Box } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
+import { ComposePreview } from '@/components/ComposePreview';
 import type { ManagedStack, ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
@@ -129,13 +130,22 @@ export function StackEditorPage() {
 
   const handleDeploy = async () => {
     if (!stack) return;
+    const content = composeContent.trim();
+    if (!content || (!content.includes('image:') && !content.includes('build:'))) {
+      toast.error('Cannot deploy: compose file has no services with an image or build directive.');
+      return;
+    }
+    if (!confirm('Deploy this stack? This will create/recreate containers.')) return;
     // Save first if dirty
     if (dirty) await handleSave();
     try {
       await managedStacksApi.deploy(stack.id);
       toast.success('Deploying...');
       setStack(s => s ? { ...s, status: 'deploying' } : null);
-    } catch { toast.error('Deploy failed'); }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Deploy failed';
+      toast.error(msg);
+    }
   };
 
   const handleStop = async () => {
@@ -258,11 +268,31 @@ export function StackEditorPage() {
         </div>
       </div>
 
-      {/* Error message */}
+      {/* Deploy output */}
       {stack?.errorMessage && (
-        <div className="rounded-lg border border-status-down/30 bg-status-down/5 p-3 mb-4">
-          <div className="text-xs font-medium text-status-down mb-1">Error</div>
-          <pre className="text-xs text-text-secondary whitespace-pre-wrap font-mono max-h-32 overflow-auto">{stack.errorMessage}</pre>
+        <div className={`rounded-lg border p-3 mb-4 ${stack.status === 'error' ? 'border-status-down/30 bg-status-down/5' : 'border-status-up/30 bg-status-up/5'}`}>
+          <div className={`text-xs font-medium mb-1 ${stack.status === 'error' ? 'text-status-down' : 'text-status-up'}`}>
+            {stack.status === 'error' ? 'Error' : 'Deploy Output'}
+          </div>
+          <pre className="text-xs text-text-secondary whitespace-pre-wrap font-mono max-h-48 overflow-auto bg-[#0d1117] rounded p-2 mt-1">{stack.errorMessage}</pre>
+        </div>
+      )}
+      {stack?.status === 'deploying' && (
+        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 mb-4">
+          <div className="flex items-center gap-2 text-xs font-medium text-accent">
+            <div className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+            Deploying... This may take a moment.
+          </div>
+        </div>
+      )}
+
+      {/* Relative path warning */}
+      {composeContent.includes('./') && (
+        <div className="rounded-lg border border-status-pending/30 bg-status-pending/5 p-3 mb-4">
+          <div className="text-xs font-medium text-status-pending mb-1">Warning: Relative paths detected</div>
+          <div className="text-xs text-text-secondary">
+            Your compose file uses relative paths (<code className="bg-bg-tertiary px-1 rounded">./</code>). These resolve relative to Oblihub's stack directory (<code className="bg-bg-tertiary px-1 rounded">/data/stacks/{stack?.composeProject || name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}/</code>), not the original location. Use <strong>absolute paths</strong> to mount existing data.
+          </div>
         </div>
       )}
 
@@ -284,8 +314,20 @@ export function StackEditorPage() {
           </div>
         </div>
 
-        {/* Env editor - 1/3 width */}
-        <div>
+        {/* Right column: Preview + Env + URL */}
+        <div className="space-y-4">
+          {/* Compose Preview */}
+          <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
+              <Box size={14} className="text-text-muted" />
+              <h2 className="text-sm font-semibold text-text-secondary">Preview</h2>
+            </div>
+            <div className="p-3 max-h-[300px] overflow-auto">
+              <ComposePreview composeContent={composeContent} />
+            </div>
+          </div>
+
+          {/* Env editor */}
           <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden">
             <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -309,7 +351,7 @@ export function StackEditorPage() {
             </div>
 
             {envMode === 'kv' ? (
-              <div className="p-3 space-y-2 max-h-[460px] overflow-auto">
+              <div className="p-3 space-y-2 max-h-[250px] overflow-auto">
                 {envEntries.map((entry, i) => (
                   <div key={i} className="flex gap-1.5 items-center">
                     <input
@@ -339,7 +381,7 @@ export function StackEditorPage() {
                 value={envRaw}
                 onChange={e => { setEnvRaw(e.target.value); setDirty(true); }}
                 spellCheck={false}
-                className="w-full h-[460px] p-3 font-mono text-xs text-text-primary bg-[#0d1117] resize-none focus:outline-none leading-relaxed"
+                className="w-full h-[250px] p-3 font-mono text-xs text-text-primary bg-[#0d1117] resize-none focus:outline-none leading-relaxed"
                 placeholder="DB_HOST=localhost&#10;DB_PORT=5432&#10;DB_PASSWORD=secret"
               />
             )}

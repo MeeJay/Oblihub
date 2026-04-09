@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package, Search, RotateCcw, Plus } from 'lucide-react';
+import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink } from 'lucide-react';
 import { stacksApi, systemApi } from '@/api/stacks.api';
-import type { Stack } from '@oblihub/shared';
+import { managedStacksApi } from '@/api/managed-stacks.api';
+import type { Stack, ManagedStack } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 function StatusBadge({ status }: { status: string }) {
@@ -31,6 +32,18 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+type StackOrigin = 'self' | 'managed' | 'foreign';
+
+function OriginBadge({ origin }: { origin: StackOrigin }) {
+  if (origin === 'self') {
+    return <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-accent/15 text-accent border border-accent/30">Oblihub</span>;
+  }
+  if (origin === 'managed') {
+    return <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-status-up/10 text-status-up border border-status-up/30">Managed</span>;
+  }
+  return <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-status-down/10 text-status-down border border-status-down/30">Foreign</span>;
+}
+
 function getStackStatus(stack: Stack): string {
   if (!stack.containers.length) return 'unknown';
   if (stack.containers.some(c => c.status === 'updating')) return 'updating';
@@ -46,6 +59,8 @@ export function DashboardPage() {
   const [stacks, setStacks] = useState<Stack[]>([]);
   const [loading, setLoading] = useState(true);
   const [allowStack, setAllowStack] = useState(false);
+  const [selfProject, setSelfProject] = useState<string | null>(null);
+  const [managedProjects, setManagedProjects] = useState<Set<string>>(new Set());
 
   const load = async () => {
     try {
@@ -57,27 +72,36 @@ export function DashboardPage() {
 
   useEffect(() => {
     load();
-    systemApi.getFeatures().then(f => setAllowStack(f.allowStack)).catch(() => {
+    systemApi.getFeatures().then(f => {
+      setAllowStack(f.allowStack);
+      setSelfProject(f.selfProject);
+    }).catch(() => {
       systemApi.getInfo().then(info => setAllowStack(info.allowStack)).catch(() => {});
     });
+    // Load managed stacks to know which are managed
+    managedStacksApi.list().then(managed => {
+      setManagedProjects(new Set(managed.map(m => m.composeProject)));
+    }).catch(() => {});
   }, []);
+
+  const getOrigin = (stack: Stack): StackOrigin => {
+    if (selfProject && stack.composeProject === selfProject) return 'self';
+    if (stack.composeProject && managedProjects.has(stack.composeProject)) return 'managed';
+    return 'foreign';
+  };
 
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-text-primary">Docker Stacks</h1>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              if (!allowStack) {
-                toast.error('Stack management disabled. Set ALLOW_STACK=true on server.');
-                return;
-              }
-              navigate('/stack-editor/new');
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors">
-            <Plus size={14} /> New Stack
-          </button>
+          {allowStack && (
+            <button
+              onClick={() => navigate('/stack-editor/new')}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors">
+              <Plus size={14} /> New Stack
+            </button>
+          )}
           <button
             onClick={async () => {
               toast.loading('Checking all stacks...', { id: 'check-all' });
@@ -110,11 +134,15 @@ export function DashboardPage() {
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           {stacks.map((stack) => {
             const status = getStackStatus(stack);
+            const origin = getOrigin(stack);
             return (
               <div key={stack.id} onClick={() => navigate(`/stack/${stack.id}`)}
                 className="rounded-xl border border-border bg-bg-secondary p-4 hover:border-accent/30 cursor-pointer transition-colors">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-text-primary truncate">{stack.name}</h3>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <h3 className="text-sm font-semibold text-text-primary truncate">{stack.name}</h3>
+                    <OriginBadge origin={origin} />
+                  </div>
                   <StatusBadge status={status} />
                 </div>
                 <div className="text-xs text-text-muted mb-2">
@@ -132,6 +160,19 @@ export function DashboardPage() {
                   )}
                   <span className="text-text-muted">{stack.checkInterval}s</span>
                 </div>
+                {stack.url && (
+                  <a
+                    href={stack.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    className="flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover mb-2 truncate"
+                    title={stack.url}
+                  >
+                    <ExternalLink size={10} className="shrink-0" />
+                    <span className="truncate">{stack.url.replace(/^https?:\/\//, '')}</span>
+                  </a>
+                )}
                 <div className="flex flex-wrap gap-1">
                   {stack.containers.map((c) => (
                     <div key={c.id} className={`h-2 w-2 rounded-full ${

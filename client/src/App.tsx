@@ -125,14 +125,18 @@ function AppLayout({ children }: { children: React.ReactNode }) {
           <nav className="flex-1 p-3 space-y-1">
             <SidebarLink href="/" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/' || location.pathname.startsWith('/stack/')} />
 
-            <SidebarLink href="/managed-stacks" icon={Layers} label="Stacks" active={location.pathname.startsWith('/managed-stacks') || location.pathname.startsWith('/stack-editor')} />
+            {allowStack && (
+              <>
+                <SidebarLink href="/managed-stacks" icon={Layers} label="Stacks" active={location.pathname.startsWith('/managed-stacks') || location.pathname.startsWith('/stack-editor')} />
 
-            <div className="pt-3 pb-1">
-              <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3">Docker</div>
-            </div>
-            <SidebarLink href="/images" icon={HardDrive} label="Images" active={location.pathname === '/images'} />
-            <SidebarLink href="/networks" icon={Network} label="Networks" active={location.pathname === '/networks'} />
-            <SidebarLink href="/volumes" icon={Database} label="Volumes" active={location.pathname === '/volumes'} />
+                <div className="pt-3 pb-1">
+                  <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3">Docker</div>
+                </div>
+                <SidebarLink href="/images" icon={HardDrive} label="Images" active={location.pathname === '/images'} />
+                <SidebarLink href="/networks" icon={Network} label="Networks" active={location.pathname === '/networks'} />
+                <SidebarLink href="/volumes" icon={Database} label="Volumes" active={location.pathname === '/volumes'} />
+              </>
+            )}
 
             {isAdmin && (
               <>

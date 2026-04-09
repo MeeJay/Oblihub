@@ -26,7 +26,7 @@ export const stackController = {
   async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = parseInt(req.params.id, 10);
-      const data = req.body as { name?: string; checkInterval?: number; autoUpdate?: boolean; enabled?: boolean };
+      const data = req.body as { name?: string; checkInterval?: number; autoUpdate?: boolean; enabled?: boolean; url?: string | null };
       const stack = await stackService.update(id, data);
       if (!stack) throw new AppError(404, 'Stack not found');
 
@@ -235,12 +235,24 @@ export const stackController = {
   },
 
   async systemFeatures(_req: Request, res: Response): Promise<void> {
+    // Detect our own compose project
+    let selfProject: string | null = null;
+    try {
+      const { dockerService } = await import('../services/docker.service');
+      const selfId = dockerService.getSelfContainerId();
+      if (selfId) {
+        const info = await dockerService.inspectContainer(selfId);
+        selfProject = info.Config?.Labels?.['com.docker.compose.project'] || null;
+      }
+    } catch { /* not in Docker or can't inspect */ }
+
     logger.info({ allowConsole: config.allowConsole, allowStack: config.allowStack, rawConsole: process.env.ALLOW_CONSOLE, rawStack: process.env.ALLOW_STACK }, 'Features requested');
     res.json({
       success: true,
       data: {
         allowConsole: config.allowConsole,
         allowStack: config.allowStack,
+        selfProject,
       },
     });
   },

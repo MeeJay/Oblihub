@@ -25,6 +25,7 @@ export interface Stack {
   checkInterval: number;
   autoUpdate: boolean;
   enabled: boolean;
+  url: string | null;
   lastCheckedAt: string | null;
   lastUpdatedAt: string | null;
   containers: Container[];

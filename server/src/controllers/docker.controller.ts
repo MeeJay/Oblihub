@@ -9,6 +9,7 @@ export const dockerController = {
 
   async listImages(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const rawImages = await dockerService.listImages();
       const images: DockerImage[] = rawImages.map(img => ({
         id: img.Id.replace('sha256:', '').substring(0, 12),
@@ -44,6 +45,7 @@ export const dockerController = {
 
   async listNetworks(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const rawNetworks = await dockerService.listNetworks();
       const networks: DockerNetwork[] = await Promise.all(rawNetworks.map(async (net) => {
         // Get detailed info with containers
@@ -123,6 +125,7 @@ export const dockerController = {
 
   async listVolumes(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const result = await dockerService.listVolumes();
       const volumes: DockerVolume[] = (result.Volumes || []).map(v => {
         const labels = v.Labels || {};
@@ -163,6 +166,7 @@ export const dockerController = {
 
   async pruneImages(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const result = await dockerService.pruneImages();
       res.json({ success: true, data: result });
     } catch (err) { next(err); }
@@ -170,6 +174,7 @@ export const dockerController = {
 
   async pruneNetworks(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const result = await dockerService.pruneNetworks();
       res.json({ success: true, data: result });
     } catch (err) { next(err); }
@@ -177,6 +182,7 @@ export const dockerController = {
 
   async pruneVolumes(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const result = await dockerService.pruneVolumes();
       res.json({ success: true, data: result });
     } catch (err) { next(err); }

@@ -66,6 +66,12 @@ export const managedStackController = {
       const stack = await managedStackService.getById(id);
       if (!stack) throw new AppError(404, 'Managed stack not found');
 
+      // Safety: refuse to deploy empty/placeholder compose
+      const content = stack.composeContent.trim();
+      if (!content || !content.includes('image:') && !content.includes('build:')) {
+        throw new AppError(400, 'Cannot deploy: compose file has no services with an image or build directive. Please define at least one valid service.');
+      }
+
       await managedStackService.setStatus(id, 'deploying');
       res.json({ success: true, message: 'Deploy started' });
 
@@ -73,11 +79,13 @@ export const managedStackController = {
       (async () => {
         try {
           const result = await composeService.deploy(stack.composeProject, stack.composeContent, stack.envContent);
+          const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
           if (result.exitCode !== 0) {
-            await managedStackService.setStatus(id, 'error', result.stderr || result.stdout);
+            await managedStackService.setStatus(id, 'error', output || 'Deploy failed');
             logger.error({ projectName: stack.composeProject, stderr: result.stderr }, 'Compose deploy failed');
           } else {
-            await managedStackService.setStatus(id, 'deployed');
+            // Store output as success message (visible in UI)
+            await managedStackService.setStatus(id, 'deployed', output || null);
             logger.info({ projectName: stack.composeProject }, 'Stack deployed');
           }
         } catch (err) {
@@ -145,16 +153,22 @@ export const managedStackController = {
       const stack = await managedStackService.getById(id);
       if (!stack) throw new AppError(404, 'Managed stack not found');
 
+      const content = stack.composeContent.trim();
+      if (!content || !content.includes('image:') && !content.includes('build:')) {
+        throw new AppError(400, 'Cannot deploy: compose file has no valid services.');
+      }
+
       await managedStackService.setStatus(id, 'deploying');
       res.json({ success: true, message: 'Redeploy started' });
 
       (async () => {
         try {
           const result = await composeService.redeploy(stack.composeProject, stack.composeContent, stack.envContent);
+          const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
           if (result.exitCode !== 0) {
-            await managedStackService.setStatus(id, 'error', result.stderr || result.stdout);
+            await managedStackService.setStatus(id, 'error', output || 'Redeploy failed');
           } else {
-            await managedStackService.setStatus(id, 'deployed');
+            await managedStackService.setStatus(id, 'deployed', output || null);
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Unknown error';
