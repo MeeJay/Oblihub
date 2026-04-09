@@ -14,6 +14,9 @@ export const stacksApi = {
     const res = await apiClient.patch<ApiResponse<Stack>>(`/stacks/${id}`, data);
     return res.data.data!;
   },
+  async delete(id: number): Promise<void> {
+    await apiClient.delete(`/stacks/${id}`);
+  },
   async check(id: number): Promise<void> {
     await apiClient.post(`/stacks/${id}/check`);
   },

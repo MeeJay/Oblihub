@@ -58,7 +58,7 @@ export const updateService = {
     logger.info({ stackId, stackName: stack.name }, 'Checking stack for updates...');
 
     for (const container of stack.containers) {
-      if (container.excluded) continue;
+      if (container.excluded || container.status === 'stopped') continue;
 
       try {
         // Get local digest

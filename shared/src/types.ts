@@ -16,7 +16,7 @@ export interface User {
 }
 
 // ── Stack types ──
-export type ContainerStatus = 'up_to_date' | 'update_available' | 'updating' | 'error' | 'unknown' | 'checking' | 'excluded';
+export type ContainerStatus = 'up_to_date' | 'update_available' | 'updating' | 'error' | 'unknown' | 'checking' | 'excluded' | 'stopped';
 
 export interface Stack {
   id: number;

@@ -27,7 +27,7 @@ export const dockerService = {
   /** List all running containers, extracting compose project info */
   async listContainers(): Promise<DiscoveredContainer[]> {
     const docker = getDocker();
-    const containers = await docker.listContainers({ all: false });
+    const containers = await docker.listContainers({ all: true });
     return containers.map((c) => {
       const labels = c.Labels || {};
       // Parse image:tag — handle registry/namespace/repo:tag

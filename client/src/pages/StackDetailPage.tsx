@@ -161,6 +161,7 @@ export function StackDetailPage() {
                   if (managedStack) {
                     await managedStacksApi.delete(managedStack.id);
                   }
+                  await stacksApi.delete(stack.id);
                   toast.success('Stack deleted');
                   navigate('/');
                 } catch { toast.error('Failed to delete stack'); }
@@ -187,8 +188,10 @@ export function StackDetailPage() {
                   c.status === 'up_to_date' ? 'bg-status-up' :
                   c.status === 'update_available' ? 'bg-status-pending' :
                   c.status === 'error' ? 'bg-status-down' :
+                  c.status === 'stopped' ? 'bg-status-down/50' :
                   c.status === 'updating' ? 'bg-accent animate-pulse' : 'bg-text-muted'
                 }`} />
+                {c.status === 'stopped' && <span className="text-[10px] text-status-down/70 font-medium">Stopped</span>}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-text-primary">{c.containerName}</div>
                   <div className="text-xs text-text-muted">{c.image}:{c.imageTag}</div>

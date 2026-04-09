@@ -116,15 +116,23 @@ export const stackService = {
 
       // Upsert containers
       for (const c of containers) {
+        const isStopped = c.state !== 'running';
         const existing = await db<ContainerRow>('containers').where({ docker_id: c.dockerId }).first();
         if (existing) {
-          await db('containers').where({ id: existing.id }).update({
+          const update: Record<string, unknown> = {
             stack_id: stackId,
             container_name: c.containerName,
             image: c.image,
             image_tag: c.imageTag,
             updated_at: new Date(),
-          });
+          };
+          // Track stopped/running state transitions
+          if (isStopped && existing.status !== 'excluded') {
+            update.status = 'stopped';
+          } else if (!isStopped && existing.status === 'stopped') {
+            update.status = 'unknown'; // back to running, will be checked next cycle
+          }
+          await db('containers').where({ id: existing.id }).update(update);
         } else {
           await db('containers').insert({
             stack_id: stackId,
@@ -132,20 +140,30 @@ export const stackService = {
             container_name: c.containerName,
             image: c.image,
             image_tag: c.imageTag,
-            status: 'unknown',
+            status: isStopped ? 'stopped' : 'unknown',
           });
           logger.info({ containerName: c.containerName, stackId }, 'New container discovered');
         }
       }
     }
 
-    // Mark containers that are no longer running
+    // Remove containers that no longer exist in Docker at all
     const liveDockerIds = discovered.map(c => c.dockerId);
     if (liveDockerIds.length > 0) {
       await db('containers')
         .whereNotIn('docker_id', liveDockerIds)
         .whereNot('status', 'excluded')
         .delete();
+    }
+
+    // Clean up empty stacks (no containers left) except Standalone
+    const allStacks = await db<StackRow>('stacks').select('id', 'compose_project');
+    for (const s of allStacks) {
+      const count = await db('containers').where({ stack_id: s.id }).count('* as cnt').first();
+      if (Number(count?.cnt) === 0) {
+        await db('stacks').where({ id: s.id }).delete();
+        logger.info({ stackId: s.id, project: s.compose_project }, 'Cleaned up empty stack');
+      }
     }
   },
 
@@ -184,6 +202,12 @@ export const stackService = {
     if (data.url !== undefined) update.url = data.url;
     await db('stacks').where({ id }).update(update);
     return this.getById(id);
+  },
+
+  /** Delete a stack and its containers from the database */
+  async delete(id: number): Promise<void> {
+    await db('containers').where({ stack_id: id }).delete();
+    await db('stacks').where({ id }).delete();
   },
 
   /** Update container status */

@@ -15,6 +15,7 @@ function StatusBadge({ status }: { status: string }) {
     unknown: 'bg-bg-tertiary text-text-muted',
     checking: 'bg-bg-tertiary text-text-muted',
     excluded: 'bg-bg-tertiary text-text-muted',
+    stopped: 'bg-status-down/10 text-status-down',
   };
   const labels: Record<string, string> = {
     up_to_date: 'Up to date',
@@ -24,6 +25,7 @@ function StatusBadge({ status }: { status: string }) {
     unknown: 'Unknown',
     checking: 'Checking...',
     excluded: 'Excluded',
+    stopped: 'Stopped',
   };
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${styles[status] || styles.unknown}`}>
@@ -46,6 +48,7 @@ function OriginBadge({ origin }: { origin: StackOrigin }) {
 
 function getStackStatus(stack: Stack): string {
   if (!stack.containers.length) return 'unknown';
+  if (stack.containers.every(c => c.status === 'stopped')) return 'stopped';
   if (stack.containers.some(c => c.status === 'updating')) return 'updating';
   if (stack.containers.some(c => c.status === 'error')) return 'error';
   if (stack.containers.some(c => c.status === 'update_available')) return 'update_available';
@@ -75,13 +78,15 @@ export function DashboardPage() {
     systemApi.getFeatures().then(f => {
       setAllowStack(f.allowStack);
       setSelfProject(f.selfProject);
+      // Only load managed stacks if allowStack is enabled
+      if (f.allowStack) {
+        managedStacksApi.list().then(managed => {
+          setManagedProjects(new Set(managed.map(m => m.composeProject)));
+        }).catch(() => {});
+      }
     }).catch(() => {
       systemApi.getInfo().then(info => setAllowStack(info.allowStack)).catch(() => {});
     });
-    // Load managed stacks to know which are managed
-    managedStacksApi.list().then(managed => {
-      setManagedProjects(new Set(managed.map(m => m.composeProject)));
-    }).catch(() => {});
   }, []);
 
   const getOrigin = (stack: Stack): StackOrigin => {
@@ -179,6 +184,7 @@ export function DashboardPage() {
                       c.status === 'up_to_date' ? 'bg-status-up' :
                       c.status === 'update_available' ? 'bg-status-pending' :
                       c.status === 'error' ? 'bg-status-down' :
+                      c.status === 'stopped' ? 'bg-status-down/50' :
                       c.status === 'updating' ? 'bg-accent' : 'bg-text-muted'
                     }`} title={`${c.containerName}: ${c.status}`} />
                   ))}

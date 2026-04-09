@@ -118,9 +118,6 @@ export function ManagedStacksPage() {
               <div className="text-xs text-text-muted mb-3">
                 Project: <code className="bg-bg-tertiary px-1 py-0.5 rounded">{s.composeProject}</code>
               </div>
-              {s.errorMessage && (
-                <div className="text-[10px] text-status-down mb-2 truncate" title={s.errorMessage}>{s.errorMessage}</div>
-              )}
               <div className="flex items-center gap-2 mt-2">
                 {(s.status === 'draft' || s.status === 'stopped' || s.status === 'error') && (
                   <button onClick={e => handleDeploy(e, s)} className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-status-up/10 text-status-up hover:bg-status-up/20">
