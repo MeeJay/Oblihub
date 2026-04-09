@@ -240,13 +240,16 @@ export const stackController = {
     try {
       const { dockerService } = await import('../services/docker.service');
       const selfId = dockerService.getSelfContainerId();
+      logger.info({ selfId, hostname: process.env.HOSTNAME }, 'Self container detection');
       if (selfId) {
         const info = await dockerService.inspectContainer(selfId);
         selfProject = info.Config?.Labels?.['com.docker.compose.project'] || null;
       }
-    } catch { /* not in Docker or can't inspect */ }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to detect self container');
+    }
 
-    logger.info({ allowConsole: config.allowConsole, allowStack: config.allowStack, rawConsole: process.env.ALLOW_CONSOLE, rawStack: process.env.ALLOW_STACK }, 'Features requested');
+    logger.info({ allowConsole: config.allowConsole, allowStack: config.allowStack, selfProject }, 'Features requested');
     res.json({
       success: true,
       data: {

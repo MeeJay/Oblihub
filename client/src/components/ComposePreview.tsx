@@ -32,7 +32,6 @@ function parseCompose(content: string): ParsedCompose {
       return result;
     }
 
-    // Services
     const services = (doc.services || {}) as Record<string, Record<string, unknown>>;
     for (const [name, svc] of Object.entries(services)) {
       if (!svc || typeof svc !== 'object') continue;
@@ -76,7 +75,6 @@ function parseCompose(content: string): ParsedCompose {
       });
     }
 
-    // Networks
     const nets = (doc.networks || {}) as Record<string, Record<string, unknown> | null>;
     for (const [name, cfg] of Object.entries(nets)) {
       result.networks.push({
@@ -86,7 +84,6 @@ function parseCompose(content: string): ParsedCompose {
       });
     }
 
-    // Volumes
     const vols = (doc.volumes || {}) as Record<string, Record<string, unknown> | null>;
     for (const [name, cfg] of Object.entries(vols)) {
       result.volumes.push({
@@ -102,6 +99,10 @@ function parseCompose(content: string): ParsedCompose {
   return result;
 }
 
+function Tag({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <span className={`inline-block font-mono text-[10px] px-1.5 py-0.5 rounded bg-bg-secondary ${className}`}>{children}</span>;
+}
+
 interface Props {
   composeContent: string;
 }
@@ -111,62 +112,70 @@ export function ComposePreview({ composeContent }: Props) {
 
   if (parsed.error) {
     return (
-      <div className="text-xs text-status-down p-2 bg-status-down/5 rounded">
+      <div className="text-xs text-status-down p-3 bg-status-down/5 rounded-lg border border-status-down/20">
         YAML error: {parsed.error}
       </div>
     );
   }
 
   if (parsed.services.length === 0) {
-    return <div className="text-xs text-text-muted p-2">No services defined</div>;
+    return <div className="text-xs text-text-muted p-3">No services defined</div>;
   }
 
   return (
-    <div className="space-y-3">
-      {/* Services */}
+    <div className="space-y-6">
+      {/* Services grid */}
       <div>
-        <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5 flex items-center gap-1">
-          <Box size={10} /> Services ({parsed.services.length})
+        <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+          <Box size={11} /> Services ({parsed.services.length})
         </div>
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {parsed.services.map((svc) => (
-            <div key={svc.name} className="rounded-lg border border-border bg-bg-tertiary p-2.5">
-              <div className="flex items-center gap-2 mb-1">
+            <div key={svc.name} className="rounded-lg border border-border bg-bg-tertiary p-3">
+              <div className="flex items-center gap-2 mb-1.5">
                 <span className="text-xs font-semibold text-text-primary">{svc.name}</span>
-                {svc.restart && <span className="text-[9px] px-1 py-0.5 rounded bg-bg-secondary text-text-muted">{svc.restart}</span>}
+                {svc.restart && <Tag className="text-text-muted">{svc.restart}</Tag>}
               </div>
               {svc.image && (
-                <div className="flex items-center gap-1 text-[10px] text-accent font-mono mb-1">
-                  <HardDrive size={9} /> {svc.image}
+                <div className="flex items-center gap-1.5 text-[10px] text-accent font-mono mb-1.5">
+                  <HardDrive size={9} className="shrink-0" /> <span className="break-all">{svc.image}</span>
                 </div>
               )}
               {svc.build && (
-                <div className="flex items-center gap-1 text-[10px] text-status-pending font-mono mb-1">
-                  <Box size={9} /> build: {svc.build}
+                <div className="flex items-center gap-1.5 text-[10px] text-status-pending font-mono mb-1.5">
+                  <Box size={9} className="shrink-0" /> build: {svc.build}
                 </div>
               )}
               {svc.ports.length > 0 && (
-                <div className="flex items-center gap-1 text-[10px] text-text-muted mb-0.5">
-                  <Globe size={9} />
-                  {svc.ports.map((p, i) => <span key={i} className="font-mono bg-bg-secondary px-1 rounded">{p}</span>)}
+                <div className="flex items-start gap-1.5 text-[10px] text-text-muted mb-1.5">
+                  <Globe size={9} className="shrink-0 mt-0.5" />
+                  <div className="flex flex-wrap gap-1">
+                    {svc.ports.map((p, i) => <Tag key={i}>{p}</Tag>)}
+                  </div>
                 </div>
               )}
               {svc.volumes.length > 0 && (
-                <div className="flex items-center gap-1 text-[10px] text-text-muted mb-0.5 flex-wrap">
-                  <Database size={9} className="shrink-0" />
-                  {svc.volumes.map((v, i) => <span key={i} className="font-mono bg-bg-secondary px-1 rounded truncate max-w-[180px]" title={v}>{v}</span>)}
+                <div className="flex items-start gap-1.5 text-[10px] text-text-muted mb-1.5">
+                  <Database size={9} className="shrink-0 mt-0.5" />
+                  <div className="flex flex-wrap gap-1">
+                    {svc.volumes.map((v, i) => <Tag key={i} className={v.startsWith('./') ? 'text-status-pending border border-status-pending/30' : 'text-text-muted'}>{v}</Tag>)}
+                  </div>
                 </div>
               )}
               {svc.networks.length > 0 && (
-                <div className="flex items-center gap-1 text-[10px] text-text-muted mb-0.5">
-                  <Network size={9} />
-                  {svc.networks.map((n, i) => <span key={i} className="font-mono bg-bg-secondary px-1 rounded">{n}</span>)}
+                <div className="flex items-start gap-1.5 text-[10px] text-text-muted mb-1.5">
+                  <Network size={9} className="shrink-0 mt-0.5" />
+                  <div className="flex flex-wrap gap-1">
+                    {svc.networks.map((n, i) => <Tag key={i}>{n}</Tag>)}
+                  </div>
                 </div>
               )}
               {svc.depends_on.length > 0 && (
-                <div className="flex items-center gap-1 text-[10px] text-text-muted">
-                  <Plug size={9} />
-                  {svc.depends_on.map((d, i) => <span key={i} className="font-mono">{d}</span>)}
+                <div className="flex items-start gap-1.5 text-[10px] text-text-muted mb-1.5">
+                  <Plug size={9} className="shrink-0 mt-0.5" />
+                  <div className="flex flex-wrap gap-1">
+                    {svc.depends_on.map((d, i) => <Tag key={i}>{d}</Tag>)}
+                  </div>
                 </div>
               )}
               {svc.environment > 0 && (
@@ -177,36 +186,36 @@ export function ComposePreview({ composeContent }: Props) {
         </div>
       </div>
 
-      {/* Networks */}
+      {/* Networks grid */}
       {parsed.networks.length > 0 && (
         <div>
-          <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1 flex items-center gap-1">
-            <Network size={10} /> Networks ({parsed.networks.length})
+          <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Network size={11} /> Networks ({parsed.networks.length})
           </div>
-          <div className="space-y-1">
+          <div className="flex flex-wrap gap-2">
             {parsed.networks.map((n) => (
-              <div key={n.name} className="flex items-center gap-2 text-[10px] px-2 py-1 rounded border border-border bg-bg-tertiary">
-                <span className="font-mono text-text-primary">{n.name}</span>
-                {n.external && <span className="px-1 py-0.5 rounded bg-status-pending/10 text-status-pending text-[9px]">external</span>}
-                {n.driver && <span className="text-text-muted">{n.driver}</span>}
+              <div key={n.name} className="flex items-center gap-2 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-bg-tertiary">
+                <span className="font-mono font-medium text-text-primary">{n.name}</span>
+                {n.external && <span className="px-1.5 py-0.5 rounded bg-status-pending/10 text-status-pending text-[9px] font-medium">external</span>}
+                {n.driver && <span className="text-text-muted text-[10px]">{n.driver}</span>}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Volumes */}
+      {/* Volumes grid */}
       {parsed.volumes.length > 0 && (
         <div>
-          <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1 flex items-center gap-1">
-            <Database size={10} /> Volumes ({parsed.volumes.length})
+          <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Database size={11} /> Volumes ({parsed.volumes.length})
           </div>
-          <div className="space-y-1">
+          <div className="flex flex-wrap gap-2">
             {parsed.volumes.map((v) => (
-              <div key={v.name} className="flex items-center gap-2 text-[10px] px-2 py-1 rounded border border-border bg-bg-tertiary">
-                <span className="font-mono text-text-primary">{v.name}</span>
-                {v.external && <span className="px-1 py-0.5 rounded bg-status-pending/10 text-status-pending text-[9px]">external</span>}
-                {v.driver && <span className="text-text-muted">{v.driver}</span>}
+              <div key={v.name} className="flex items-center gap-2 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-bg-tertiary">
+                <span className="font-mono font-medium text-text-primary">{v.name}</span>
+                {v.external && <span className="px-1.5 py-0.5 rounded bg-status-pending/10 text-status-pending text-[9px] font-medium">external</span>}
+                {v.driver && <span className="text-text-muted text-[10px]">{v.driver}</span>}
               </div>
             ))}
           </div>

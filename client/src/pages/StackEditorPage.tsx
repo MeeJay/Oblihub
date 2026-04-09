@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code, Link, Box } from 'lucide-react';
+import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code, Link, Box, AlertTriangle } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
+import { systemApi } from '@/api/stacks.api';
 import { ComposePreview } from '@/components/ComposePreview';
 import type { ManagedStack, ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -69,6 +70,7 @@ export function StackEditorPage() {
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [isSelf, setIsSelf] = useState(false);
 
   const load = useCallback(async () => {
     if (isNew) return;
@@ -86,6 +88,16 @@ export function StackEditorPage() {
   }, [id, isNew]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Detect self stack
+  useEffect(() => {
+    if (!stack) return;
+    systemApi.getFeatures().then(f => {
+      if (f.selfProject && stack.composeProject === f.selfProject) {
+        setIsSelf(true);
+      }
+    }).catch(() => {});
+  }, [stack?.composeProject]);
 
   // Poll status while deploying
   useEffect(() => {
@@ -135,7 +147,10 @@ export function StackEditorPage() {
       toast.error('Cannot deploy: compose file has no services with an image or build directive.');
       return;
     }
-    if (!confirm('Deploy this stack? This will create/recreate containers.')) return;
+    const confirmMsg = isSelf
+      ? '⚠️ You are about to redeploy OBLIHUB ITSELF.\n\nIf the compose is invalid, you will lose access to this interface.\n\nAre you absolutely sure?'
+      : 'Deploy this stack? This will create/recreate containers.';
+    if (!confirm(confirmMsg)) return;
     // Save first if dirty
     if (dirty) await handleSave();
     try {
@@ -214,7 +229,7 @@ export function StackEditorPage() {
   if (loading) return <div className="flex items-center justify-center h-full"><div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" /></div>;
 
   return (
-    <div className="p-6 max-w-6xl">
+    <div className="p-6">
       <button onClick={() => navigate('/managed-stacks')} className="flex items-center gap-1 text-sm text-text-muted hover:text-text-primary mb-4">
         <ArrowLeft size={14} /> Back to Stacks
       </button>
@@ -252,21 +267,37 @@ export function StackEditorPage() {
                   <button onClick={handleRedeploy} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">
                     <RotateCcw size={14} /> Redeploy
                   </button>
-                  <button onClick={handleStop} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-status-pending text-status-pending hover:bg-status-pending/10">
-                    <Square size={14} /> Stop
-                  </button>
-                  <button onClick={handleDown} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-status-down text-status-down hover:bg-status-down/10">
-                    <Download size={14} className="rotate-180" /> Down
-                  </button>
+                  {!isSelf && (
+                    <>
+                      <button onClick={handleStop} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-status-pending text-status-pending hover:bg-status-pending/10">
+                        <Square size={14} /> Stop
+                      </button>
+                      <button onClick={handleDown} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-status-down text-status-down hover:bg-status-down/10">
+                        <Download size={14} className="rotate-180" /> Down
+                      </button>
+                    </>
+                  )}
                 </>
               )}
-              <button onClick={handleDelete} className="p-1.5 rounded-lg text-text-muted hover:text-status-down hover:bg-bg-hover" title="Delete stack">
-                <Trash2 size={16} />
-              </button>
+              {!isSelf && (
+                <button onClick={handleDelete} className="p-1.5 rounded-lg text-text-muted hover:text-status-down hover:bg-bg-hover" title="Delete stack">
+                  <Trash2 size={16} />
+                </button>
+              )}
             </>
           )}
         </div>
       </div>
+
+      {/* Self-management warning */}
+      {isSelf && (
+        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 mb-4 flex items-start gap-2">
+          <AlertTriangle size={14} className="text-accent shrink-0 mt-0.5" />
+          <div className="text-xs text-text-secondary">
+            <span className="font-semibold text-accent">This is Oblihub's own stack.</span> You can edit and redeploy, but Stop, Down and Delete are disabled. If you deploy an invalid compose, you may lose access to this interface.
+          </div>
+        </div>
+      )}
 
       {/* Deploy output */}
       {stack?.errorMessage && (
@@ -296,10 +327,11 @@ export function StackEditorPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Compose editor - 2/3 width */}
-        <div className="lg:col-span-2">
-          <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden">
+      {/* Compose + Env side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-6">
+        {/* Compose editor - 3/5 */}
+        <div className="lg:col-span-3">
+          <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden h-full">
             <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
               <Code size={14} className="text-text-muted" />
               <h2 className="text-sm font-semibold text-text-secondary">docker-compose.yml</h2>
@@ -308,27 +340,15 @@ export function StackEditorPage() {
               value={composeContent}
               onChange={e => { setComposeContent(e.target.value); setDirty(true); }}
               spellCheck={false}
-              className="w-full h-[500px] p-4 font-mono text-sm text-text-primary bg-[#0d1117] resize-none focus:outline-none leading-relaxed"
+              className="w-full h-[450px] p-4 font-mono text-sm text-text-primary bg-[#0d1117] resize-none focus:outline-none leading-relaxed"
               placeholder="version: '3.8'&#10;&#10;services:&#10;  ..."
             />
           </div>
         </div>
 
-        {/* Right column: Preview + Env + URL */}
-        <div className="space-y-4">
-          {/* Compose Preview */}
-          <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
-              <Box size={14} className="text-text-muted" />
-              <h2 className="text-sm font-semibold text-text-secondary">Preview</h2>
-            </div>
-            <div className="p-3 max-h-[300px] overflow-auto">
-              <ComposePreview composeContent={composeContent} />
-            </div>
-          </div>
-
-          {/* Env editor */}
-          <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden">
+        {/* Env editor - 2/5 */}
+        <div className="lg:col-span-2">
+          <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden h-full">
             <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <FileText size={14} className="text-text-muted" />
@@ -351,7 +371,7 @@ export function StackEditorPage() {
             </div>
 
             {envMode === 'kv' ? (
-              <div className="p-3 space-y-2 max-h-[250px] overflow-auto">
+              <div className="p-3 space-y-2 overflow-auto" style={{ maxHeight: '412px' }}>
                 {envEntries.map((entry, i) => (
                   <div key={i} className="flex gap-1.5 items-center">
                     <input
@@ -381,11 +401,22 @@ export function StackEditorPage() {
                 value={envRaw}
                 onChange={e => { setEnvRaw(e.target.value); setDirty(true); }}
                 spellCheck={false}
-                className="w-full h-[250px] p-3 font-mono text-xs text-text-primary bg-[#0d1117] resize-none focus:outline-none leading-relaxed"
+                className="w-full h-[412px] p-3 font-mono text-xs text-text-primary bg-[#0d1117] resize-none focus:outline-none leading-relaxed"
                 placeholder="DB_HOST=localhost&#10;DB_PORT=5432&#10;DB_PASSWORD=secret"
               />
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Preview - full width below */}
+      <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden mb-6">
+        <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
+          <Box size={14} className="text-text-muted" />
+          <h2 className="text-sm font-semibold text-text-secondary">Preview</h2>
+        </div>
+        <div className="p-4">
+          <ComposePreview composeContent={composeContent} />
         </div>
       </div>
 

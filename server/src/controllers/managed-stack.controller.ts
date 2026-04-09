@@ -1,9 +1,19 @@
 import type { Request, Response, NextFunction } from 'express';
 import { managedStackService } from '../services/managed-stack.service';
 import { composeService } from '../services/compose.service';
+import { dockerService } from '../services/docker.service';
 import { config } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
+
+async function isSelfStack(composeProject: string): Promise<boolean> {
+  try {
+    const selfId = dockerService.getSelfContainerId();
+    if (!selfId) return false;
+    const info = await dockerService.inspectContainer(selfId);
+    return (info.Config?.Labels?.['com.docker.compose.project'] || null) === composeProject;
+  } catch { return false; }
+}
 
 export const managedStackController = {
   async list(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -49,6 +59,7 @@ export const managedStackController = {
       const id = parseInt(req.params.id, 10);
       const stack = await managedStackService.getById(id);
       if (!stack) throw new AppError(404, 'Managed stack not found');
+      if (await isSelfStack(stack.composeProject)) throw new AppError(403, 'Cannot delete Oblihub\'s own stack');
       // Down the stack if deployed
       if (stack.status === 'deployed') {
         await composeService.down(stack.composeProject);
@@ -103,6 +114,7 @@ export const managedStackController = {
       const id = parseInt(req.params.id, 10);
       const stack = await managedStackService.getById(id);
       if (!stack) throw new AppError(404, 'Managed stack not found');
+      if (await isSelfStack(stack.composeProject)) throw new AppError(403, 'Cannot stop Oblihub\'s own stack');
 
       const result = await composeService.stop(stack.composeProject);
       if (result.exitCode !== 0) {
@@ -120,6 +132,7 @@ export const managedStackController = {
       const id = parseInt(req.params.id, 10);
       const stack = await managedStackService.getById(id);
       if (!stack) throw new AppError(404, 'Managed stack not found');
+      if (await isSelfStack(stack.composeProject)) throw new AppError(403, 'Cannot down Oblihub\'s own stack');
 
       const removeVolumes = req.query.volumes === 'true';
       const result = await composeService.down(stack.composeProject, removeVolumes);

@@ -25,6 +25,7 @@ export function StackDetailPage() {
   const [loading, setLoading] = useState(true);
   const [allowConsole, setAllowConsole] = useState(false);
   const [allowStack, setAllowStack] = useState(false);
+  const [selfProject, setSelfProject] = useState<string | null>(null);
   const [managedStack, setManagedStack] = useState<ManagedStack | null>(null);
   const [openPanels, setOpenPanels] = useState<Record<number, PanelType | null>>({});
   const [inspectData, setInspectData] = useState<Record<number, ContainerInspect | null>>({});
@@ -48,6 +49,7 @@ export function StackDetailPage() {
     systemApi.getFeatures().then(f => {
       setAllowConsole(f.allowConsole);
       setAllowStack(f.allowStack);
+      setSelfProject(f.selfProject);
     }).catch(() => {
       // Fallback: try the full system info
       systemApi.getInfo().then(info => {
@@ -125,13 +127,30 @@ export function StackDetailPage() {
               <FileEdit size={14} /> Edit Compose
             </button>
           )}
+          {allowStack && !managedStack && stack.composeProject && (
+            <button
+              onClick={async () => {
+                try {
+                  const created = await managedStacksApi.create({
+                    name: stack.name,
+                    composeContent: `# Stack: ${stack.name}\n# Paste your docker-compose.yml content here\n\nservices:\n  # app:\n  #   image: your-image:latest\n  #   ports:\n  #     - "8080:80"\n`,
+                  });
+                  toast.success('Paste your docker-compose.yml content in the editor');
+                  navigate(`/stack-editor/${created.id}`);
+                } catch { toast.error('Failed to create managed stack'); }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover"
+            >
+              <FileEdit size={14} /> Manage Stack
+            </button>
+          )}
           <button onClick={() => stacksApi.check(stack.id).then(load)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
             <RefreshCw size={14} /> Check Now
           </button>
           <button onClick={() => stacksApi.triggerUpdate(stack.id).then(load)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">
             <Play size={14} /> Update All
           </button>
-          {allowStack && (
+          {allowStack && !(selfProject && stack.composeProject === selfProject) && (
             <button
               onClick={async () => {
                 const msg = managedStack
@@ -142,7 +161,6 @@ export function StackDetailPage() {
                   if (managedStack) {
                     await managedStacksApi.delete(managedStack.id);
                   }
-                  // TODO: remove discovered stack from DB if needed
                   toast.success('Stack deleted');
                   navigate('/');
                 } catch { toast.error('Failed to delete stack'); }
@@ -347,11 +365,16 @@ export function StackDetailPage() {
             <div className="flex items-center gap-2">
               <input
                 type="url"
-                value={stack.url || ''}
-                onChange={async (e) => {
-                  const updated = await stacksApi.update(stack.id, { url: e.target.value || null });
-                  setStack(updated);
+                defaultValue={stack.url || ''}
+                onBlur={async (e) => {
+                  const val = e.target.value.trim() || null;
+                  if (val !== (stack.url || null)) {
+                    const updated = await stacksApi.update(stack.id, { url: val });
+                    setStack(updated);
+                    toast.success(val ? 'URL saved' : 'URL removed');
+                  }
                 }}
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                 placeholder="https://..."
                 className="w-64 rounded-lg border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
               />

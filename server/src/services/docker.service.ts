@@ -318,12 +318,27 @@ export const dockerService = {
     if (hostname && /^[a-f0-9]{12,}$/.test(hostname)) {
       return hostname.substring(0, 12);
     }
-    // Fallback: read from cgroup
     try {
       const fs = require('fs');
-      const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8') as string;
-      const match = cgroup.match(/docker[/-]([a-f0-9]{12,64})/);
-      if (match) return match[1].substring(0, 12);
+      // cgroups v1: /proc/self/cgroup contains docker/containerId
+      try {
+        const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8') as string;
+        const match = cgroup.match(/docker[/-]([a-f0-9]{12,64})/);
+        if (match) return match[1].substring(0, 12);
+      } catch { /* ignore */ }
+      // cgroups v2 / modern Docker: /proc/self/mountinfo contains /docker/containers/<id>
+      try {
+        const mountinfo = fs.readFileSync('/proc/self/mountinfo', 'utf8') as string;
+        const match = mountinfo.match(/\/docker\/containers\/([a-f0-9]{12,64})/);
+        if (match) return match[1].substring(0, 12);
+      } catch { /* ignore */ }
+      // Fallback: hostname file
+      try {
+        const hostnameFile = fs.readFileSync('/etc/hostname', 'utf8').trim() as string;
+        if (/^[a-f0-9]{12,}$/.test(hostnameFile)) {
+          return hostnameFile.substring(0, 12);
+        }
+      } catch { /* ignore */ }
     } catch { /* not in Docker */ }
     return null;
   },
