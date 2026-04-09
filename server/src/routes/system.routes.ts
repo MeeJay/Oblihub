@@ -7,6 +7,7 @@ const router = Router();
 router.use(requireAuth);
 
 router.get('/', stackController.systemInfo);
+router.get('/features', stackController.systemFeatures);
 router.post('/discovery/refresh', stackController.refreshDiscovery);
 
 export default router;

@@ -57,7 +57,9 @@ export function DashboardPage() {
 
   useEffect(() => {
     load();
-    systemApi.getInfo().then(info => setAllowStack(info.allowStack)).catch(() => {});
+    systemApi.getFeatures().then(f => setAllowStack(f.allowStack)).catch(() => {
+      systemApi.getInfo().then(info => setAllowStack(info.allowStack)).catch(() => {});
+    });
   }, []);
 
   return (
@@ -65,13 +67,17 @@ export function DashboardPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-text-primary">Docker Stacks</h1>
         <div className="flex items-center gap-2">
-          {allowStack && (
-            <button
-              onClick={() => navigate('/stack-editor/new')}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors">
-              <Plus size={14} /> New Stack
-            </button>
-          )}
+          <button
+            onClick={() => {
+              if (!allowStack) {
+                toast.error('Stack management disabled. Set ALLOW_STACK=true on server.');
+                return;
+              }
+              navigate('/stack-editor/new');
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors">
+            <Plus size={14} /> New Stack
+          </button>
           <button
             onClick={async () => {
               toast.loading('Checking all stacks...', { id: 'check-all' });

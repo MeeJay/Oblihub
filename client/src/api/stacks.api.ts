@@ -50,4 +50,8 @@ export const systemApi = {
     const res = await apiClient.get<ApiResponse<{ dockerConnected: boolean; dockerVersion: { version: string; apiVersion: string } | null; stackCount: number; containerCount: number; allowConsole: boolean; allowStack: boolean }>>('/system');
     return res.data.data!;
   },
+  async getFeatures(): Promise<{ allowConsole: boolean; allowStack: boolean }> {
+    const res = await apiClient.get<ApiResponse<{ allowConsole: boolean; allowStack: boolean }>>('/system/features');
+    return res.data.data!;
+  },
 };

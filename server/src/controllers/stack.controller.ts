@@ -114,27 +114,47 @@ export const stackController = {
       if (!container) throw new AppError(404, 'Container not found');
       const { dockerService } = await import('../services/docker.service');
       const info = await dockerService.inspectContainer(container.dockerId);
-      const portBindings = info.HostConfig?.PortBindings || {};
+
+      // Ports: filter out null bindings
+      const rawPorts = info.HostConfig?.PortBindings || {};
+      const ports: Record<string, { HostIp: string; HostPort: string }[]> = {};
+      for (const [port, bindings] of Object.entries(rawPorts)) {
+        if (Array.isArray(bindings) && bindings.length > 0) {
+          ports[port] = bindings.map((b: { HostIp?: string; HostPort?: string } | null) => ({
+            HostIp: b?.HostIp || '0.0.0.0',
+            HostPort: b?.HostPort || '',
+          }));
+        }
+      }
+
+      // Mounts
       const mounts = (info.Mounts || []).map((m: { Type?: string; Source?: string; Destination?: string; Mode?: string }) => ({
         Type: m.Type || '',
         Source: m.Source || '',
         Destination: m.Destination || '',
         Mode: m.Mode || '',
       }));
+
+      // Networks
       const networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }> = {};
-      for (const [name, net] of Object.entries(info.NetworkSettings?.Networks || {})) {
-        const n = net as { IPAddress?: string; Gateway?: string; NetworkID?: string };
-        networks[name] = {
-          IPAddress: n.IPAddress || '',
-          Gateway: n.Gateway || '',
-          NetworkID: (n.NetworkID || '').substring(0, 12),
-        };
+      const rawNetworks = info.NetworkSettings?.Networks;
+      if (rawNetworks && typeof rawNetworks === 'object') {
+        for (const [name, net] of Object.entries(rawNetworks)) {
+          if (!net) continue;
+          const n = net as { IPAddress?: string; Gateway?: string; NetworkID?: string };
+          networks[name] = {
+            IPAddress: n.IPAddress || '',
+            Gateway: n.Gateway || '',
+            NetworkID: (n.NetworkID || '').substring(0, 12),
+          };
+        }
       }
+
       res.json({
         success: true,
         data: {
           env: info.Config?.Env || [],
-          ports: portBindings,
+          ports,
           mounts,
           networks,
         },
@@ -212,5 +232,15 @@ export const stackController = {
         },
       });
     } catch (err) { next(err); }
+  },
+
+  async systemFeatures(_req: Request, res: Response): Promise<void> {
+    res.json({
+      success: true,
+      data: {
+        allowConsole: config.allowConsole,
+        allowStack: config.allowStack,
+      },
+    });
   },
 };

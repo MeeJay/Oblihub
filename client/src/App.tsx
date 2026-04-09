@@ -67,9 +67,13 @@ function AppLayout({ children }: { children: React.ReactNode }) {
       .then(cfg => setObligateUrl(cfg.obligate_url ?? null))
       .catch(() => {});
 
-    systemApi.getInfo()
-      .then(info => setAllowStack(info.allowStack))
-      .catch(() => {});
+    systemApi.getFeatures()
+      .then(f => setAllowStack(f.allowStack))
+      .catch(() => {
+        systemApi.getInfo()
+          .then(info => setAllowStack(info.allowStack))
+          .catch(() => {});
+      });
   }, []);
 
   const displayName = user?.displayName || user?.username || 'User';
@@ -121,9 +125,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
           <nav className="flex-1 p-3 space-y-1">
             <SidebarLink href="/" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/' || location.pathname.startsWith('/stack/')} />
 
-            {allowStack && (
-              <SidebarLink href="/managed-stacks" icon={Layers} label="Stacks" active={location.pathname.startsWith('/managed-stacks') || location.pathname.startsWith('/stack-editor')} />
-            )}
+            <SidebarLink href="/managed-stacks" icon={Layers} label="Stacks" active={location.pathname.startsWith('/managed-stacks') || location.pathname.startsWith('/stack-editor')} />
 
             <div className="pt-3 pb-1">
               <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3">Docker</div>

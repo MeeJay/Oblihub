@@ -46,10 +46,16 @@ export function StackDetailPage() {
   useEffect(() => { load(); }, [id]);
 
   useEffect(() => {
-    systemApi.getInfo().then(info => {
-      setAllowConsole(info.allowConsole);
-      setAllowStack(info.allowStack);
-    }).catch(() => {});
+    systemApi.getFeatures().then(f => {
+      setAllowConsole(f.allowConsole);
+      setAllowStack(f.allowStack);
+    }).catch(() => {
+      // Fallback: try the full system info
+      systemApi.getInfo().then(info => {
+        setAllowConsole(info.allowConsole);
+        setAllowStack(info.allowStack);
+      }).catch(() => {});
+    });
   }, []);
 
   // Try to find linked managed stack
@@ -115,9 +121,25 @@ export function StackDetailPage() {
           {stack.composeProject && <p className="text-xs text-text-muted mt-1">Compose project: {stack.composeProject}</p>}
         </div>
         <div className="flex gap-2">
-          {managedStack && (
+          {allowStack && managedStack && (
             <button onClick={() => navigate(`/stack-editor/${managedStack.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-accent/50 text-accent hover:bg-accent/10">
               <FileEdit size={14} /> Edit Compose
+            </button>
+          )}
+          {allowStack && !managedStack && stack.composeProject && (
+            <button
+              onClick={async () => {
+                try {
+                  const created = await managedStacksApi.create({
+                    name: stack.name,
+                    composeContent: `# Imported stack: ${stack.name}\n# Add your docker-compose.yml content here\nversion: "3.8"\n\nservices:\n  # ...\n`,
+                  });
+                  navigate(`/stack-editor/${created.id}`);
+                } catch { toast.error('Failed to create managed stack'); }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover"
+            >
+              <FileEdit size={14} /> Manage Compose
             </button>
           )}
           <button onClick={() => stacksApi.check(stack.id).then(load)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
@@ -178,15 +200,19 @@ export function StackDetailPage() {
                   >
                     <Info size={14} />
                   </button>
-                  {allowConsole && (
-                    <button
-                      onClick={() => togglePanel(c.id, 'console')}
-                      className={`p-1.5 rounded-md transition-colors ${openPanels[c.id] === 'console' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'}`}
-                      title="Console"
-                    >
-                      <Terminal size={14} />
-                    </button>
-                  )}
+                  <button
+                    onClick={() => {
+                      if (!allowConsole) {
+                        toast.error('Console disabled. Set ALLOW_CONSOLE=true on server.');
+                        return;
+                      }
+                      togglePanel(c.id, 'console');
+                    }}
+                    className={`p-1.5 rounded-md transition-colors ${openPanels[c.id] === 'console' ? 'bg-accent/20 text-accent' : allowConsole ? 'text-text-muted hover:text-text-primary hover:bg-bg-hover' : 'text-text-muted/30 hover:text-text-muted hover:bg-bg-hover'}`}
+                    title={allowConsole ? 'Console' : 'Console (disabled)'}
+                  >
+                    <Terminal size={14} />
+                  </button>
                   <button
                     onClick={() => handleRestart(c)}
                     className="p-1.5 rounded-md text-text-muted hover:text-status-pending hover:bg-bg-hover transition-colors"
