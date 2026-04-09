@@ -183,8 +183,8 @@ export function DashboardPage() {
                     <div key={c.id} className={`h-2 w-2 rounded-full ${
                       c.status === 'up_to_date' ? 'bg-status-up' :
                       c.status === 'update_available' ? 'bg-status-pending' :
+                      (c.status as string) === 'stopped' ? 'bg-status-down/50' :
                       c.status === 'error' ? 'bg-status-down' :
-                      c.status === 'stopped' ? 'bg-status-down/50' :
                       c.status === 'updating' ? 'bg-accent' : 'bg-text-muted'
                     }`} title={`${c.containerName}: ${c.status}`} />
                   ))}

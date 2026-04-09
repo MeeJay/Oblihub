@@ -187,8 +187,8 @@ export function StackDetailPage() {
                 <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${
                   c.status === 'up_to_date' ? 'bg-status-up' :
                   c.status === 'update_available' ? 'bg-status-pending' :
+                  (c.status as string) === 'stopped' ? 'bg-status-down/50' :
                   c.status === 'error' ? 'bg-status-down' :
-                  c.status === 'stopped' ? 'bg-status-down/50' :
                   c.status === 'updating' ? 'bg-accent animate-pulse' : 'bg-text-muted'
                 }`} />
                 {c.status === 'stopped' && <span className="text-[10px] text-status-down/70 font-medium">Stopped</span>}

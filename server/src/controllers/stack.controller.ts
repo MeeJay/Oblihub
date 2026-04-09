@@ -23,6 +23,17 @@ export const stackController = {
     } catch (err) { next(err); }
   },
 
+  async delete(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const stack = await stackService.getById(id);
+      if (!stack) throw new AppError(404, 'Stack not found');
+      schedulerService.reschedule(id, 0, false);
+      await stackService.delete(id);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
   async update(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = parseInt(req.params.id, 10);
@@ -39,16 +50,6 @@ export const stackController = {
     } catch (err) { next(err); }
   },
 
-  async delete(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const id = parseInt(req.params.id, 10);
-      const stack = await stackService.getById(id);
-      if (!stack) throw new AppError(404, 'Stack not found');
-      await stackService.delete(id);
-      logger.info({ stackId: id, name: stack.name }, 'Stack deleted from tracking');
-      res.json({ success: true, message: 'Stack removed' });
-    } catch (err) { next(err); }
-  },
 
   async check(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
