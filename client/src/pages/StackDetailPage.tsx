@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Play, Settings2 } from 'lucide-react';
-import { stacksApi } from '@/api/stacks.api';
-import type { Stack, UpdateHistoryEntry } from '@oblihub/shared';
+import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText } from 'lucide-react';
+import { stacksApi, containersApi, systemApi } from '@/api/stacks.api';
+import { ContainerLogs } from '@/components/ContainerLogs';
+import { ContainerConsole } from '@/components/ContainerConsole';
+import type { Stack, Container, UpdateHistoryEntry } from '@oblihub/shared';
 import toast from 'react-hot-toast';
+
+type PanelType = 'logs' | 'console';
 
 export function StackDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -11,6 +15,8 @@ export function StackDetailPage() {
   const [stack, setStack] = useState<Stack | null>(null);
   const [history, setHistory] = useState<UpdateHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [allowConsole, setAllowConsole] = useState(false);
+  const [openPanels, setOpenPanels] = useState<Record<number, PanelType | null>>({});
 
   const load = async () => {
     if (!id) return;
@@ -26,6 +32,41 @@ export function StackDetailPage() {
   };
 
   useEffect(() => { load(); }, [id]);
+
+  useEffect(() => {
+    systemApi.getInfo().then(info => setAllowConsole(info.allowConsole)).catch(() => {});
+  }, []);
+
+  const togglePanel = (containerId: number, type: PanelType) => {
+    setOpenPanels(prev => ({
+      ...prev,
+      [containerId]: prev[containerId] === type ? null : type,
+    }));
+  };
+
+  const handleRestart = async (c: Container) => {
+    try {
+      await containersApi.restart(c.id);
+      toast.success(`Restarting ${c.containerName}`);
+      setTimeout(load, 3000);
+    } catch { toast.error(`Failed to restart ${c.containerName}`); }
+  };
+
+  const handleStop = async (c: Container) => {
+    try {
+      await containersApi.stop(c.id);
+      toast.success(`Stopping ${c.containerName}`);
+      setTimeout(load, 3000);
+    } catch { toast.error(`Failed to stop ${c.containerName}`); }
+  };
+
+  const handleStart = async (c: Container) => {
+    try {
+      await containersApi.start(c.id);
+      toast.success(`Starting ${c.containerName}`);
+      setTimeout(load, 3000);
+    } catch { toast.error(`Failed to start ${c.containerName}`); }
+  };
 
   if (loading) return <div className="flex items-center justify-center h-full"><div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" /></div>;
   if (!stack) return <div className="p-6 text-text-muted">Stack not found</div>;
@@ -58,30 +99,85 @@ export function StackDetailPage() {
         </div>
         <div className="divide-y divide-border">
           {stack.containers.map((c) => (
-            <div key={c.id} className="px-4 py-3 flex items-center gap-4">
-              <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-                c.status === 'up_to_date' ? 'bg-status-up' :
-                c.status === 'update_available' ? 'bg-status-pending' :
-                c.status === 'error' ? 'bg-status-down' :
-                c.status === 'updating' ? 'bg-accent animate-pulse' : 'bg-text-muted'
-              }`} />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-text-primary">{c.containerName}</div>
-                <div className="text-xs text-text-muted">{c.image}:{c.imageTag}</div>
+            <div key={c.id}>
+              <div className="px-4 py-3 flex items-center gap-4">
+                <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                  c.status === 'up_to_date' ? 'bg-status-up' :
+                  c.status === 'update_available' ? 'bg-status-pending' :
+                  c.status === 'error' ? 'bg-status-down' :
+                  c.status === 'updating' ? 'bg-accent animate-pulse' : 'bg-text-muted'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-text-primary">{c.containerName}</div>
+                  <div className="text-xs text-text-muted">{c.image}:{c.imageTag}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  {c.currentDigest && (
+                    <div className="text-[10px] font-mono text-text-muted" title={c.currentDigest}>
+                      {c.currentDigest.slice(7, 19)}
+                    </div>
+                  )}
+                  {c.latestDigest && c.latestDigest !== c.currentDigest && (
+                    <div className="text-[10px] font-mono text-status-pending" title={c.latestDigest}>
+                      &rarr; {c.latestDigest.slice(7, 19)}
+                    </div>
+                  )}
+                </div>
+                {c.excluded && <span className="text-[10px] text-text-muted bg-bg-tertiary px-1.5 py-0.5 rounded">Excluded</span>}
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => togglePanel(c.id, 'logs')}
+                    className={`p-1.5 rounded-md transition-colors ${openPanels[c.id] === 'logs' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'}`}
+                    title="Logs"
+                  >
+                    <ScrollText size={14} />
+                  </button>
+                  {allowConsole && (
+                    <button
+                      onClick={() => togglePanel(c.id, 'console')}
+                      className={`p-1.5 rounded-md transition-colors ${openPanels[c.id] === 'console' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'}`}
+                      title="Console"
+                    >
+                      <Terminal size={14} />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleRestart(c)}
+                    className="p-1.5 rounded-md text-text-muted hover:text-status-pending hover:bg-bg-hover transition-colors"
+                    title="Restart"
+                  >
+                    <RotateCcw size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleStop(c)}
+                    className="p-1.5 rounded-md text-text-muted hover:text-status-down hover:bg-bg-hover transition-colors"
+                    title="Stop"
+                  >
+                    <Square size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleStart(c)}
+                    className="p-1.5 rounded-md text-text-muted hover:text-status-up hover:bg-bg-hover transition-colors"
+                    title="Start"
+                  >
+                    <Play size={14} />
+                  </button>
+                </div>
               </div>
-              <div className="text-right shrink-0">
-                {c.currentDigest && (
-                  <div className="text-[10px] font-mono text-text-muted" title={c.currentDigest}>
-                    {c.currentDigest.slice(7, 19)}
-                  </div>
-                )}
-                {c.latestDigest && c.latestDigest !== c.currentDigest && (
-                  <div className="text-[10px] font-mono text-status-pending" title={c.latestDigest}>
-                    → {c.latestDigest.slice(7, 19)}
-                  </div>
-                )}
-              </div>
-              {c.excluded && <span className="text-[10px] text-text-muted bg-bg-tertiary px-1.5 py-0.5 rounded">Excluded</span>}
+
+              {/* Expandable panels */}
+              {openPanels[c.id] === 'logs' && (
+                <div className="px-4 pb-3">
+                  <ContainerLogs dockerId={c.dockerId} onClose={() => togglePanel(c.id, 'logs')} />
+                </div>
+              )}
+              {openPanels[c.id] === 'console' && (
+                <div className="px-4 pb-3">
+                  <ContainerConsole dockerId={c.dockerId} onClose={() => togglePanel(c.id, 'console')} />
+                </div>
+              )}
             </div>
           ))}
         </div>

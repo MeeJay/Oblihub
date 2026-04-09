@@ -100,9 +100,20 @@ export function DashboardPage() {
                   <h3 className="text-sm font-semibold text-text-primary truncate">{stack.name}</h3>
                   <StatusBadge status={status} />
                 </div>
-                <div className="text-xs text-text-muted mb-3">
+                <div className="text-xs text-text-muted mb-2">
                   {stack.containers.length} container{stack.containers.length !== 1 ? 's' : ''}
-                  {stack.composeProject && <span className="ml-2 text-text-muted">({stack.composeProject})</span>}
+                  {stack.composeProject && <span className="ml-2">({stack.composeProject})</span>}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 mb-3 text-[10px]">
+                  <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded ${stack.enabled ? 'bg-status-up/10 text-status-up' : 'bg-bg-tertiary text-text-muted'}`}>
+                    {stack.enabled ? 'Monitoring' : 'Paused'}
+                  </span>
+                  {stack.autoUpdate && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-accent/10 text-accent">
+                      Auto-update
+                    </span>
+                  )}
+                  <span className="text-text-muted">{stack.checkInterval}s</span>
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {stack.containers.map((c) => (

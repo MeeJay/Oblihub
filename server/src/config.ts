@@ -10,4 +10,7 @@ export const config = {
   discoveryIntervalMs: parseInt(process.env.DISCOVERY_INTERVAL || '30000', 10),
   defaultCheckIntervalSeconds: parseInt(process.env.DEFAULT_CHECK_INTERVAL || '60', 10),
   appName: process.env.APP_NAME || 'Oblihub',
+  allowConsole: process.env.ALLOW_CONSOLE === 'true',
+  allowStack: process.env.ALLOW_STACK === 'true',
+  stacksDir: process.env.STACKS_DIR || '/data/stacks',
 };

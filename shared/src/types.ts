@@ -91,6 +91,56 @@ export interface NotificationBinding {
   overrideMode: OverrideMode;
 }
 
+// ── Managed stack types ──
+export type ManagedStackStatus = 'draft' | 'deploying' | 'deployed' | 'stopped' | 'error';
+
+export interface ManagedStack {
+  id: number;
+  name: string;
+  composeContent: string;
+  envContent: string | null;
+  status: ManagedStackStatus;
+  composeProject: string;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Docker resource types ──
+export interface DockerImage {
+  id: string;
+  repoTags: string[];
+  repoDigests: string[];
+  size: number;
+  created: number;
+  containers: number;
+}
+
+export interface DockerNetwork {
+  id: string;
+  name: string;
+  driver: string;
+  scope: string;
+  internal: boolean;
+  attachable: boolean;
+  ipam: { subnet?: string; gateway?: string }[];
+  containers: { id: string; name: string; ipv4: string; ipv6: string }[];
+  labels: Record<string, string>;
+  composeProject: string | null;
+  created: string;
+}
+
+export interface DockerVolume {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  scope: string;
+  labels: Record<string, string>;
+  composeProject: string | null;
+  created: string;
+  usageSize: number | null;
+}
+
 // ── API response wrapper ──
 export interface ApiResponse<T = unknown> {
   success: boolean;

@@ -1,4 +1,5 @@
 import Docker from 'dockerode';
+import { Readable, Duplex } from 'stream';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
@@ -207,6 +208,70 @@ export const dockerService = {
     logger.info({ dockerId }, 'Container restarted');
   },
 
+  /** Stop a container */
+  async stopContainer(dockerId: string): Promise<void> {
+    const docker = getDocker();
+    const container = docker.getContainer(dockerId);
+    logger.info({ dockerId }, 'Stopping container...');
+    await container.stop({ t: 10 });
+    logger.info({ dockerId }, 'Container stopped');
+  },
+
+  /** Start a stopped container */
+  async startContainer(dockerId: string): Promise<void> {
+    const docker = getDocker();
+    const container = docker.getContainer(dockerId);
+    logger.info({ dockerId }, 'Starting container...');
+    await container.start();
+    logger.info({ dockerId }, 'Container started');
+  },
+
+  /** Stream container logs. Returns the stream so the caller can destroy it. */
+  async getContainerLogs(dockerId: string, tail: number = 100): Promise<Readable> {
+    const docker = getDocker();
+    const container = docker.getContainer(dockerId);
+    const stream = await container.logs({
+      follow: true,
+      stdout: true,
+      stderr: true,
+      tail,
+      timestamps: true,
+    });
+    return stream as unknown as Readable;
+  },
+
+  /** Create an exec instance for interactive shell */
+  async execContainer(dockerId: string, cols: number = 80, rows: number = 24): Promise<{ exec: Docker.Exec; stream: Duplex }> {
+    const docker = getDocker();
+    const container = docker.getContainer(dockerId);
+    const exec = await container.exec({
+      Cmd: ['/bin/sh'],
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: true,
+      Env: [`COLUMNS=${cols}`, `LINES=${rows}`, 'TERM=xterm-256color'],
+    });
+    const stream = await exec.start({ hijack: true, stdin: true, Tty: true } as Docker.ExecStartOptions);
+    return { exec, stream: stream as unknown as Duplex };
+  },
+
+  /** Resize an exec TTY */
+  async execResize(execId: string, cols: number, rows: number): Promise<void> {
+    const docker = getDocker();
+    // dockerode doesn't have a direct execResize, use modem
+    await new Promise<void>((resolve, reject) => {
+      docker.modem.dial({
+        path: `/exec/${execId}/resize?h=${rows}&w=${cols}`,
+        method: 'POST',
+        statusCodes: { 200: true, 201: true },
+      }, (err: Error | null) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  },
+
   /**
    * Clean up old renamed containers left over from a self-update.
    * Called on startup. Finds containers whose name contains "-old-" and removes them.
@@ -327,6 +392,107 @@ export const dockerService = {
     setTimeout(() => {
       process.exit(0);
     }, 1000);
+  },
+
+  // ── Docker resource management ──
+
+  /** List all images */
+  async listImages(): Promise<Docker.ImageInfo[]> {
+    const docker = getDocker();
+    return docker.listImages({ all: false });
+  },
+
+  /** Remove an image */
+  async removeImage(imageId: string, force = false): Promise<void> {
+    const docker = getDocker();
+    const image = docker.getImage(imageId);
+    await image.remove({ force });
+    logger.info({ imageId }, 'Image removed');
+  },
+
+  /** List all networks */
+  async listNetworks(): Promise<Docker.NetworkInspectInfo[]> {
+    const docker = getDocker();
+    return docker.listNetworks();
+  },
+
+  /** Inspect a network */
+  async inspectNetwork(networkId: string): Promise<Docker.NetworkInspectInfo> {
+    const docker = getDocker();
+    const network = docker.getNetwork(networkId);
+    return network.inspect();
+  },
+
+  /** Create a network */
+  async createNetwork(opts: { name: string; driver?: string; internal?: boolean; attachable?: boolean; labels?: Record<string, string>; subnet?: string; gateway?: string }): Promise<string> {
+    const docker = getDocker();
+    const createOpts: Docker.NetworkCreateOptions = {
+      Name: opts.name,
+      Driver: opts.driver || 'bridge',
+      Internal: opts.internal || false,
+      Attachable: opts.attachable !== false,
+      Labels: opts.labels || {},
+      IPAM: undefined,
+    };
+    if (opts.subnet) {
+      createOpts.IPAM = {
+        Driver: 'default',
+        Config: [{ Subnet: opts.subnet, Gateway: opts.gateway || undefined }],
+      };
+    }
+    const network = await docker.createNetwork(createOpts);
+    logger.info({ name: opts.name, id: network.id }, 'Network created');
+    return network.id;
+  },
+
+  /** Remove a network */
+  async removeNetwork(networkId: string): Promise<void> {
+    const docker = getDocker();
+    const network = docker.getNetwork(networkId);
+    await network.remove();
+    logger.info({ networkId }, 'Network removed');
+  },
+
+  /** Connect a container to a network */
+  async connectNetwork(networkId: string, containerId: string, aliases?: string[]): Promise<void> {
+    const docker = getDocker();
+    const network = docker.getNetwork(networkId);
+    await network.connect({ Container: containerId, EndpointConfig: { Aliases: aliases || [] } as Docker.EndpointSettings });
+    logger.info({ networkId, containerId }, 'Container connected to network');
+  },
+
+  /** Disconnect a container from a network */
+  async disconnectNetwork(networkId: string, containerId: string, force = false): Promise<void> {
+    const docker = getDocker();
+    const network = docker.getNetwork(networkId);
+    await network.disconnect({ Container: containerId, Force: force });
+    logger.info({ networkId, containerId }, 'Container disconnected from network');
+  },
+
+  /** List all volumes */
+  async listVolumes(): Promise<{ Volumes: Docker.VolumeInspectInfo[]; Warnings: string[] }> {
+    const docker = getDocker();
+    return docker.listVolumes();
+  },
+
+  /** Create a volume */
+  async createVolume(opts: { name: string; driver?: string; labels?: Record<string, string> }): Promise<Docker.VolumeCreateResponse> {
+    const docker = getDocker();
+    const volume = await docker.createVolume({
+      Name: opts.name,
+      Driver: opts.driver || 'local',
+      Labels: opts.labels || {},
+    });
+    logger.info({ name: opts.name }, 'Volume created');
+    return volume;
+  },
+
+  /** Remove a volume */
+  async removeVolume(name: string, force = false): Promise<void> {
+    const docker = getDocker();
+    const volume = docker.getVolume(name);
+    await volume.remove({ force });
+    logger.info({ name }, 'Volume removed');
   },
 
   /** Get Docker engine version info */

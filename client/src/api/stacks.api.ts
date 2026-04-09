@@ -28,3 +28,22 @@ export const stacksApi = {
     return res.data.data!;
   },
 };
+
+export const containersApi = {
+  async restart(id: number): Promise<void> {
+    await apiClient.post(`/containers/${id}/restart`);
+  },
+  async stop(id: number): Promise<void> {
+    await apiClient.post(`/containers/${id}/stop`);
+  },
+  async start(id: number): Promise<void> {
+    await apiClient.post(`/containers/${id}/start`);
+  },
+};
+
+export const systemApi = {
+  async getInfo(): Promise<{ dockerConnected: boolean; dockerVersion: { version: string; apiVersion: string } | null; stackCount: number; containerCount: number; allowConsole: boolean; allowStack: boolean }> {
+    const res = await apiClient.get<ApiResponse<{ dockerConnected: boolean; dockerVersion: { version: string; apiVersion: string } | null; stackCount: number; containerCount: number; allowConsole: boolean; allowStack: boolean }>>('/system');
+    return res.data.data!;
+  },
+};

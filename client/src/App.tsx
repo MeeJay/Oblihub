@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { LayoutDashboard, Settings, User, LogOut, ArrowLeftRight } from 'lucide-react';
+import { LayoutDashboard, Settings, User, LogOut, ArrowLeftRight, Layers, HardDrive, Network, Database } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { settingsApi } from '@/api/settings.api';
+import { systemApi } from '@/api/stacks.api';
 import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { StackDetailPage } from '@/pages/StackDetailPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { ProfilePage } from '@/pages/ProfilePage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
+import { ManagedStacksPage } from '@/pages/ManagedStacksPage';
+import { StackEditorPage } from '@/pages/StackEditorPage';
+import { ImagesPage } from '@/pages/ImagesPage';
+import { NetworksPage } from '@/pages/NetworksPage';
+import { VolumesPage } from '@/pages/VolumesPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isInitialized } = useAuthStore();
@@ -47,6 +53,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
 
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
   const [obligateUrl, setObligateUrl] = useState<string | null>(null);
+  const [allowStack, setAllowStack] = useState(false);
 
   useEffect(() => {
     fetch('/api/auth/connected-apps', { credentials: 'include' })
@@ -58,6 +65,10 @@ function AppLayout({ children }: { children: React.ReactNode }) {
 
     settingsApi.getAll()
       .then(cfg => setObligateUrl(cfg.obligate_url ?? null))
+      .catch(() => {});
+
+    systemApi.getInfo()
+      .then(info => setAllowStack(info.allowStack))
       .catch(() => {});
   }, []);
 
@@ -109,8 +120,25 @@ function AppLayout({ children }: { children: React.ReactNode }) {
         <aside className="w-52 shrink-0 border-r border-border bg-bg-secondary flex flex-col">
           <nav className="flex-1 p-3 space-y-1">
             <SidebarLink href="/" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/' || location.pathname.startsWith('/stack/')} />
+
+            {allowStack && (
+              <SidebarLink href="/managed-stacks" icon={Layers} label="Stacks" active={location.pathname.startsWith('/managed-stacks') || location.pathname.startsWith('/stack-editor')} />
+            )}
+
+            <div className="pt-3 pb-1">
+              <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3">Docker</div>
+            </div>
+            <SidebarLink href="/images" icon={HardDrive} label="Images" active={location.pathname === '/images'} />
+            <SidebarLink href="/networks" icon={Network} label="Networks" active={location.pathname === '/networks'} />
+            <SidebarLink href="/volumes" icon={Database} label="Volumes" active={location.pathname === '/volumes'} />
+
             {isAdmin && (
-              <SidebarLink href="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} />
+              <>
+                <div className="pt-3 pb-1">
+                  <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3">System</div>
+                </div>
+                <SidebarLink href="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} />
+              </>
             )}
           </nav>
 
@@ -144,6 +172,11 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<ProtectedRoute><AppLayout><DashboardPage /></AppLayout></ProtectedRoute>} />
         <Route path="/stack/:id" element={<ProtectedRoute><AppLayout><StackDetailPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/managed-stacks" element={<ProtectedRoute><AppLayout><ManagedStacksPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/stack-editor/:id" element={<ProtectedRoute><AppLayout><StackEditorPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/images" element={<ProtectedRoute><AppLayout><ImagesPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/networks" element={<ProtectedRoute><AppLayout><NetworksPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/volumes" element={<ProtectedRoute><AppLayout><VolumesPage /></AppLayout></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><AppLayout><SettingsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><AppLayout><ProfilePage /></AppLayout></ProtectedRoute>} />
         <Route path="*" element={<NotFoundPage />} />

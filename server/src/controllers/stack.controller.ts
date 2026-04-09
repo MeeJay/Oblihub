@@ -3,6 +3,7 @@ import { stackService } from '../services/stack.service';
 import { updateService } from '../services/update.service';
 import { schedulerService } from '../services/scheduler.service';
 import { AppError } from '../middleware/errorHandler';
+import { config } from '../config';
 import { logger } from '../utils/logger';
 
 export const stackController = {
@@ -106,6 +107,45 @@ export const stackController = {
     } catch (err) { next(err); }
   },
 
+  async restartContainer(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const container = await stackService.getContainerById(id);
+      if (!container) throw new AppError(404, 'Container not found');
+      const { dockerService } = await import('../services/docker.service');
+      dockerService.restartContainer(container.dockerId).catch((err) => {
+        logger.error({ containerId: id, err }, 'Failed to restart container');
+      });
+      res.json({ success: true, message: 'Restart started' });
+    } catch (err) { next(err); }
+  },
+
+  async stopContainer(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const container = await stackService.getContainerById(id);
+      if (!container) throw new AppError(404, 'Container not found');
+      const { dockerService } = await import('../services/docker.service');
+      dockerService.stopContainer(container.dockerId).catch((err) => {
+        logger.error({ containerId: id, err }, 'Failed to stop container');
+      });
+      res.json({ success: true, message: 'Stop started' });
+    } catch (err) { next(err); }
+  },
+
+  async startContainer(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const container = await stackService.getContainerById(id);
+      if (!container) throw new AppError(404, 'Container not found');
+      const { dockerService } = await import('../services/docker.service');
+      dockerService.startContainer(container.dockerId).catch((err) => {
+        logger.error({ containerId: id, err }, 'Failed to start container');
+      });
+      res.json({ success: true, message: 'Start started' });
+    } catch (err) { next(err); }
+  },
+
   async refreshDiscovery(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { dockerService } = await import('../services/docker.service');
@@ -132,6 +172,8 @@ export const stackController = {
           dockerVersion,
           stackCount: stacks.length,
           containerCount: totalContainers,
+          allowConsole: config.allowConsole,
+          allowStack: config.allowStack,
         },
       });
     } catch (err) { next(err); }
