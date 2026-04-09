@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package, Search, RotateCcw } from 'lucide-react';
-import { stacksApi } from '@/api/stacks.api';
+import { RefreshCw, Play, Package, Search, RotateCcw, Plus } from 'lucide-react';
+import { stacksApi, systemApi } from '@/api/stacks.api';
 import type { Stack } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
@@ -45,6 +45,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [stacks, setStacks] = useState<Stack[]>([]);
   const [loading, setLoading] = useState(true);
+  const [allowStack, setAllowStack] = useState(false);
 
   const load = async () => {
     try {
@@ -54,13 +55,23 @@ export function DashboardPage() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    systemApi.getInfo().then(info => setAllowStack(info.allowStack)).catch(() => {});
+  }, []);
 
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-text-primary">Docker Stacks</h1>
         <div className="flex items-center gap-2">
+          {allowStack && (
+            <button
+              onClick={() => navigate('/stack-editor/new')}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors">
+              <Plus size={14} /> New Stack
+            </button>
+          )}
           <button
             onClick={async () => {
               toast.loading('Checking all stacks...', { id: 'check-all' });

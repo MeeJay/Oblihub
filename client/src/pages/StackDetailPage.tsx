@@ -1,13 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info } from 'lucide-react';
 import { stacksApi, containersApi, systemApi } from '@/api/stacks.api';
+import { managedStacksApi } from '@/api/managed-stacks.api';
+import { dockerApi } from '@/api/docker.api';
 import { ContainerLogs } from '@/components/ContainerLogs';
 import { ContainerConsole } from '@/components/ContainerConsole';
-import type { Stack, Container, UpdateHistoryEntry } from '@oblihub/shared';
+import type { Stack, Container, UpdateHistoryEntry, ManagedStack, DockerNetwork } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
-type PanelType = 'logs' | 'console';
+type PanelType = 'logs' | 'console' | 'inspect';
+
+interface ContainerInspect {
+  env: string[];
+  ports: Record<string, { HostIp: string; HostPort: string }[]>;
+  mounts: { Type: string; Source: string; Destination: string; Mode: string }[];
+  networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }>;
+}
 
 export function StackDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -16,7 +25,10 @@ export function StackDetailPage() {
   const [history, setHistory] = useState<UpdateHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [allowConsole, setAllowConsole] = useState(false);
+  const [allowStack, setAllowStack] = useState(false);
+  const [managedStack, setManagedStack] = useState<ManagedStack | null>(null);
   const [openPanels, setOpenPanels] = useState<Record<number, PanelType | null>>({});
+  const [inspectData, setInspectData] = useState<Record<number, ContainerInspect | null>>({});
 
   const load = async () => {
     if (!id) return;
@@ -34,10 +46,30 @@ export function StackDetailPage() {
   useEffect(() => { load(); }, [id]);
 
   useEffect(() => {
-    systemApi.getInfo().then(info => setAllowConsole(info.allowConsole)).catch(() => {});
+    systemApi.getInfo().then(info => {
+      setAllowConsole(info.allowConsole);
+      setAllowStack(info.allowStack);
+    }).catch(() => {});
   }, []);
 
+  // Try to find linked managed stack
+  useEffect(() => {
+    if (!stack?.composeProject || !allowStack) return;
+    managedStacksApi.list().then(managed => {
+      const match = managed.find(m => m.composeProject === stack.composeProject);
+      setManagedStack(match || null);
+    }).catch(() => {});
+  }, [stack?.composeProject, allowStack]);
+
   const togglePanel = (containerId: number, type: PanelType) => {
+    if (type === 'inspect' && openPanels[containerId] !== 'inspect') {
+      // Load inspect data if not loaded
+      if (!inspectData[containerId]) {
+        containersApi.inspect(containerId).then(data => {
+          setInspectData(prev => ({ ...prev, [containerId]: data }));
+        }).catch(() => toast.error('Failed to inspect container'));
+      }
+    }
     setOpenPanels(prev => ({
       ...prev,
       [containerId]: prev[containerId] === type ? null : type,
@@ -83,6 +115,11 @@ export function StackDetailPage() {
           {stack.composeProject && <p className="text-xs text-text-muted mt-1">Compose project: {stack.composeProject}</p>}
         </div>
         <div className="flex gap-2">
+          {managedStack && (
+            <button onClick={() => navigate(`/stack-editor/${managedStack.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-accent/50 text-accent hover:bg-accent/10">
+              <FileEdit size={14} /> Edit Compose
+            </button>
+          )}
           <button onClick={() => stacksApi.check(stack.id).then(load)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
             <RefreshCw size={14} /> Check Now
           </button>
@@ -134,6 +171,13 @@ export function StackDetailPage() {
                   >
                     <ScrollText size={14} />
                   </button>
+                  <button
+                    onClick={() => togglePanel(c.id, 'inspect')}
+                    className={`p-1.5 rounded-md transition-colors ${openPanels[c.id] === 'inspect' ? 'bg-accent/20 text-accent' : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'}`}
+                    title="Inspect"
+                  >
+                    <Info size={14} />
+                  </button>
                   {allowConsole && (
                     <button
                       onClick={() => togglePanel(c.id, 'console')}
@@ -176,6 +220,86 @@ export function StackDetailPage() {
               {openPanels[c.id] === 'console' && (
                 <div className="px-4 pb-3">
                   <ContainerConsole dockerId={c.dockerId} onClose={() => togglePanel(c.id, 'console')} />
+                </div>
+              )}
+              {openPanels[c.id] === 'inspect' && (
+                <div className="px-4 pb-3">
+                  <div className="rounded-lg border border-border bg-bg-tertiary overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-bg-secondary border-b border-border">
+                      <span className="text-xs font-medium text-text-secondary">Inspect</span>
+                      <button onClick={() => togglePanel(c.id, 'inspect')} className="p-1 rounded hover:bg-bg-hover text-text-muted text-xs">&times;</button>
+                    </div>
+                    {inspectData[c.id] ? (
+                      <div className="p-3 space-y-4 text-xs max-h-80 overflow-auto">
+                        {/* Ports */}
+                        {Object.keys(inspectData[c.id]!.ports).length > 0 && (
+                          <div>
+                            <div className="font-semibold text-text-secondary mb-1.5">Ports</div>
+                            <div className="space-y-0.5">
+                              {Object.entries(inspectData[c.id]!.ports).map(([port, bindings]) => (
+                                <div key={port} className="flex gap-2 font-mono text-text-primary">
+                                  <span className="text-text-muted">{(bindings[0]?.HostIp || '0.0.0.0')}:{bindings[0]?.HostPort}</span>
+                                  <span className="text-text-muted">&rarr;</span>
+                                  <span>{port}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {/* Networks */}
+                        {Object.keys(inspectData[c.id]!.networks).length > 0 && (
+                          <div>
+                            <div className="font-semibold text-text-secondary mb-1.5">Networks</div>
+                            <div className="space-y-0.5">
+                              {Object.entries(inspectData[c.id]!.networks).map(([name, net]) => (
+                                <div key={name} className="flex gap-3 font-mono text-text-primary">
+                                  <span className="text-accent">{name}</span>
+                                  <span className="text-text-muted">IP: {net.IPAddress || '-'}</span>
+                                  <span className="text-text-muted">GW: {net.Gateway || '-'}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {/* Mounts */}
+                        {inspectData[c.id]!.mounts.length > 0 && (
+                          <div>
+                            <div className="font-semibold text-text-secondary mb-1.5">Mounts</div>
+                            <div className="space-y-0.5">
+                              {inspectData[c.id]!.mounts.map((m, i) => (
+                                <div key={i} className="font-mono text-text-primary">
+                                  <span className="text-text-muted">{m.Source}</span>
+                                  <span className="text-text-muted mx-1">&rarr;</span>
+                                  <span>{m.Destination}</span>
+                                  <span className="text-text-muted ml-2">({m.Type}{m.Mode ? `, ${m.Mode}` : ''})</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {/* Env */}
+                        <div>
+                          <div className="font-semibold text-text-secondary mb-1.5">Environment</div>
+                          <div className="space-y-0.5 max-h-40 overflow-auto">
+                            {inspectData[c.id]!.env.map((e, i) => {
+                              const idx = e.indexOf('=');
+                              const key = idx >= 0 ? e.substring(0, idx) : e;
+                              const val = idx >= 0 ? e.substring(idx + 1) : '';
+                              return (
+                                <div key={i} className="font-mono text-text-primary">
+                                  <span className="text-accent">{key}</span>
+                                  <span className="text-text-muted">=</span>
+                                  <span>{val}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 text-center text-text-muted text-xs">Loading...</div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

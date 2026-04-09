@@ -158,4 +158,27 @@ export const dockerController = {
       res.json({ success: true });
     } catch (err) { next(err); }
   },
+
+  // ── Prune ──
+
+  async pruneImages(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await dockerService.pruneImages();
+      res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  },
+
+  async pruneNetworks(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await dockerService.pruneNetworks();
+      res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  },
+
+  async pruneVolumes(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await dockerService.pruneVolumes();
+      res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  },
 };

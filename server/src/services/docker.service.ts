@@ -495,6 +495,35 @@ export const dockerService = {
     logger.info({ name }, 'Volume removed');
   },
 
+  // ── Prune operations ──
+
+  /** Prune unused images */
+  async pruneImages(): Promise<{ deleted: string[]; spaceReclaimed: number }> {
+    const docker = getDocker();
+    const result = await docker.pruneImages({ filters: { dangling: { 'false': true } } });
+    const deleted = (result.ImagesDeleted || []).map((i: { Deleted?: string; Untagged?: string }) => i.Deleted || i.Untagged || '').filter(Boolean);
+    logger.info({ count: deleted.length, space: result.SpaceReclaimed }, 'Images pruned');
+    return { deleted, spaceReclaimed: result.SpaceReclaimed || 0 };
+  },
+
+  /** Prune unused networks */
+  async pruneNetworks(): Promise<{ deleted: string[] }> {
+    const docker = getDocker();
+    const result = await docker.pruneNetworks();
+    const deleted = result.NetworksDeleted || [];
+    logger.info({ count: deleted.length }, 'Networks pruned');
+    return { deleted };
+  },
+
+  /** Prune unused volumes */
+  async pruneVolumes(): Promise<{ deleted: string[]; spaceReclaimed: number }> {
+    const docker = getDocker();
+    const result = await docker.pruneVolumes();
+    const deleted = result.VolumesDeleted || [];
+    logger.info({ count: deleted.length, space: result.SpaceReclaimed }, 'Volumes pruned');
+    return { deleted, spaceReclaimed: result.SpaceReclaimed || 0 };
+  },
+
   /** Get Docker engine version info */
   async getVersion(): Promise<{ version: string; apiVersion: string } | null> {
     try {

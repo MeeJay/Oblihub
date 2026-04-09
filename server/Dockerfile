@@ -13,6 +13,10 @@ COPY server/src/ ./server/src/
 RUN cd server && npm run build
 
 FROM node:24-alpine AS production
+
+# Install Docker CLI (needed for managed stack compose operations)
+RUN apk add --no-cache docker-cli docker-cli-compose
+
 WORKDIR /app
 
 COPY --from=builder /app/shared/package.json ./shared/

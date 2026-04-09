@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, Trash2, Plus, Network, Link, Unlink, ChevronDown, ChevronRight } from 'lucide-react';
+import { RefreshCw, Trash2, Plus, Network, Link, Unlink, ChevronDown, ChevronRight, Eraser } from 'lucide-react';
 import { dockerApi } from '@/api/docker.api';
 import type { DockerNetwork } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -78,6 +78,18 @@ export function NetworksPage() {
         <div className="flex gap-2">
           <button onClick={() => setShowCreate(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">
             <Plus size={14} /> Create
+          </button>
+          <button
+            onClick={async () => {
+              if (!confirm('Remove all unused networks?')) return;
+              try {
+                const result = await dockerApi.pruneNetworks();
+                toast.success(`Pruned ${result.deleted.length} network(s)`);
+                load();
+              } catch { toast.error('Prune failed'); }
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-status-down/30 text-status-down hover:bg-status-down/10">
+            <Eraser size={14} /> Prune
           </button>
           <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
             <RefreshCw size={14} /> Refresh

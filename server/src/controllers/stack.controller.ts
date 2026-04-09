@@ -107,6 +107,41 @@ export const stackController = {
     } catch (err) { next(err); }
   },
 
+  async inspectContainer(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const container = await stackService.getContainerById(id);
+      if (!container) throw new AppError(404, 'Container not found');
+      const { dockerService } = await import('../services/docker.service');
+      const info = await dockerService.inspectContainer(container.dockerId);
+      const portBindings = info.HostConfig?.PortBindings || {};
+      const mounts = (info.Mounts || []).map((m: { Type?: string; Source?: string; Destination?: string; Mode?: string }) => ({
+        Type: m.Type || '',
+        Source: m.Source || '',
+        Destination: m.Destination || '',
+        Mode: m.Mode || '',
+      }));
+      const networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }> = {};
+      for (const [name, net] of Object.entries(info.NetworkSettings?.Networks || {})) {
+        const n = net as { IPAddress?: string; Gateway?: string; NetworkID?: string };
+        networks[name] = {
+          IPAddress: n.IPAddress || '',
+          Gateway: n.Gateway || '',
+          NetworkID: (n.NetworkID || '').substring(0, 12),
+        };
+      }
+      res.json({
+        success: true,
+        data: {
+          env: info.Config?.Env || [],
+          ports: portBindings,
+          mounts,
+          networks,
+        },
+      });
+    } catch (err) { next(err); }
+  },
+
   async restartContainer(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = parseInt(req.params.id, 10);

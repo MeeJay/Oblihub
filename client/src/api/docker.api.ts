@@ -13,6 +13,10 @@ export const dockerApi = {
   async removeImage(id: string, force = false): Promise<void> {
     await apiClient.delete(`/docker/images/${id}?force=${force}`);
   },
+  async pruneImages(): Promise<{ deleted: string[]; spaceReclaimed: number }> {
+    const res = await apiClient.post<ApiResponse<{ deleted: string[]; spaceReclaimed: number }>>('/docker/images/prune');
+    return res.data.data!;
+  },
 
   // Networks
   async listNetworks(): Promise<DockerNetwork[]> {
@@ -25,6 +29,10 @@ export const dockerApi = {
   },
   async removeNetwork(id: string): Promise<void> {
     await apiClient.delete(`/docker/networks/${id}`);
+  },
+  async pruneNetworks(): Promise<{ deleted: string[] }> {
+    const res = await apiClient.post<ApiResponse<{ deleted: string[] }>>('/docker/networks/prune');
+    return res.data.data!;
   },
   async connectNetwork(networkId: string, containerId: string, aliases?: string[]): Promise<void> {
     await apiClient.post(`/docker/networks/${networkId}/connect`, { containerId, aliases });
@@ -43,5 +51,9 @@ export const dockerApi = {
   },
   async removeVolume(name: string, force = false): Promise<void> {
     await apiClient.delete(`/docker/volumes/${name}?force=${force}`);
+  },
+  async pruneVolumes(): Promise<{ deleted: string[]; spaceReclaimed: number }> {
+    const res = await apiClient.post<ApiResponse<{ deleted: string[]; spaceReclaimed: number }>>('/docker/volumes/prune');
+    return res.data.data!;
   },
 };

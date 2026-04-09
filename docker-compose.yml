@@ -30,8 +30,12 @@ services:
       DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
       DOCKER_SOCKET: /var/run/docker.sock
+      ALLOW_CONSOLE: ${ALLOW_CONSOLE:-false}
+      ALLOW_STACK: ${ALLOW_STACK:-false}
+      STACKS_DIR: /data/stacks
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - stacks_data:/data/stacks
 
   client:
     image: meejay/oblihub-client:${OBLIHUB_VERSION:-latest}
@@ -44,3 +48,4 @@ services:
 
 volumes:
   postgres_data:
+  stacks_data:

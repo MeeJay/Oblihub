@@ -39,6 +39,10 @@ export const containersApi = {
   async start(id: number): Promise<void> {
     await apiClient.post(`/containers/${id}/start`);
   },
+  async inspect(id: number): Promise<{ env: string[]; ports: Record<string, { HostIp: string; HostPort: string }[]>; mounts: { Type: string; Source: string; Destination: string; Mode: string }[]; networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }> }> {
+    const res = await apiClient.get<ApiResponse<{ env: string[]; ports: Record<string, { HostIp: string; HostPort: string }[]>; mounts: { Type: string; Source: string; Destination: string; Mode: string }[]; networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }> }>>(`/containers/${id}/inspect`);
+    return res.data.data!;
+  },
 };
 
 export const systemApi = {
