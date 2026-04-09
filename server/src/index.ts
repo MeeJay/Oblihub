@@ -54,6 +54,7 @@ async function main() {
 
   server.listen(config.port, () => {
     logger.info(`Oblihub server listening on port ${config.port}`);
+    logger.info({ allowConsole: config.allowConsole, allowStack: config.allowStack, stacksDir: config.stacksDir }, 'Feature flags');
   });
 
   // Graceful shutdown

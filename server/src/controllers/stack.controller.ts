@@ -235,6 +235,7 @@ export const stackController = {
   },
 
   async systemFeatures(_req: Request, res: Response): Promise<void> {
+    logger.info({ allowConsole: config.allowConsole, allowStack: config.allowStack, rawConsole: process.env.ALLOW_CONSOLE, rawStack: process.env.ALLOW_STACK }, 'Features requested');
     res.json({
       success: true,
       data: {
