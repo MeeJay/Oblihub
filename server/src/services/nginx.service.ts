@@ -86,7 +86,7 @@ function generateProxyHostConfig(host: ProxyHost): string {
 
     # ACME challenge
     location /.well-known/acme-challenge/ {
-        root /etc/nginx/acme-challenge;
+        alias /etc/nginx/acme-challenge/;
     }
 
     location / {
@@ -114,7 +114,7 @@ function generateProxyHostConfig(host: ProxyHost): string {
 
   // ACME challenge (always serve)
   conf += `    location /.well-known/acme-challenge/ {
-        root /etc/nginx/acme-challenge;
+        alias /etc/nginx/acme-challenge/;
     }\n\n`;
 
   if (host.hstsEnabled && hasCert) {
@@ -252,7 +252,7 @@ http {
         server_name _;
 
         location /.well-known/acme-challenge/ {
-            root /etc/nginx/acme-challenge;
+            alias /etc/nginx/acme-challenge/;
         }
 
         location / {

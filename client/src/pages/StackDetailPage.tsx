@@ -372,7 +372,14 @@ export function StackDetailPage() {
         <div className="rounded-xl border border-border bg-bg-secondary mb-6">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <h2 className="text-sm font-semibold text-text-secondary flex items-center gap-1.5"><Globe size={14} /> Proxy Hosts</h2>
-            <button onClick={() => { setShowQuickSetup(true); setQuickSetup(q => ({ ...q, containerId: stack.containers[0]?.id || 0, domains: [], domainInput: '' })); }}
+            <button onClick={() => {
+              const prefillDomains: string[] = [];
+              if (stack.url) {
+                try { prefillDomains.push(new URL(stack.url).hostname); } catch { /* ignore */ }
+              }
+              setShowQuickSetup(true);
+              setQuickSetup(q => ({ ...q, containerId: stack.containers[0]?.id || 0, domains: prefillDomains, domainInput: '' }));
+            }}
               className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg bg-accent text-white hover:bg-accent-hover">
               <Plus size={12} /> Add Proxy Host
             </button>
@@ -501,6 +508,15 @@ export function StackDetailPage() {
                     toast.success('Proxy host created!');
                     setShowQuickSetup(false);
                     proxyApi.getHostsByStack(stack.id).then(setProxyHosts);
+                    // Auto-fill Stack URL if empty
+                    if (!stack.url && quickSetup.domains.length > 0) {
+                      const scheme = quickSetup.requestCert ? 'https' : 'http';
+                      const autoUrl = `${scheme}://${quickSetup.domains[0]}`;
+                      stacksApi.update(stack.id, { url: autoUrl }).then(updated => {
+                        setStack(updated);
+                        toast.success(`Stack URL set to ${autoUrl}`);
+                      }).catch(() => {});
+                    }
                   } catch { toast.error('Failed to create proxy host'); }
                 }}
                 className="px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover"
