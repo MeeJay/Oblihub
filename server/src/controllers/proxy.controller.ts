@@ -1,7 +1,10 @@
 import type { Request, Response, NextFunction } from 'express';
 import { proxyHostService, redirectionService, streamService, deadHostService, certificateService, accessListService } from '../services/proxy.service';
+import { stackService } from '../services/stack.service';
+import { dockerService } from '../services/docker.service';
 import { nginxService } from '../services/nginx.service';
 import { letsEncryptService } from '../services/certificate.service';
+import { config } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 
@@ -223,6 +226,92 @@ export const proxyController = {
     try {
       const result = await nginxService.testConfig();
       res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  },
+
+  // ── Stack integration ──
+
+  async getProxyHostsByStack(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const stackId = parseInt(req.params.stackId, 10);
+      const hosts = await proxyHostService.getByStackId(stackId);
+      res.json({ success: true, data: hosts });
+    } catch (err) { next(err); }
+  },
+
+  async quickSetupProxyHost(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { stackId, containerId, domainNames, forwardPort, requestCertificate, acmeEmail } = req.body as {
+        stackId: number; containerId: number; domainNames: string[]; forwardPort: number;
+        requestCertificate?: boolean; acmeEmail?: string;
+      };
+
+      if (!domainNames?.length) throw new AppError(400, 'At least one domain required');
+      if (!forwardPort) throw new AppError(400, 'Forward port required');
+
+      // Lookup container to get its name for Docker DNS
+      const container = await stackService.getContainerById(containerId);
+      if (!container) throw new AppError(404, 'Container not found');
+
+      // Create certificate if requested
+      let certificateId: number | null = null;
+      if (requestCertificate) {
+        if (!acmeEmail) throw new AppError(400, 'Email required for Let\'s Encrypt');
+        const cert = await certificateService.create({ domainNames, provider: 'letsencrypt', acmeEmail });
+        certificateId = cert.id;
+        // Start LE provisioning in background
+        letsEncryptService.requestCertificate(cert.id, domainNames, acmeEmail).catch(err => {
+          logger.error({ certId: cert.id, err }, 'Background cert provisioning failed');
+        });
+      }
+
+      // Create proxy host with sensible defaults
+      const host = await proxyHostService.create({
+        domainNames,
+        forwardScheme: 'http',
+        forwardHost: container.containerName,
+        forwardPort,
+        certificateId,
+        sslForced: !!requestCertificate,
+        http2Support: !!requestCertificate,
+        hstsEnabled: false,
+        hstsSubdomains: false,
+        blockExploits: true,
+        cachingEnabled: false,
+        websocketSupport: true,
+        enabled: true,
+        stackId,
+      });
+
+      await nginxService.regenerateAndReload();
+      logger.info({ hostId: host.id, domains: domainNames, forward: `${container.containerName}:${forwardPort}` }, 'Quick setup proxy host created');
+      res.json({ success: true, data: host });
+    } catch (err) { next(err); }
+  },
+
+  async getProxyStatus(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      // Check if proxy container is running
+      let nginxRunning = false;
+      try {
+        const containers = await dockerService.listContainers();
+        nginxRunning = containers.some(c => c.labels['oblihub.proxy'] === 'true');
+      } catch { /* ignore */ }
+
+      const allHosts = await proxyHostService.getAll();
+      const allCerts = await certificateService.getAll();
+
+      res.json({
+        success: true,
+        data: {
+          nginxRunning,
+          proxyHostCount: allHosts.length,
+          enabledHostCount: allHosts.filter(h => h.enabled).length,
+          certificateCount: allCerts.length,
+          validCertCount: allCerts.filter(c => c.status === 'valid').length,
+          expiringSoon: allCerts.filter(c => c.status === 'valid' && c.expiresAt && new Date(c.expiresAt).getTime() < Date.now() + 14 * 24 * 60 * 60 * 1000).length,
+        },
+      });
     } catch (err) { next(err); }
   },
 };

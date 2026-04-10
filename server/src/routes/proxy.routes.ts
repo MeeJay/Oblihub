@@ -17,6 +17,8 @@ router.use((_req: Request, res: Response, next: NextFunction) => {
 
 // Proxy hosts
 router.get('/hosts', proxyController.listProxyHosts);
+router.get('/hosts/by-stack/:stackId', proxyController.getProxyHostsByStack);
+router.post('/hosts/quick-setup', proxyController.quickSetupProxyHost);
 router.get('/hosts/:id', proxyController.getProxyHost);
 router.post('/hosts', proxyController.createProxyHost);
 router.put('/hosts/:id', proxyController.updateProxyHost);
@@ -50,6 +52,9 @@ router.delete('/dead-hosts/:id', proxyController.deleteDeadHost);
 router.get('/access-lists', proxyController.listAccessLists);
 router.post('/access-lists', proxyController.createAccessList);
 router.delete('/access-lists/:id', proxyController.deleteAccessList);
+
+// Status
+router.get('/status', proxyController.getProxyStatus);
 
 // Nginx control
 router.post('/nginx/reload', proxyController.reloadNginx);

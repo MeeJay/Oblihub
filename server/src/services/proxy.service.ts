@@ -151,6 +151,11 @@ export const proxyHostService = {
     return row ? proxyRow(row, await getCert(row.certificate_id)) : null;
   },
 
+  async getByStackId(stackId: number): Promise<ProxyHost[]> {
+    const rows = await db('proxy_hosts').where({ stack_id: stackId }).orderBy('id');
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id))));
+  },
+
   async create(data: Partial<ProxyHost>): Promise<ProxyHost> {
     const [row] = await db('proxy_hosts').insert({
       domain_names: JSON.stringify(data.domainNames || []),

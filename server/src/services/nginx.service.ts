@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
+import { db } from '../db';
 import { dockerService } from './docker.service';
 import { proxyHostService, redirectionService, streamService, deadHostService, accessListService } from './proxy.service';
 import type { ProxyHost, RedirectionHost, DeadHost, AccessList } from '@oblihub/shared';
@@ -69,7 +70,10 @@ function accessListBlock(listId: number, _list?: AccessList): string {
 function generateProxyHostConfig(host: ProxyHost): string {
   const domains = host.domainNames.join(' ');
   const upstream = `${host.forwardScheme}://${host.forwardHost}:${host.forwardPort}`;
-  const hasCert = host.certificate && host.certificate.status === 'valid' && host.certificateId;
+  const certFile = path.join(CERTS_DIR, `host_${host.id}.crt`);
+  const keyFile = path.join(CERTS_DIR, `host_${host.id}.key`);
+  const hasCert = host.certificate && host.certificate.status === 'valid' && host.certificateId
+    && fs.existsSync(certFile) && fs.existsSync(keyFile);
 
   let conf = `# Proxy Host ${host.id} - ${domains}\n`;
 
@@ -320,14 +324,22 @@ export const nginxService = {
       fs.writeFileSync(path.join(STREAM_DIR, filename), generateStreamConfig(s));
     }
 
-    // Generate htpasswd files for access lists
+    // Generate htpasswd files for access lists (using stored hashes)
     const accessLists = await accessListService.getAll();
     for (const list of accessLists) {
-      const htpasswdContent = list.auth.map(a => `${a.username}:{PLAIN}password`).join('\n'); // TODO: proper hash
+      const authRows = await db('access_list_auth').where({ access_list_id: list.id });
+      const htpasswdContent = authRows.map((a: { username: string; password_hash: string }) => `${a.username}:${a.password_hash}`).join('\n');
       fs.writeFileSync(path.join(HTPASSWD_DIR, `access_list_${list.id}`), htpasswdContent);
     }
 
     logger.info({ proxyHosts: proxyHosts.length, redirections: redirections.length, streams: streams.length }, 'Nginx configs regenerated');
+
+    // Test config before reloading
+    const testResult = await this.testConfig();
+    if (!testResult.valid) {
+      logger.error({ error: testResult.error }, 'Nginx config test failed, skipping reload');
+      throw new Error(`Nginx config invalid: ${testResult.error}`);
+    }
 
     // Reload nginx container
     await this.reloadProxy();

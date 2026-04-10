@@ -2,6 +2,7 @@ import * as acme from 'acme-client';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { db } from '../db';
 import { certificateService } from './proxy.service';
 import { nginxService } from './nginx.service';
 import { logger } from '../utils/logger';
@@ -155,6 +156,30 @@ export const letsEncryptService = {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       await certificateService.updateStatus(certId, 'error', undefined, msg);
+    }
+  },
+
+  /** Check for certificates expiring within 30 days and auto-renew */
+  async checkRenewals(): Promise<void> {
+    try {
+      const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const certs = await db('certificates')
+        .where({ provider: 'letsencrypt', status: 'valid' })
+        .whereNotNull('expires_at')
+        .where('expires_at', '<', thirtyDaysFromNow);
+
+      for (const cert of certs) {
+        const domains = cert.domain_names as string[];
+        const email = cert.acme_email as string;
+        if (domains?.length && email) {
+          logger.info({ certId: cert.id, domains, expiresAt: cert.expires_at }, 'Auto-renewing LE certificate');
+          this.requestCertificate(cert.id, domains, email).catch(err => {
+            logger.error({ certId: cert.id, err }, 'Auto-renewal failed');
+          });
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'Certificate renewal check failed');
     }
   },
 };

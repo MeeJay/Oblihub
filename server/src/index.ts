@@ -52,9 +52,16 @@ async function main() {
   // Start per-stack check scheduler
   await schedulerService.startAll();
 
+  // Start certificate auto-renewal check (every 12 hours)
+  if (config.allowNginx) {
+    const { letsEncryptService } = await import('./services/certificate.service');
+    setInterval(() => letsEncryptService.checkRenewals(), 12 * 60 * 60 * 1000);
+    logger.info('Certificate auto-renewal scheduler started (12h interval)');
+  }
+
   server.listen(config.port, () => {
     logger.info(`Oblihub server listening on port ${config.port}`);
-    logger.info({ allowConsole: config.allowConsole, allowStack: config.allowStack, stacksDir: config.stacksDir }, 'Feature flags');
+    logger.info({ allowConsole: config.allowConsole, allowStack: config.allowStack, allowNginx: config.allowNginx, stacksDir: config.stacksDir }, 'Feature flags');
   });
 
   // Graceful shutdown

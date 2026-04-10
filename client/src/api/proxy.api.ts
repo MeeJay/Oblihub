@@ -103,6 +103,22 @@ export const proxyApi = {
     await apiClient.delete(`/proxy/access-lists/${id}`);
   },
 
+  // Stack integration
+  async getHostsByStack(stackId: number): Promise<ProxyHost[]> {
+    const res = await apiClient.get<ApiResponse<ProxyHost[]>>(`/proxy/hosts/by-stack/${stackId}`);
+    return res.data.data!;
+  },
+  async quickSetup(data: { stackId: number; containerId: number; domainNames: string[]; forwardPort: number; requestCertificate?: boolean; acmeEmail?: string }): Promise<ProxyHost> {
+    const res = await apiClient.post<ApiResponse<ProxyHost>>('/proxy/hosts/quick-setup', data);
+    return res.data.data!;
+  },
+
+  // Status
+  async getStatus(): Promise<{ nginxRunning: boolean; proxyHostCount: number; enabledHostCount: number; certificateCount: number; validCertCount: number; expiringSoon: number }> {
+    const res = await apiClient.get<ApiResponse<{ nginxRunning: boolean; proxyHostCount: number; enabledHostCount: number; certificateCount: number; validCertCount: number; expiringSoon: number }>>('/proxy/status');
+    return res.data.data!;
+  },
+
   // Nginx control
   async reloadNginx(): Promise<void> {
     await apiClient.post('/proxy/nginx/reload');

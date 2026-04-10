@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { settingsApi } from '@/api/settings.api';
 import { notificationsApi, type PluginMeta } from '@/api/notifications.api';
+import { systemApi } from '@/api/stacks.api';
+import { proxyApi } from '@/api/proxy.api';
 import { useAuthStore } from '@/store/authStore';
 import type { NotificationChannel } from '@oblihub/shared';
 import toast from 'react-hot-toast';
-import { Save, Plus, Trash2, Send, ChevronDown, ChevronRight, Power, PowerOff, X } from 'lucide-react';
+import { Save, Plus, Trash2, Send, ChevronDown, ChevronRight, Power, PowerOff, X, Globe, RefreshCw, Shield, CheckCircle } from 'lucide-react';
 
 // ── Obligate SSO Section ──
 function SsoSection({ config, setConfig, onSave, saving }: {
@@ -450,7 +452,88 @@ export function SettingsPage() {
       <SsoSection config={config} setConfig={setConfig} onSave={handleSave} saving={saving} />
       <DefaultSettingsSection config={config} setConfig={setConfig} onSave={handleSave} saving={saving} />
       <NotificationChannelsSection />
+      <ProxyStatusSection />
       <SystemInfoSection />
+    </div>
+  );
+}
+
+// ── Proxy Status Section ──
+function ProxyStatusSection() {
+  const [status, setStatus] = useState<{ nginxRunning: boolean; proxyHostCount: number; enabledHostCount: number; certificateCount: number; validCertCount: number; expiringSoon: number } | null>(null);
+  const [allowNginx, setAllowNginx] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [reloading, setReloading] = useState(false);
+
+  useEffect(() => {
+    systemApi.getFeatures().then(f => {
+      setAllowNginx(f.allowNginx);
+      if (f.allowNginx) {
+        proxyApi.getStatus().then(setStatus).catch(() => {});
+      }
+    }).catch(() => {});
+  }, []);
+
+  if (!allowNginx) return null;
+
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary p-4 mb-6">
+      <h2 className="text-sm font-semibold text-text-secondary mb-4 flex items-center gap-1.5"><Globe size={14} /> Nginx Proxy Status</h2>
+      {status ? (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <div className={`h-3 w-3 rounded-full ${status.nginxRunning ? 'bg-status-up' : 'bg-status-down'}`} />
+            <span className="text-sm text-text-primary font-medium">{status.nginxRunning ? 'Running' : 'Stopped'}</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-lg bg-bg-tertiary p-3 text-center">
+              <div className="text-lg font-semibold text-text-primary">{status.enabledHostCount}</div>
+              <div className="text-[10px] text-text-muted">Active Hosts</div>
+            </div>
+            <div className="rounded-lg bg-bg-tertiary p-3 text-center">
+              <div className="text-lg font-semibold text-text-primary">{status.proxyHostCount}</div>
+              <div className="text-[10px] text-text-muted">Total Hosts</div>
+            </div>
+            <div className="rounded-lg bg-bg-tertiary p-3 text-center">
+              <div className="text-lg font-semibold text-status-up">{status.validCertCount}</div>
+              <div className="text-[10px] text-text-muted">Valid Certs</div>
+            </div>
+            <div className="rounded-lg bg-bg-tertiary p-3 text-center">
+              <div className={`text-lg font-semibold ${status.expiringSoon > 0 ? 'text-status-pending' : 'text-text-primary'}`}>{status.expiringSoon}</div>
+              <div className="text-[10px] text-text-muted">Expiring Soon</div>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                setReloading(true);
+                try { await proxyApi.reloadNginx(); toast.success('Nginx reloaded'); proxyApi.getStatus().then(setStatus); }
+                catch { toast.error('Reload failed'); }
+                finally { setReloading(false); }
+              }}
+              disabled={reloading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-text-secondary hover:bg-bg-hover disabled:opacity-50">
+              <RefreshCw size={12} className={reloading ? 'animate-spin' : ''} /> Reload Nginx
+            </button>
+            <button
+              onClick={async () => {
+                setTesting(true);
+                try {
+                  const result = await proxyApi.testNginx();
+                  if (result.valid) toast.success('Config is valid');
+                  else toast.error(`Config invalid: ${result.error}`);
+                } catch { toast.error('Test failed'); }
+                finally { setTesting(false); }
+              }}
+              disabled={testing}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-text-secondary hover:bg-bg-hover disabled:opacity-50">
+              <CheckCircle size={12} /> Test Config
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs text-text-muted">Loading proxy status...</div>
+      )}
     </div>
   );
 }

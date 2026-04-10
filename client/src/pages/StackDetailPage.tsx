@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info, Trash2, ExternalLink } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info, Trash2, ExternalLink, Globe, Plus, Power, PowerOff, Shield } from 'lucide-react';
 import { stacksApi, containersApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
+import { proxyApi } from '@/api/proxy.api';
 import { ContainerLogs } from '@/components/ContainerLogs';
 import { ContainerConsole } from '@/components/ContainerConsole';
-import type { Stack, Container, UpdateHistoryEntry, ManagedStack, DockerNetwork } from '@oblihub/shared';
+import type { Stack, Container, UpdateHistoryEntry, ManagedStack, ProxyHost } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 type PanelType = 'logs' | 'console' | 'inspect';
@@ -27,8 +28,12 @@ export function StackDetailPage() {
   const [allowStack, setAllowStack] = useState(false);
   const [selfProject, setSelfProject] = useState<string | null>(null);
   const [managedStack, setManagedStack] = useState<ManagedStack | null>(null);
+  const [allowNginx, setAllowNginx] = useState(false);
   const [openPanels, setOpenPanels] = useState<Record<number, PanelType | null>>({});
   const [inspectData, setInspectData] = useState<Record<number, ContainerInspect | null>>({});
+  const [proxyHosts, setProxyHosts] = useState<ProxyHost[]>([]);
+  const [showQuickSetup, setShowQuickSetup] = useState(false);
+  const [quickSetup, setQuickSetup] = useState({ containerId: 0, domainInput: '', domains: [] as string[], forwardPort: 80, requestCert: false, acmeEmail: localStorage.getItem('oblihub_acme_email') || '' });
 
   const load = async () => {
     if (!id) return;
@@ -49,6 +54,7 @@ export function StackDetailPage() {
     systemApi.getFeatures().then(f => {
       setAllowConsole(f.allowConsole);
       setAllowStack(f.allowStack);
+      setAllowNginx(f.allowNginx);
       setSelfProject(f.selfProject);
     }).catch(() => {
       // Fallback: try the full system info
@@ -58,6 +64,12 @@ export function StackDetailPage() {
       }).catch(() => {});
     });
   }, []);
+
+  // Load proxy hosts linked to this stack
+  useEffect(() => {
+    if (!stack || !allowNginx) return;
+    proxyApi.getHostsByStack(stack.id).then(setProxyHosts).catch(() => {});
+  }, [stack?.id, allowNginx]);
 
   // Try to find linked managed stack
   useEffect(() => {
@@ -354,6 +366,151 @@ export function StackDetailPage() {
           ))}
         </div>
       </div>
+
+      {/* Proxy Hosts */}
+      {allowNginx && (
+        <div className="rounded-xl border border-border bg-bg-secondary mb-6">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-text-secondary flex items-center gap-1.5"><Globe size={14} /> Proxy Hosts</h2>
+            <button onClick={() => { setShowQuickSetup(true); setQuickSetup(q => ({ ...q, containerId: stack.containers[0]?.id || 0, domains: [], domainInput: '' })); }}
+              className="flex items-center gap-1 px-2 py-1 text-xs rounded-lg bg-accent text-white hover:bg-accent-hover">
+              <Plus size={12} /> Add Proxy Host
+            </button>
+          </div>
+          {proxyHosts.length > 0 ? (
+            <div className="divide-y divide-border">
+              {proxyHosts.map(ph => (
+                <div key={ph.id} className="px-4 py-2.5 flex items-center gap-3">
+                  <div className={`h-2 w-2 rounded-full shrink-0 ${ph.enabled ? (ph.certificate?.status === 'valid' ? 'bg-status-up' : 'bg-status-pending') : 'bg-text-muted'}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-text-primary">{ph.domainNames.join(', ')}</div>
+                    <div className="text-[10px] text-text-muted">{ph.forwardScheme}://{ph.forwardHost}:{ph.forwardPort}</div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {ph.sslForced && <span className="text-[9px] px-1 py-0.5 rounded bg-status-up/10 text-status-up">SSL</span>}
+                    {ph.websocketSupport && <span className="text-[9px] px-1 py-0.5 rounded bg-accent/10 text-accent">WS</span>}
+                    {ph.certificate && <span className={`text-[9px] px-1 py-0.5 rounded ${ph.certificate.status === 'valid' ? 'bg-status-up/10 text-status-up' : 'bg-status-pending/10 text-status-pending'}`}><Shield size={8} className="inline mr-0.5" />{ph.certificate.status}</span>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={async () => { await proxyApi.toggleHost(ph.id); proxyApi.getHostsByStack(stack.id).then(setProxyHosts); }}
+                      className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover" title={ph.enabled ? 'Disable' : 'Enable'}>
+                      {ph.enabled ? <Power size={12} /> : <PowerOff size={12} />}
+                    </button>
+                    <button onClick={async () => { if (confirm('Delete this proxy host?')) { await proxyApi.deleteHost(ph.id); toast.success('Deleted'); proxyApi.getHostsByStack(stack.id).then(setProxyHosts); } }}
+                      className="p-1 rounded text-text-muted hover:text-status-down hover:bg-bg-hover">
+                      <Trash2 size={12} />
+                    </button>
+                    <a href={`https://${ph.domainNames[0]}`} target="_blank" rel="noopener noreferrer" className="p-1 rounded text-text-muted hover:text-accent hover:bg-bg-hover">
+                      <ExternalLink size={12} />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 py-6 text-center text-xs text-text-muted">No proxy hosts linked to this stack</div>
+          )}
+        </div>
+      )}
+
+      {/* Quick Setup Modal */}
+      {showQuickSetup && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 bg-black/50" onClick={() => setShowQuickSetup(false)}>
+          <div className="rounded-xl border border-border bg-bg-primary w-full max-w-lg shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-border">
+              <h2 className="text-sm font-semibold text-text-primary">Quick Proxy Setup</h2>
+              <p className="text-xs text-text-muted mt-0.5">Link a domain to a container in this stack</p>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Container picker */}
+              <div>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">Container</label>
+                <select value={quickSetup.containerId} onChange={e => setQuickSetup(q => ({ ...q, containerId: parseInt(e.target.value) }))}
+                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+                  {stack.containers.map(c => (
+                    <option key={c.id} value={c.id}>{c.containerName} ({c.image}:{c.imageTag})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Port */}
+              <div>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">Forward Port</label>
+                <input type="number" value={quickSetup.forwardPort} onChange={e => setQuickSetup(q => ({ ...q, forwardPort: parseInt(e.target.value) || 80 }))}
+                  placeholder="80" className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+              </div>
+
+              {/* Domain names */}
+              <div>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">Domain Names</label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {quickSetup.domains.map(d => (
+                    <span key={d} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-accent/10 text-accent text-xs font-mono">
+                      {d} <button onClick={() => setQuickSetup(q => ({ ...q, domains: q.domains.filter(x => x !== d) }))} className="hover:text-status-down">&times;</button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input value={quickSetup.domainInput} onChange={e => setQuickSetup(q => ({ ...q, domainInput: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const d = quickSetup.domainInput.trim().toLowerCase(); if (d && !quickSetup.domains.includes(d)) setQuickSetup(q => ({ ...q, domains: [...q.domains, d], domainInput: '' })); } }}
+                    placeholder="app.example.com" className="flex-1 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  <button onClick={() => { const d = quickSetup.domainInput.trim().toLowerCase(); if (d && !quickSetup.domains.includes(d)) setQuickSetup(q => ({ ...q, domains: [...q.domains, d], domainInput: '' })); }}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">Add</button>
+                </div>
+              </div>
+
+              {/* Let's Encrypt */}
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+                  <input type="checkbox" checked={quickSetup.requestCert} onChange={e => setQuickSetup(q => ({ ...q, requestCert: e.target.checked }))} className="rounded" />
+                  <Shield size={12} /> Request Let's Encrypt SSL certificate
+                </label>
+                {quickSetup.requestCert && (
+                  <input value={quickSetup.acmeEmail} onChange={e => setQuickSetup(q => ({ ...q, acmeEmail: e.target.value }))}
+                    placeholder="admin@example.com" type="email"
+                    className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                )}
+              </div>
+
+              {/* Preview */}
+              {quickSetup.domains.length > 0 && quickSetup.containerId > 0 && (
+                <div className="rounded-lg bg-bg-tertiary p-3 text-xs">
+                  <div className="text-text-muted mb-1">Preview:</div>
+                  <div className="font-mono text-text-primary">
+                    {quickSetup.domains[0]} &rarr; http://{stack.containers.find(c => c.id === quickSetup.containerId)?.containerName}:{quickSetup.forwardPort}
+                  </div>
+                  <div className="text-text-muted mt-1">WebSocket: on, Block Exploits: on{quickSetup.requestCert ? ', SSL: on, HTTP/2: on' : ''}</div>
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-border flex justify-end gap-2">
+              <button onClick={() => setShowQuickSetup(false)} className="px-4 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">Cancel</button>
+              <button
+                onClick={async () => {
+                  if (!quickSetup.domains.length) { toast.error('Enter at least one domain'); return; }
+                  if (quickSetup.requestCert) localStorage.setItem('oblihub_acme_email', quickSetup.acmeEmail);
+                  try {
+                    await proxyApi.quickSetup({
+                      stackId: stack.id,
+                      containerId: quickSetup.containerId,
+                      domainNames: quickSetup.domains,
+                      forwardPort: quickSetup.forwardPort,
+                      requestCertificate: quickSetup.requestCert,
+                      acmeEmail: quickSetup.acmeEmail || undefined,
+                    });
+                    toast.success('Proxy host created!');
+                    setShowQuickSetup(false);
+                    proxyApi.getHostsByStack(stack.id).then(setProxyHosts);
+                  } catch { toast.error('Failed to create proxy host'); }
+                }}
+                className="px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover"
+              >
+                Create Proxy Host
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Config */}
       <div className="rounded-xl border border-border bg-bg-secondary mb-6 p-4">
