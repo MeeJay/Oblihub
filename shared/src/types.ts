@@ -142,6 +142,112 @@ export interface DockerVolume {
   usageSize: number | null;
 }
 
+// ── Proxy types ──
+export type CertificateProvider = 'letsencrypt' | 'custom' | 'selfsigned';
+export type CertificateStatus = 'pending' | 'valid' | 'expired' | 'error';
+
+export interface Certificate {
+  id: number;
+  domainNames: string[];
+  provider: CertificateProvider;
+  expiresAt: string | null;
+  status: CertificateStatus;
+  errorMessage: string | null;
+  acmeEmail: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProxyHost {
+  id: number;
+  domainNames: string[];
+  forwardScheme: 'http' | 'https';
+  forwardHost: string;
+  forwardPort: number;
+  certificateId: number | null;
+  sslForced: boolean;
+  http2Support: boolean;
+  hstsEnabled: boolean;
+  hstsSubdomains: boolean;
+  blockExploits: boolean;
+  cachingEnabled: boolean;
+  websocketSupport: boolean;
+  accessListId: number | null;
+  advancedConfig: string | null;
+  enabled: boolean;
+  stackId: number | null;
+  certificate?: Certificate | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RedirectionHost {
+  id: number;
+  domainNames: string[];
+  forwardScheme: 'http' | 'https';
+  forwardDomain: string;
+  forwardPath: string;
+  preservePath: boolean;
+  certificateId: number | null;
+  sslForced: boolean;
+  http2Support: boolean;
+  hstsEnabled: boolean;
+  blockExploits: boolean;
+  advancedConfig: string | null;
+  enabled: boolean;
+  certificate?: Certificate | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StreamHost {
+  id: number;
+  incomingPort: number;
+  forwardingHost: string;
+  forwardingPort: number;
+  tcpForwarding: boolean;
+  udpForwarding: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DeadHost {
+  id: number;
+  domainNames: string[];
+  certificateId: number | null;
+  sslForced: boolean;
+  http2Support: boolean;
+  hstsEnabled: boolean;
+  advancedConfig: string | null;
+  enabled: boolean;
+  certificate?: Certificate | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccessList {
+  id: number;
+  name: string;
+  satisfyAny: boolean;
+  passAuth: boolean;
+  clients: AccessListClient[];
+  auth: AccessListAuth[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccessListClient {
+  id: number;
+  address: string;
+  directive: 'allow' | 'deny';
+}
+
+export interface AccessListAuth {
+  id: number;
+  username: string;
+}
+
 // ── API response wrapper ──
 export interface ApiResponse<T = unknown> {
   success: boolean;

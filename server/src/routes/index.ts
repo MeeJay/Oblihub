@@ -8,6 +8,7 @@ import settingsRoutes from './settings.routes';
 import profileRoutes from './profile.routes';
 import dockerRoutes from './docker.routes';
 import managedStackRoutes from './managed-stacks.routes';
+import proxyRoutes from './proxy.routes';
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use('/settings', settingsRoutes);
 router.use('/profile', profileRoutes);
 router.use('/docker', dockerRoutes);
 router.use('/managed-stacks', managedStackRoutes);
+router.use('/proxy', proxyRoutes);
 
 export { router as routes };

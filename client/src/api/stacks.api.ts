@@ -49,12 +49,12 @@ export const containersApi = {
 };
 
 export const systemApi = {
-  async getInfo(): Promise<{ dockerConnected: boolean; dockerVersion: { version: string; apiVersion: string } | null; stackCount: number; containerCount: number; allowConsole: boolean; allowStack: boolean }> {
-    const res = await apiClient.get<ApiResponse<{ dockerConnected: boolean; dockerVersion: { version: string; apiVersion: string } | null; stackCount: number; containerCount: number; allowConsole: boolean; allowStack: boolean }>>('/system');
+  async getInfo(): Promise<{ dockerConnected: boolean; dockerVersion: { version: string; apiVersion: string } | null; stackCount: number; containerCount: number; allowConsole: boolean; allowStack: boolean; allowNginx: boolean }> {
+    const res = await apiClient.get<ApiResponse<{ dockerConnected: boolean; dockerVersion: { version: string; apiVersion: string } | null; stackCount: number; containerCount: number; allowConsole: boolean; allowStack: boolean; allowNginx: boolean }>>('/system');
     return res.data.data!;
   },
-  async getFeatures(): Promise<{ allowConsole: boolean; allowStack: boolean; selfProject: string | null }> {
-    const res = await apiClient.get<ApiResponse<{ allowConsole: boolean; allowStack: boolean; selfProject: string | null }>>('/system/features');
+  async getFeatures(): Promise<{ allowConsole: boolean; allowStack: boolean; allowNginx: boolean; selfProject: string | null }> {
+    const res = await apiClient.get<ApiResponse<{ allowConsole: boolean; allowStack: boolean; allowNginx: boolean; selfProject: string | null }>>('/system/features');
     return res.data.data!;
   },
 };

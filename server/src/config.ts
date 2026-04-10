@@ -17,5 +17,6 @@ export const config = {
   appName: process.env.APP_NAME || 'Oblihub',
   allowConsole: isTruthy(process.env.ALLOW_CONSOLE),
   allowStack: isTruthy(process.env.ALLOW_STACK),
+  allowNginx: isTruthy(process.env.ALLOW_NGINX),
   stacksDir: process.env.STACKS_DIR || '/data/stacks',
 };

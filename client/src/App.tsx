@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { LayoutDashboard, Settings, User, LogOut, ArrowLeftRight, Layers, HardDrive, Network, Database } from 'lucide-react';
+import { LayoutDashboard, Settings, User, LogOut, ArrowLeftRight, Layers, HardDrive, Network, Database, Globe, Shield, ArrowRight, Radio, Ban, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { settingsApi } from '@/api/settings.api';
 import { systemApi } from '@/api/stacks.api';
@@ -16,6 +16,12 @@ import { StackEditorPage } from '@/pages/StackEditorPage';
 import { ImagesPage } from '@/pages/ImagesPage';
 import { NetworksPage } from '@/pages/NetworksPage';
 import { VolumesPage } from '@/pages/VolumesPage';
+import { ProxyHostsPage } from '@/pages/ProxyHostsPage';
+import { CertificatesPage } from '@/pages/CertificatesPage';
+import { RedirectionsPage } from '@/pages/RedirectionsPage';
+import { StreamsPage } from '@/pages/StreamsPage';
+import { DeadHostsPage } from '@/pages/DeadHostsPage';
+import { AccessListsPage } from '@/pages/AccessListsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isInitialized } = useAuthStore();
@@ -54,6 +60,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
   const [obligateUrl, setObligateUrl] = useState<string | null>(null);
   const [allowStack, setAllowStack] = useState(false);
+  const [allowNginx, setAllowNginx] = useState(false);
 
   useEffect(() => {
     fetch('/api/auth/connected-apps', { credentials: 'include' })
@@ -68,10 +75,10 @@ function AppLayout({ children }: { children: React.ReactNode }) {
       .catch(() => {});
 
     systemApi.getFeatures()
-      .then(f => setAllowStack(f.allowStack))
+      .then(f => { setAllowStack(f.allowStack); setAllowNginx(f.allowNginx); })
       .catch(() => {
         systemApi.getInfo()
-          .then(info => setAllowStack(info.allowStack))
+          .then(info => { setAllowStack(info.allowStack); setAllowNginx(info.allowNginx); })
           .catch(() => {});
       });
   }, []);
@@ -138,6 +145,20 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               </>
             )}
 
+            {allowNginx && (
+              <>
+                <div className="pt-3 pb-1">
+                  <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3">Proxy</div>
+                </div>
+                <SidebarLink href="/proxy-hosts" icon={Globe} label="Proxy Hosts" active={location.pathname === '/proxy-hosts'} />
+                <SidebarLink href="/redirections" icon={ArrowRight} label="Redirections" active={location.pathname === '/redirections'} />
+                <SidebarLink href="/streams" icon={Radio} label="Streams" active={location.pathname === '/streams'} />
+                <SidebarLink href="/dead-hosts" icon={Ban} label="404 Hosts" active={location.pathname === '/dead-hosts'} />
+                <SidebarLink href="/certificates" icon={Shield} label="SSL Certificates" active={location.pathname === '/certificates'} />
+                <SidebarLink href="/access-lists" icon={ShieldCheck} label="Access Lists" active={location.pathname === '/access-lists'} />
+              </>
+            )}
+
             {isAdmin && (
               <>
                 <div className="pt-3 pb-1">
@@ -183,6 +204,12 @@ export default function App() {
         <Route path="/images" element={<ProtectedRoute><AppLayout><ImagesPage /></AppLayout></ProtectedRoute>} />
         <Route path="/networks" element={<ProtectedRoute><AppLayout><NetworksPage /></AppLayout></ProtectedRoute>} />
         <Route path="/volumes" element={<ProtectedRoute><AppLayout><VolumesPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/proxy-hosts" element={<ProtectedRoute><AppLayout><ProxyHostsPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/redirections" element={<ProtectedRoute><AppLayout><RedirectionsPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/streams" element={<ProtectedRoute><AppLayout><StreamsPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/dead-hosts" element={<ProtectedRoute><AppLayout><DeadHostsPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/certificates" element={<ProtectedRoute><AppLayout><CertificatesPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/access-lists" element={<ProtectedRoute><AppLayout><AccessListsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><AppLayout><SettingsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><AppLayout><ProfilePage /></AppLayout></ProtectedRoute>} />
         <Route path="*" element={<NotFoundPage />} />

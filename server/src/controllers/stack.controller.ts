@@ -241,6 +241,7 @@ export const stackController = {
           containerCount: totalContainers,
           allowConsole: config.allowConsole,
           allowStack: config.allowStack,
+          allowNginx: config.allowNginx,
         },
       });
     } catch (err) { next(err); }
@@ -267,6 +268,7 @@ export const stackController = {
       data: {
         allowConsole: config.allowConsole,
         allowStack: config.allowStack,
+        allowNginx: config.allowNginx,
         selfProject,
       },
     });

@@ -1,0 +1,160 @@
+import * as acme from 'acme-client';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as crypto from 'crypto';
+import { certificateService } from './proxy.service';
+import { nginxService } from './nginx.service';
+import { logger } from '../utils/logger';
+
+export const letsEncryptService = {
+  /** Request a certificate from Let's Encrypt */
+  async requestCertificate(certId: number, domains: string[], email: string): Promise<void> {
+    try {
+      await certificateService.updateStatus(certId, 'pending', undefined, null);
+
+      // Create ACME client
+      const accountKey = await acme.crypto.createPrivateKey();
+      const client = new acme.Client({
+        directoryUrl: acme.directory.letsencrypt.production,
+        accountKey,
+      });
+
+      // Register account
+      await client.createAccount({
+        termsOfServiceAgreed: true,
+        contact: [`mailto:${email}`],
+      });
+
+      // Create order
+      const order = await client.createOrder({
+        identifiers: domains.map(d => ({ type: 'dns', value: d })),
+      });
+
+      // Process authorizations (HTTP-01 challenge)
+      const authorizations = await client.getAuthorizations(order);
+      const acmeDir = nginxService.getAcmeDir();
+
+      for (const auth of authorizations) {
+        const challenge = auth.challenges.find((c: { type: string }) => c.type === 'http-01');
+        if (!challenge) throw new Error(`No HTTP-01 challenge for ${auth.identifier.value}`);
+
+        const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
+
+        // Write challenge file
+        const challengePath = path.join(acmeDir, challenge.token);
+        fs.writeFileSync(challengePath, keyAuthorization);
+
+        // Verify challenge
+        await client.verifyChallenge(auth, challenge);
+        await client.completeChallenge(challenge);
+        await client.waitForValidStatus(challenge);
+
+        // Clean up challenge file
+        try { fs.unlinkSync(challengePath); } catch { /* ignore */ }
+      }
+
+      // Finalize order
+      const [certKey, csr] = await acme.crypto.createCsr({
+        commonName: domains[0],
+        altNames: domains.length > 1 ? domains.slice(1) : undefined,
+      });
+
+      await client.finalizeOrder(order, csr);
+      const cert = await client.getCertificate(order);
+
+      // Split cert and chain
+      const certs = cert.split(/(?=-----BEGIN CERTIFICATE-----)/);
+      const serverCert = certs[0];
+      const chainCert = certs.slice(1).join('');
+
+      // Write cert files
+      nginxService.writeCertFiles('host', certId, serverCert, certKey.toString(), chainCert);
+
+      // Parse expiry
+      const certPaths = nginxService.getCertPaths('host', certId);
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 90); // LE certs are 90 days
+
+      await certificateService.updateStatus(certId, 'valid', {
+        cert: certPaths.cert,
+        key: certPaths.key,
+        chain: certPaths.chain,
+        expiresAt,
+      }, null);
+
+      logger.info({ certId, domains }, 'Let\'s Encrypt certificate obtained');
+
+      // Regenerate nginx configs to use new cert
+      await nginxService.regenerateAndReload();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      logger.error({ certId, err }, 'Failed to obtain Let\'s Encrypt certificate');
+      await certificateService.updateStatus(certId, 'error', undefined, msg);
+      throw err;
+    }
+  },
+
+  /** Upload a custom certificate */
+  async uploadCustomCert(certId: number, certPem: string, keyPem: string, chainPem?: string): Promise<void> {
+    try {
+      nginxService.writeCertFiles('host', certId, certPem, keyPem, chainPem);
+
+      // Try to parse expiry from cert
+      let expiresAt: Date | undefined;
+      try {
+        const x509 = new crypto.X509Certificate(certPem);
+        expiresAt = new Date(x509.validTo);
+      } catch { /* ignore */ }
+
+      const certPaths = nginxService.getCertPaths('host', certId);
+      await certificateService.updateStatus(certId, 'valid', {
+        cert: certPaths.cert,
+        key: certPaths.key,
+        chain: certPaths.chain,
+        expiresAt,
+      }, null);
+
+      await nginxService.regenerateAndReload();
+      logger.info({ certId }, 'Custom certificate uploaded');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      await certificateService.updateStatus(certId, 'error', undefined, msg);
+      throw err;
+    }
+  },
+
+  /** Generate a self-signed certificate */
+  async generateSelfSigned(certId: number, domains: string[]): Promise<void> {
+    try {
+      const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      });
+
+      // Use openssl-like approach via acme-client crypto
+      const [key, csr] = await acme.crypto.createCsr({
+        commonName: domains[0],
+        altNames: domains.length > 1 ? domains.slice(1) : undefined,
+      });
+
+      // For self-signed, we'll create a simple cert
+      // In production you'd want proper x509 generation
+      // For now, write a placeholder and mark as valid
+      const certPaths = nginxService.getCertPaths('host', certId);
+      const expiresAt = new Date();
+      expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+
+      // Write key
+      fs.writeFileSync(certPaths.key, key.toString());
+
+      // For a real self-signed cert, we'd need node-forge or similar
+      // Mark as pending for now - user should use LE or custom
+      await certificateService.updateStatus(certId, 'pending', undefined, 'Self-signed certificates require manual upload. Use Let\'s Encrypt instead.');
+      logger.info({ certId, domains }, 'Self-signed cert placeholder created');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      await certificateService.updateStatus(certId, 'error', undefined, msg);
+    }
+  },
+};

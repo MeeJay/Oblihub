@@ -32,10 +32,12 @@ services:
       DOCKER_SOCKET: /var/run/docker.sock
       ALLOW_CONSOLE: ${ALLOW_CONSOLE:-false}
       ALLOW_STACK: ${ALLOW_STACK:-false}
+      ALLOW_NGINX: ${ALLOW_NGINX:-false}
       STACKS_DIR: /data/stacks
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - stacks_data:/data/stacks
+      - proxy_data:/data/stacks/_proxy
 
   client:
     image: meejay/oblihub-client:${OBLIHUB_VERSION:-latest}
@@ -46,6 +48,31 @@ services:
     ports:
       - "${LISTEN_PORT:-3100}:80"
 
+  proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    labels:
+      oblihub.proxy: "true"
+    ports:
+      - "${PROXY_HTTP_PORT:-80}:80"
+      - "${PROXY_HTTPS_PORT:-443}:443"
+    volumes:
+      - proxy_data:/etc/nginx
+    command: >
+      sh -c "
+        mkdir -p /etc/nginx/conf.d /etc/nginx/stream.d /etc/nginx/certs /etc/nginx/acme-challenge /etc/nginx/htpasswd &&
+        if [ ! -f /etc/nginx/nginx.conf ]; then
+          echo 'events { worker_connections 1024; } http { server { listen 80 default_server; location / { return 444; } } }' > /etc/nginx/nginx.conf;
+        fi &&
+        nginx -g 'daemon off;'
+      "
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   postgres_data:
   stacks_data:
+  proxy_data:
