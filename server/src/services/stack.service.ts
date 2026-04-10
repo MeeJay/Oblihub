@@ -11,6 +11,9 @@ interface StackRow {
   auto_update: boolean;
   enabled: boolean;
   url: string | null;
+  notify_update_available: boolean | null;
+  notify_update_applied: boolean | null;
+  notify_delay: number | null;
   last_checked_at: Date | null;
   last_updated_at: Date | null;
   created_at: Date;
@@ -65,6 +68,9 @@ function rowToStack(row: StackRow, containers: Container[] = []): Stack {
     autoUpdate: row.auto_update,
     enabled: row.enabled,
     url: row.url || null,
+    notifyUpdateAvailable: row.notify_update_available ?? null,
+    notifyUpdateApplied: row.notify_update_applied ?? null,
+    notifyDelay: row.notify_delay ?? null,
     lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
     lastUpdatedAt: row.last_updated_at?.toISOString() ?? null,
     containers,
@@ -193,13 +199,16 @@ export const stackService = {
   },
 
   /** Update stack config */
-  async update(id: number, data: { name?: string; checkInterval?: number; autoUpdate?: boolean; enabled?: boolean; url?: string | null }): Promise<Stack | null> {
+  async update(id: number, data: { name?: string; checkInterval?: number; autoUpdate?: boolean; enabled?: boolean; url?: string | null; notifyUpdateAvailable?: boolean | null; notifyUpdateApplied?: boolean | null; notifyDelay?: number | null }): Promise<Stack | null> {
     const update: Record<string, unknown> = { updated_at: new Date() };
     if (data.name !== undefined) update.name = data.name;
     if (data.checkInterval !== undefined) update.check_interval = data.checkInterval;
     if (data.autoUpdate !== undefined) update.auto_update = data.autoUpdate;
     if (data.enabled !== undefined) update.enabled = data.enabled;
     if (data.url !== undefined) update.url = data.url;
+    if (data.notifyUpdateAvailable !== undefined) update.notify_update_available = data.notifyUpdateAvailable;
+    if (data.notifyUpdateApplied !== undefined) update.notify_update_applied = data.notifyUpdateApplied;
+    if (data.notifyDelay !== undefined) update.notify_delay = data.notifyDelay;
     await db('stacks').where({ id }).update(update);
     return this.getById(id);
   },

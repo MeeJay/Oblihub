@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ApiResponse, ProxyHost, Certificate, RedirectionHost, StreamHost, DeadHost, AccessList } from '@oblihub/shared';
+import type { ApiResponse, ProxyHost, Certificate, RedirectionHost, StreamHost, DeadHost, AccessList, CustomPage } from '@oblihub/shared';
 
 export const proxyApi = {
   // Proxy hosts
@@ -101,6 +101,35 @@ export const proxyApi = {
   },
   async deleteAccessList(id: number): Promise<void> {
     await apiClient.delete(`/proxy/access-lists/${id}`);
+  },
+  async addAccessListClient(listId: number, address: string, directive: 'allow' | 'deny'): Promise<void> {
+    await apiClient.post(`/proxy/access-lists/${listId}/clients`, { address, directive });
+  },
+  async removeAccessListClient(listId: number, clientId: number): Promise<void> {
+    await apiClient.delete(`/proxy/access-lists/${listId}/clients/${clientId}`);
+  },
+  async addAccessListAuth(listId: number, username: string, password: string): Promise<void> {
+    await apiClient.post(`/proxy/access-lists/${listId}/auth`, { username, password });
+  },
+  async removeAccessListAuth(listId: number, authId: number): Promise<void> {
+    await apiClient.delete(`/proxy/access-lists/${listId}/auth/${authId}`);
+  },
+
+  // Custom pages
+  async listCustomPages(): Promise<CustomPage[]> {
+    const res = await apiClient.get<ApiResponse<CustomPage[]>>('/proxy/custom-pages');
+    return res.data.data!;
+  },
+  async createCustomPage(data: { name: string; description?: string; errorCodes: number[]; htmlContent: string; theme?: string }): Promise<CustomPage> {
+    const res = await apiClient.post<ApiResponse<CustomPage>>('/proxy/custom-pages', data);
+    return res.data.data!;
+  },
+  async updateCustomPage(id: number, data: Partial<CustomPage>): Promise<CustomPage> {
+    const res = await apiClient.put<ApiResponse<CustomPage>>(`/proxy/custom-pages/${id}`, data);
+    return res.data.data!;
+  },
+  async deleteCustomPage(id: number): Promise<void> {
+    await apiClient.delete(`/proxy/custom-pages/${id}`);
   },
 
   // Stack integration

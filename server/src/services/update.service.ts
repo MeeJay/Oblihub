@@ -3,12 +3,23 @@ import { dockerService } from './docker.service';
 import { registryService } from './registry.service';
 import { stackService } from './stack.service';
 import { appConfigService } from './appConfig.service';
+import { notificationService } from './notification.service';
 import { logger } from '../utils/logger';
 import type { Server as SocketIOServer } from 'socket.io';
 import { SOCKET_EVENTS } from '@oblihub/shared';
 import type { UpdateHistoryEntry, UpdateStatus } from '@oblihub/shared';
 
 let _io: SocketIOServer | null = null;
+
+// Notification throttle: avoid spamming (default 300s)
+const lastNotified = new Map<string, number>();
+function shouldNotify(key: string, thresholdMs: number = 300000): boolean {
+  const now = Date.now();
+  const last = lastNotified.get(key) || 0;
+  if (now - last < thresholdMs) return false;
+  lastNotified.set(key, now);
+  return true;
+}
 
 export function setUpdateServiceIO(io: SocketIOServer): void {
   _io = io;
@@ -88,6 +99,26 @@ export const updateService = {
             currentDigest: localDigest,
             latestDigest: remoteDigest,
           });
+        }
+
+        // Notify if update available (throttled, respecting overrides)
+        const notifyAvailGlobal = (await appConfigService.get('notify_update_available')) !== 'false';
+        const notifyAvailStack = stack.notifyUpdateAvailable;
+        const shouldNotifyAvail = notifyAvailStack !== null ? notifyAvailStack : notifyAvailGlobal;
+        const delayGlobal = parseInt((await appConfigService.get('notify_delay')) || '300', 10) * 1000;
+        const delayStack = stack.notifyDelay !== null ? stack.notifyDelay * 1000 : delayGlobal;
+
+        if (hasUpdate && shouldNotifyAvail && shouldNotify(`update_available:${container.id}`, delayStack)) {
+          notificationService.sendForStack(stackId, stack.name, {
+            stackName: stack.name,
+            containerName: container.containerName,
+            image: `${container.image}:${container.imageTag}`,
+            oldDigest: localDigest || undefined,
+            newDigest: remoteDigest || undefined,
+            eventType: 'update_available',
+            message: `Update available for ${container.containerName} (${container.image}:${container.imageTag})`,
+            timestamp: new Date().toISOString(),
+          }).catch(err => logger.warn({ err }, 'Failed to send update_available notification'));
         }
       } catch (err) {
         logger.error({ containerId: container.id, err }, 'Failed to check container');
@@ -221,6 +252,23 @@ export const updateService = {
       }
 
       logger.info({ containerId, containerName: container.containerName }, 'Container updated successfully');
+
+      // Notify update applied (respecting overrides)
+      const stackForNotif = stackId ? await stackService.getById(stackId) : null;
+      const notifyAppliedGlobal = (await appConfigService.get('notify_update_applied')) !== 'false';
+      const notifyAppliedStack = stackForNotif?.notifyUpdateApplied;
+      const shouldNotifyApplied = notifyAppliedStack !== null ? notifyAppliedStack : notifyAppliedGlobal;
+
+      if (shouldNotifyApplied) notificationService.sendForStack(stackId!, stackForNotif?.name || '', {
+        stackName: stackForNotif?.name || '',
+        containerName: container.containerName,
+        image: `${container.image}:${container.imageTag}`,
+        oldDigest: container.currentDigest || undefined,
+        newDigest: newDigest || undefined,
+        eventType: 'update_applied',
+        message: `${container.containerName} updated successfully`,
+        timestamp: new Date().toISOString(),
+      }).catch(err => logger.warn({ err }, 'Failed to send update_applied notification'));
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.error({ containerId, err }, 'Container update failed');
@@ -238,6 +286,17 @@ export const updateService = {
           stackId, containerId, success: false, error: errorMsg,
         });
       }
+
+      // Notify update failed
+      const stack = await stackService.getById(stackId!);
+      notificationService.sendForStack(stackId!, stack?.name || '', {
+        stackName: stack?.name || '',
+        containerName: container.containerName,
+        image: `${container.image}:${container.imageTag}`,
+        eventType: 'update_failed',
+        message: `Failed to update ${container.containerName}: ${errorMsg}`,
+        timestamp: new Date().toISOString(),
+      }).catch(e => logger.warn({ e }, 'Failed to send update_failed notification'));
     }
   },
 

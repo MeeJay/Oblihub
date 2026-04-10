@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, Plus, Trash2, Edit2, Globe, Shield, Zap, Lock, Power, PowerOff, ChevronDown, ChevronRight } from 'lucide-react';
 import { proxyApi } from '@/api/proxy.api';
-import type { ProxyHost, Certificate } from '@oblihub/shared';
+import type { ProxyHost, Certificate, AccessList } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 const DEFAULT_HOST: Partial<ProxyHost> = {
@@ -22,21 +22,32 @@ const DEFAULT_HOST: Partial<ProxyHost> = {
 export function ProxyHostsPage() {
   const [hosts, setHosts] = useState<ProxyHost[]>([]);
   const [certs, setCerts] = useState<Certificate[]>([]);
+  const [accessLists, setAccessLists] = useState<AccessList[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<ProxyHost> | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
   const [domainInput, setDomainInput] = useState('');
+  const [certMode, setCertMode] = useState<'none' | 'existing' | 'new'>('none');
+  const [acmeEmail, setAcmeEmail] = useState(localStorage.getItem('oblihub_acme_email') || '');
 
   const load = async () => {
     try {
-      const [h, c] = await Promise.all([proxyApi.listHosts(), proxyApi.listCertificates()]);
+      const [h, c, a] = await Promise.all([proxyApi.listHosts(), proxyApi.listCertificates(), proxyApi.listAccessLists()]);
       setHosts(h);
       setCerts(c);
+      setAccessLists(a);
     } catch { toast.error('Failed to load proxy hosts'); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
+
+  // Auto-refresh while any cert is pending
+  useEffect(() => {
+    if (!hosts.some(h => h.certificate?.status === 'pending')) return;
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [hosts]);
 
   const startCreate = () => {
     setEditing({ ...DEFAULT_HOST, domainNames: [] });
@@ -66,6 +77,15 @@ export function ProxyHostsPage() {
     if (!editing.domainNames?.length) { toast.error('At least one domain required'); return; }
     if (!editing.forwardHost) { toast.error('Forward host required'); return; }
     try {
+      // If requesting new LE cert, create it first
+      if (certMode === 'new') {
+        if (!acmeEmail) { toast.error('Email required for Let\'s Encrypt'); return; }
+        localStorage.setItem('oblihub_acme_email', acmeEmail);
+        const cert = await proxyApi.createCertificate({ domainNames: editing.domainNames, provider: 'letsencrypt', acmeEmail });
+        editing.certificateId = cert.id;
+        editing.sslForced = true;
+        editing.http2Support = true;
+      }
       if (editId) {
         await proxyApi.updateHost(editId, editing);
         toast.success('Proxy host updated');
@@ -75,6 +95,7 @@ export function ProxyHostsPage() {
       }
       setEditing(null);
       setEditId(null);
+      setCertMode('none');
       load();
     } catch { toast.error('Failed to save proxy host'); }
   };
@@ -163,13 +184,47 @@ export function ProxyHostsPage() {
               {/* Certificate */}
               <div>
                 <label className="text-xs font-medium text-text-secondary block mb-1.5">SSL Certificate</label>
-                <select value={editing.certificateId || ''} onChange={e => setEditing(h => h ? { ...h, certificateId: parseInt(e.target.value) || null } : null)}
-                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
-                  <option value="">None</option>
-                  {certs.filter(c => c.status === 'valid').map(c => (
-                    <option key={c.id} value={c.id}>{c.domainNames.join(', ')}</option>
+                <div className="flex gap-2 mb-2">
+                  {(['none', 'new', 'existing'] as const).map(mode => (
+                    <button key={mode} onClick={() => {
+                      setCertMode(mode);
+                      if (mode === 'none') setEditing(h => h ? { ...h, certificateId: null, sslForced: false, http2Support: false } : null);
+                    }}
+                      className={`flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors ${certMode === mode ? 'border-accent bg-accent/10 text-accent font-medium' : 'border-border text-text-muted hover:bg-bg-hover'}`}>
+                      {mode === 'none' ? 'No SSL' : mode === 'new' ? 'Request Let\'s Encrypt' : 'Use Existing'}
+                    </button>
                   ))}
-                </select>
+                </div>
+                {certMode === 'new' && (
+                  <div className="space-y-2 p-3 rounded-lg border border-accent/20 bg-accent/5">
+                    <div className="text-[10px] text-accent font-medium">A new Let's Encrypt certificate will be requested for the domains above</div>
+                    <input value={acmeEmail} onChange={e => setAcmeEmail(e.target.value)} placeholder="admin@example.com" type="email"
+                      className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  </div>
+                )}
+                {certMode === 'existing' && (
+                  <div className="space-y-1 max-h-40 overflow-auto">
+                    {certs.length === 0 ? (
+                      <div className="text-xs text-text-muted p-2">No certificates available</div>
+                    ) : certs.map(c => {
+                      const isUsed = hosts.some(h => h.certificateId === c.id && h.id !== editId);
+                      const isSelected = editing.certificateId === c.id;
+                      return (
+                        <button key={c.id} onClick={() => setEditing(h => h ? { ...h, certificateId: c.id, sslForced: true, http2Support: true } : null)}
+                          className={`w-full text-left px-3 py-2 rounded-lg border text-xs transition-colors ${isSelected ? 'border-accent bg-accent/10' : isUsed ? 'border-status-down/30 bg-status-down/5 hover:bg-status-down/10' : 'border-border hover:bg-bg-hover'}`}>
+                          <div className="flex items-center justify-between">
+                            <span className={`font-mono ${isSelected ? 'text-accent' : 'text-text-primary'}`}>{c.domainNames.join(', ')}</span>
+                            <div className="flex items-center gap-1.5">
+                              {isUsed && <span className="text-[9px] px-1 py-0.5 rounded bg-status-down/10 text-status-down">In use</span>}
+                              <span className={`text-[9px] px-1 py-0.5 rounded ${c.status === 'valid' ? 'bg-status-up/10 text-status-up' : 'bg-status-pending/10 text-status-pending'}`}>{c.status}</span>
+                            </div>
+                          </div>
+                          {c.expiresAt && <div className="text-[10px] text-text-muted mt-0.5">Expires: {new Date(c.expiresAt).toLocaleDateString()}</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Toggles */}
@@ -182,13 +237,29 @@ export function ProxyHostsPage() {
                   { key: 'blockExploits', label: 'Block Exploits', icon: Shield },
                   { key: 'cachingEnabled', label: 'Cache Assets', icon: Zap },
                   { key: 'websocketSupport', label: 'WebSocket', icon: Zap },
-                ].map(({ key, label, icon: Icon }) => (
-                  <label key={key} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-colors ${(editing as Record<string, unknown>)[key] ? 'border-accent/50 bg-accent/5' : 'border-border'}`}>
-                    <input type="checkbox" checked={!!(editing as Record<string, unknown>)[key]} onChange={e => setEditing(h => h ? { ...h, [key]: e.target.checked } : null)} className="rounded" />
-                    <Icon size={12} className="text-text-muted" />
-                    <span className="text-xs text-text-secondary">{label}</span>
-                  </label>
-                ))}
+                ].map(({ key, label, icon: Icon }) => {
+                  const active = !!(editing as Record<string, unknown>)[key];
+                  return (
+                    <button key={key} onClick={() => setEditing(h => h ? { ...h, [key]: !active } : null)}
+                      className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${active ? 'border-accent/50 bg-accent/10' : 'border-border hover:bg-bg-hover'}`}>
+                      <div className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ${active ? 'bg-accent' : 'bg-bg-tertiary'}`}>
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${active ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                      </div>
+                      <Icon size={12} className={active ? 'text-accent' : 'text-text-muted'} />
+                      <span className={`text-xs ${active ? 'text-text-primary' : 'text-text-secondary'}`}>{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Access List */}
+              <div>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">Access List</label>
+                <select value={editing.accessListId || ''} onChange={e => setEditing(h => h ? { ...h, accessListId: parseInt(e.target.value) || null } : null)}
+                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+                  <option value="">No restriction</option>
+                  {accessLists.map(al => <option key={al.id} value={al.id}>{al.name} ({al.clients.length} rules, {al.auth.length} users)</option>)}
+                </select>
               </div>
 
               {/* Advanced config */}

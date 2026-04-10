@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, Trash2, Plus, Network, Link, Unlink, ChevronDown, ChevronRight, Eraser } from 'lucide-react';
 import { dockerApi } from '@/api/docker.api';
-import type { DockerNetwork } from '@oblihub/shared';
+import { stacksApi } from '@/api/stacks.api';
+import type { DockerNetwork, Stack } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 export function NetworksPage() {
@@ -10,7 +11,8 @@ export function NetworksPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [createForm, setCreateForm] = useState({ name: '', driver: 'bridge', subnet: '', gateway: '', internal: false, attachable: true });
-  const [connectForm, setConnectForm] = useState<{ networkId: string; containerId: string } | null>(null);
+  const [connectForm, setConnectForm] = useState<{ networkId: string; selectedContainers: Set<string> } | null>(null);
+  const [stacks, setStacks] = useState<Stack[]>([]);
 
   const load = async () => {
     try {
@@ -19,7 +21,7 @@ export function NetworksPage() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); stacksApi.list().then(setStacks).catch(() => {}); }, []);
 
   const toggleExpand = (id: string) => {
     setExpanded(prev => {
@@ -58,13 +60,36 @@ export function NetworksPage() {
   };
 
   const handleConnect = async () => {
-    if (!connectForm) return;
+    if (!connectForm || connectForm.selectedContainers.size === 0) return;
     try {
-      await dockerApi.connectNetwork(connectForm.networkId, connectForm.containerId);
-      toast.success('Container connected');
+      for (const dockerId of connectForm.selectedContainers) {
+        await dockerApi.connectNetwork(connectForm.networkId, dockerId);
+      }
+      toast.success(`${connectForm.selectedContainers.size} container(s) connected`);
       setConnectForm(null);
       load();
-    } catch { toast.error('Failed to connect container'); }
+    } catch { toast.error('Failed to connect containers'); }
+  };
+
+  const toggleStackContainers = (stack: Stack) => {
+    if (!connectForm) return;
+    const ids = stack.containers.map(c => c.dockerId);
+    const allSelected = ids.every(id => connectForm.selectedContainers.has(id));
+    setConnectForm(f => {
+      if (!f) return null;
+      const next = new Set(f.selectedContainers);
+      ids.forEach(id => allSelected ? next.delete(id) : next.add(id));
+      return { ...f, selectedContainers: next };
+    });
+  };
+
+  const toggleContainer = (dockerId: string) => {
+    setConnectForm(f => {
+      if (!f) return null;
+      const next = new Set(f.selectedContainers);
+      next.has(dockerId) ? next.delete(dockerId) : next.add(dockerId);
+      return { ...f, selectedContainers: next };
+    });
   };
 
   const isSystemNetwork = (name: string) => ['bridge', 'host', 'none'].includes(name);
@@ -113,14 +138,20 @@ export function NetworksPage() {
             <input value={createForm.gateway} onChange={e => setCreateForm(f => ({ ...f, gateway: e.target.value }))} placeholder="Gateway (e.g. 172.20.0.1)" className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
           </div>
           <div className="flex items-center gap-4 text-xs">
-            <label className="flex items-center gap-1.5 text-text-secondary cursor-pointer">
-              <input type="checkbox" checked={createForm.internal} onChange={e => setCreateForm(f => ({ ...f, internal: e.target.checked }))} className="rounded" />
+            <button onClick={() => setCreateForm(f => ({ ...f, internal: !f.internal }))}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors ${createForm.internal ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border text-text-secondary hover:bg-bg-hover'}`}>
+              <div className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ${createForm.internal ? 'bg-accent' : 'bg-bg-tertiary'}`}>
+                <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${createForm.internal ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+              </div>
               Internal
-            </label>
-            <label className="flex items-center gap-1.5 text-text-secondary cursor-pointer">
-              <input type="checkbox" checked={createForm.attachable} onChange={e => setCreateForm(f => ({ ...f, attachable: e.target.checked }))} className="rounded" />
+            </button>
+            <button onClick={() => setCreateForm(f => ({ ...f, attachable: !f.attachable }))}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors ${createForm.attachable ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border text-text-secondary hover:bg-bg-hover'}`}>
+              <div className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ${createForm.attachable ? 'bg-accent' : 'bg-bg-tertiary'}`}>
+                <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${createForm.attachable ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+              </div>
               Attachable
-            </label>
+            </button>
           </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">Create</button>
@@ -132,17 +163,49 @@ export function NetworksPage() {
       {/* Connect container modal */}
       {connectForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConnectForm(null)}>
-          <div className="rounded-xl border border-border bg-bg-secondary p-6 w-96 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-text-primary">Connect Container to Network</h3>
-            <input
-              value={connectForm.containerId}
-              onChange={e => setConnectForm(f => f ? { ...f, containerId: e.target.value } : null)}
-              placeholder="Container ID or name"
-              className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
-            />
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setConnectForm(null)} className="px-4 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">Cancel</button>
-              <button onClick={handleConnect} className="px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">Connect</button>
+          <div className="rounded-xl border border-border bg-bg-primary p-6 w-[480px] max-h-[70vh] overflow-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-text-primary mb-1">Connect Containers to Network</h3>
+            <p className="text-xs text-text-muted mb-4">Select stacks or individual containers</p>
+            <div className="space-y-2 mb-4">
+              {stacks.filter(s => s.containers.length > 0).map(s => {
+                const allSelected = s.containers.every(c => connectForm.selectedContainers.has(c.dockerId));
+                const someSelected = s.containers.some(c => connectForm.selectedContainers.has(c.dockerId));
+                return (
+                  <div key={s.id} className="rounded-lg border border-border overflow-hidden">
+                    <button onClick={() => toggleStackContainers(s)}
+                      className={`w-full text-left px-3 py-2 flex items-center gap-2 text-xs transition-colors ${allSelected ? 'bg-accent/10' : 'hover:bg-bg-hover'}`}>
+                      <div className={`h-3 w-3 rounded border flex items-center justify-center shrink-0 ${allSelected ? 'bg-accent border-accent' : someSelected ? 'border-accent bg-accent/30' : 'border-border'}`}>
+                        {allSelected && <span className="text-white text-[8px]">✓</span>}
+                        {someSelected && !allSelected && <span className="text-white text-[8px]">-</span>}
+                      </div>
+                      <span className="font-medium text-text-primary">{s.name}</span>
+                      <span className="text-text-muted ml-auto">{s.containers.length} containers</span>
+                    </button>
+                    <div className="border-t border-border/50">
+                      {s.containers.map(c => {
+                        const selected = connectForm.selectedContainers.has(c.dockerId);
+                        return (
+                          <button key={c.id} onClick={() => toggleContainer(c.dockerId)}
+                            className={`w-full text-left px-3 py-1.5 pl-8 flex items-center gap-2 text-[11px] transition-colors ${selected ? 'bg-accent/5' : 'hover:bg-bg-hover/50'}`}>
+                            <div className={`h-2.5 w-2.5 rounded border flex items-center justify-center shrink-0 ${selected ? 'bg-accent border-accent' : 'border-border'}`}>
+                              {selected && <span className="text-white text-[7px]">✓</span>}
+                            </div>
+                            <span className="text-text-secondary">{c.containerName}</span>
+                            <span className="text-text-muted font-mono text-[10px] ml-auto">{c.image}:{c.imageTag}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-text-muted">{connectForm.selectedContainers.size} selected</span>
+              <div className="flex gap-2">
+                <button onClick={() => setConnectForm(null)} className="px-4 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">Cancel</button>
+                <button onClick={handleConnect} disabled={connectForm.selectedContainers.size === 0} className="px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50">Connect</button>
+              </div>
             </div>
           </div>
         </div>
@@ -168,7 +231,7 @@ export function NetworksPage() {
               </div>
               {!isSystemNetwork(net.name) && (
                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => setConnectForm({ networkId: net.id, containerId: '' })} className="p-1.5 rounded-md text-text-muted hover:text-accent hover:bg-bg-hover" title="Connect container">
+                  <button onClick={() => setConnectForm({ networkId: net.id, selectedContainers: new Set() })} className="p-1.5 rounded-md text-text-muted hover:text-accent hover:bg-bg-hover" title="Connect container">
                     <Link size={14} />
                   </button>
                   <button onClick={() => handleRemove(net)} className="p-1.5 rounded-md text-text-muted hover:text-status-down hover:bg-bg-hover" title="Remove network">

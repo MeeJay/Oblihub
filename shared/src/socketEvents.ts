@@ -19,4 +19,7 @@ export const SOCKET_EVENTS = {
   CONTAINER_EXEC_RESIZE: 'container:exec:resize',
   CONTAINER_EXEC_STOP: 'container:exec:stop',
   CONTAINER_EXEC_ERROR: 'container:exec:error',
+
+  // Container stats
+  CONTAINER_STATS_UPDATE: 'container:stats:update',
 } as const;

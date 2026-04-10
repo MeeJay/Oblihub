@@ -4,6 +4,10 @@ import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, Scr
 import { stacksApi, containersApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { proxyApi } from '@/api/proxy.api';
+import { useSocket } from '@/hooks/useSocket';
+import { Sparkline } from '@/components/Sparkline';
+import { SOCKET_EVENTS } from '@oblihub/shared';
+import type { ContainerStats as ContainerStatsType } from '@oblihub/shared';
 import { ContainerLogs } from '@/components/ContainerLogs';
 import { ContainerConsole } from '@/components/ContainerConsole';
 import type { Stack, Container, UpdateHistoryEntry, ManagedStack, ProxyHost } from '@oblihub/shared';
@@ -21,6 +25,7 @@ interface ContainerInspect {
 export function StackDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const socket = useSocket();
   const [stack, setStack] = useState<Stack | null>(null);
   const [history, setHistory] = useState<UpdateHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +39,7 @@ export function StackDetailPage() {
   const [proxyHosts, setProxyHosts] = useState<ProxyHost[]>([]);
   const [showQuickSetup, setShowQuickSetup] = useState(false);
   const [quickSetup, setQuickSetup] = useState({ containerId: 0, domainInput: '', domains: [] as string[], forwardPort: 80, requestCert: false, acmeEmail: localStorage.getItem('oblihub_acme_email') || '' });
+  const [containerStats, setContainerStats] = useState<Record<string, { cpu: number[]; mem: number[]; cpuNow: number; memNow: number }>>({});
 
   const load = async () => {
     if (!id) return;
@@ -50,6 +56,38 @@ export function StackDetailPage() {
 
   useEffect(() => { load(); }, [id]);
 
+  // Real-time updates via Socket.io
+  useEffect(() => {
+    const onStacksUpdated = (data: Stack[]) => {
+      if (!id) return;
+      const updated = data.find(s => s.id === Number(id));
+      if (updated) setStack(updated);
+    };
+    socket.on(SOCKET_EVENTS.STACKS_UPDATED, onStacksUpdated);
+    return () => { socket.off(SOCKET_EVENTS.STACKS_UPDATED, onStacksUpdated); };
+  }, [socket, id]);
+
+  // Real-time container stats
+  useEffect(() => {
+    const onStats = (data: ContainerStatsType[]) => {
+      if (!stack) return;
+      const stackDockerIds = new Set(stack.containers.map(c => c.dockerId));
+      setContainerStats(prev => {
+        const next = { ...prev };
+        for (const s of data) {
+          if (!stackDockerIds.has(s.dockerId)) continue;
+          const existing = next[s.dockerId] || { cpu: [], mem: [], cpuNow: 0, memNow: 0 };
+          const cpu = [...existing.cpu, s.cpuPercent].slice(-30);
+          const mem = [...existing.mem, s.memoryPercent].slice(-30);
+          next[s.dockerId] = { cpu, mem, cpuNow: s.cpuPercent, memNow: s.memoryPercent };
+        }
+        return next;
+      });
+    };
+    socket.on(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, onStats);
+    return () => { socket.off(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, onStats); };
+  }, [socket, stack?.containers]);
+
   useEffect(() => {
     systemApi.getFeatures().then(f => {
       setAllowConsole(f.allowConsole);
@@ -65,11 +103,17 @@ export function StackDetailPage() {
     });
   }, []);
 
-  // Load proxy hosts linked to this stack
+  // Load proxy hosts linked to this stack + auto-refresh while certs pending
   useEffect(() => {
     if (!stack || !allowNginx) return;
-    proxyApi.getHostsByStack(stack.id).then(setProxyHosts).catch(() => {});
-  }, [stack?.id, allowNginx]);
+    const refresh = () => proxyApi.getHostsByStack(stack.id).then(setProxyHosts).catch(() => {});
+    refresh();
+    const hasPending = proxyHosts.some(h => h.certificate && h.certificate.status === 'pending');
+    if (hasPending) {
+      const interval = setInterval(refresh, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [stack?.id, allowNginx, proxyHosts.some(h => h.certificate?.status === 'pending')]);
 
   // Try to find linked managed stack
   useEffect(() => {
@@ -220,6 +264,19 @@ export function StackDetailPage() {
                     </div>
                   )}
                 </div>
+                {/* Stats sparklines */}
+                {containerStats[c.dockerId] && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-center">
+                      <Sparkline data={containerStats[c.dockerId].cpu} width={60} height={20} color="#4a9eff" />
+                      <div className="text-[9px] text-text-muted">{containerStats[c.dockerId].cpuNow.toFixed(1)}% CPU</div>
+                    </div>
+                    <div className="text-center">
+                      <Sparkline data={containerStats[c.dockerId].mem} width={60} height={20} color="#3fb950" />
+                      <div className="text-[9px] text-text-muted">{containerStats[c.dockerId].memNow.toFixed(1)}% RAM</div>
+                    </div>
+                  </div>
+                )}
                 {c.excluded && <span className="text-[10px] text-text-muted bg-bg-tertiary px-1.5 py-0.5 rounded">Excluded</span>}
 
                 {/* Action buttons */}
@@ -615,6 +672,81 @@ export function StackDetailPage() {
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.enabled ? 'bg-status-up' : 'bg-bg-tertiary border border-border'}`}>
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
             </button>
+          </div>
+          {/* Notification overrides */}
+          <div className="border-t border-border pt-4 mt-4">
+            <div className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">Notification Overrides</div>
+            <div className="space-y-3">
+              {/* Notify update available */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-text-primary">Notify: Update Available</div>
+                  <div className="text-xs text-text-muted">{stack.notifyUpdateAvailable === null ? 'Using global setting' : 'Overridden'}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      const next = stack.notifyUpdateAvailable === null ? false : stack.notifyUpdateAvailable ? false : null;
+                      const updated = await stacksApi.update(stack.id, { notifyUpdateAvailable: next });
+                      setStack(updated);
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.notifyUpdateAvailable === null ? 'bg-bg-tertiary border border-border' : stack.notifyUpdateAvailable ? 'bg-status-up' : 'bg-status-down'}`}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.notifyUpdateAvailable === null ? 'translate-x-3' : stack.notifyUpdateAvailable ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                  {stack.notifyUpdateAvailable !== null && (
+                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateAvailable: null }); setStack(updated); toast.success('Reset to global'); }}
+                      className="text-[10px] text-accent hover:text-accent-hover">Reset</button>
+                  )}
+                </div>
+              </div>
+
+              {/* Notify update applied */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-text-primary">Notify: Update Applied</div>
+                  <div className="text-xs text-text-muted">{stack.notifyUpdateApplied === null ? 'Using global setting' : 'Overridden'}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      const next = stack.notifyUpdateApplied === null ? false : stack.notifyUpdateApplied ? false : null;
+                      const updated = await stacksApi.update(stack.id, { notifyUpdateApplied: next });
+                      setStack(updated);
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.notifyUpdateApplied === null ? 'bg-bg-tertiary border border-border' : stack.notifyUpdateApplied ? 'bg-status-up' : 'bg-status-down'}`}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.notifyUpdateApplied === null ? 'translate-x-3' : stack.notifyUpdateApplied ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                  {stack.notifyUpdateApplied !== null && (
+                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateApplied: null }); setStack(updated); toast.success('Reset to global'); }}
+                      className="text-[10px] text-accent hover:text-accent-hover">Reset</button>
+                  )}
+                </div>
+              </div>
+
+              {/* Notify delay */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-text-primary">Notification Delay</div>
+                  <div className="text-xs text-text-muted">{stack.notifyDelay === null ? 'Using global setting' : `${stack.notifyDelay}s (overridden)`}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} max={86400}
+                    value={stack.notifyDelay ?? ''}
+                    placeholder="global"
+                    onChange={async (e) => {
+                      const val = e.target.value ? parseInt(e.target.value, 10) : null;
+                      const updated = await stacksApi.update(stack.id, { notifyDelay: val });
+                      setStack(updated);
+                    }}
+                    className="w-20 rounded-lg border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary text-right focus:outline-none focus:ring-1 focus:ring-accent" />
+                  <span className="text-xs text-text-muted">sec</span>
+                  {stack.notifyDelay !== null && (
+                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyDelay: null }); setStack(updated); toast.success('Reset to global'); }}
+                      className="text-[10px] text-accent hover:text-accent-hover">Reset</button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -147,9 +147,9 @@ export const dockerController = {
   async createVolume(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
-      const { name, driver, labels } = req.body;
+      const { name, driver, labels, driverOpts } = req.body;
       if (!name) throw new AppError(400, 'Volume name required');
-      const info = await dockerService.createVolume({ name, driver, labels });
+      const info = await dockerService.createVolume({ name, driver, labels, driverOpts });
       res.json({ success: true, data: info });
     } catch (err) { next(err); }
   },

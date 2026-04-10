@@ -58,4 +58,44 @@ export const authService = {
       is_active: true,
     });
   },
+
+  async listUsers(): Promise<User[]> {
+    const rows = await db<UserRow>('users').orderBy('id');
+    return rows.map(rowToUser);
+  },
+
+  async createUser(data: { username: string; password: string; displayName?: string; email?: string; role?: string }): Promise<User> {
+    const passwordHash = await hashPassword(data.password);
+    const [row] = await db<UserRow>('users').insert({
+      username: data.username,
+      password_hash: passwordHash,
+      display_name: data.displayName || null,
+      email: data.email || null,
+      role: data.role || 'user',
+      is_active: true,
+    }).returning('*');
+    return rowToUser(row);
+  },
+
+  async updateUser(id: number, data: { displayName?: string; email?: string; role?: string; password?: string }): Promise<User | null> {
+    const update: Record<string, unknown> = { updated_at: new Date() };
+    if (data.displayName !== undefined) update.display_name = data.displayName;
+    if (data.email !== undefined) update.email = data.email;
+    if (data.role !== undefined) update.role = data.role;
+    if (data.password) update.password_hash = await hashPassword(data.password);
+    const [row] = await db<UserRow>('users').where({ id }).update(update).returning('*');
+    return row ? rowToUser(row) : null;
+  },
+
+  async toggleActive(id: number): Promise<User | null> {
+    const user = await db<UserRow>('users').where({ id }).first();
+    if (!user) return null;
+    const [row] = await db<UserRow>('users').where({ id }).update({ is_active: !user.is_active, updated_at: new Date() }).returning('*');
+    return row ? rowToUser(row) : null;
+  },
+
+  async deleteUser(id: number): Promise<void> {
+    await db('sso_foreign_users').where({ local_user_id: id }).delete();
+    await db('users').where({ id }).delete();
+  },
 };

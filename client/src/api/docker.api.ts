@@ -46,7 +46,7 @@ export const dockerApi = {
     const res = await apiClient.get<ApiResponse<DockerVolume[]>>('/docker/volumes');
     return res.data.data!;
   },
-  async createVolume(data: { name: string; driver?: string }): Promise<void> {
+  async createVolume(data: { name: string; driver?: string; driverOpts?: Record<string, string> }): Promise<void> {
     await apiClient.post('/docker/volumes', data);
   },
   async removeVolume(name: string, force = false): Promise<void> {

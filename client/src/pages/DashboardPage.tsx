@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink } from 'lucide-react';
+import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield } from 'lucide-react';
 import { stacksApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
+import { proxyApi } from '@/api/proxy.api';
+import { useSocket } from '@/hooks/useSocket';
+import { SOCKET_EVENTS } from '@oblihub/shared';
 import type { Stack, ManagedStack } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
@@ -62,8 +65,11 @@ export function DashboardPage() {
   const [stacks, setStacks] = useState<Stack[]>([]);
   const [loading, setLoading] = useState(true);
   const [allowStack, setAllowStack] = useState(false);
+  const [allowNginx, setAllowNginx] = useState(false);
   const [selfProject, setSelfProject] = useState<string | null>(null);
   const [managedProjects, setManagedProjects] = useState<Set<string>>(new Set());
+  const [proxyStackIds, setProxyStackIds] = useState<Set<number>>(new Set());
+  const socket = useSocket();
 
   const load = async () => {
     try {
@@ -73,15 +79,27 @@ export function DashboardPage() {
     finally { setLoading(false); }
   };
 
+  // Real-time updates via Socket.io
+  useEffect(() => {
+    const onStacksUpdated = (data: Stack[]) => { setStacks(data); setLoading(false); };
+    socket.on(SOCKET_EVENTS.STACKS_UPDATED, onStacksUpdated);
+    return () => { socket.off(SOCKET_EVENTS.STACKS_UPDATED, onStacksUpdated); };
+  }, [socket]);
+
   useEffect(() => {
     load();
     systemApi.getFeatures().then(f => {
       setAllowStack(f.allowStack);
+      setAllowNginx(f.allowNginx);
       setSelfProject(f.selfProject);
-      // Only load managed stacks if allowStack is enabled
       if (f.allowStack) {
         managedStacksApi.list().then(managed => {
           setManagedProjects(new Set(managed.map(m => m.composeProject)));
+        }).catch(() => {});
+      }
+      if (f.allowNginx) {
+        proxyApi.listHosts().then(hosts => {
+          setProxyStackIds(new Set(hosts.filter(h => h.stackId).map(h => h.stackId!)));
         }).catch(() => {});
       }
     }).catch(() => {
@@ -155,6 +173,14 @@ export function DashboardPage() {
                   {stack.composeProject && <span className="ml-2">({stack.composeProject})</span>}
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 mb-3 text-[10px]">
+                  {proxyStackIds.has(stack.id) && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-status-up/10 text-status-up">
+                      <Shield size={8} /> Proxied
+                    </span>
+                  )}
+                  {stack.containers.some(c => c.image.includes('nginx')) && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-accent/10 text-accent">Nginx</span>
+                  )}
                   <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded ${stack.enabled ? 'bg-status-up/10 text-status-up' : 'bg-bg-tertiary text-text-muted'}`}>
                     {stack.enabled ? 'Monitoring' : 'Paused'}
                   </span>
@@ -171,7 +197,7 @@ export function DashboardPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={e => e.stopPropagation()}
-                    className="flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover mb-2 truncate"
+                    className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover mb-2 truncate w-fit max-w-full"
                     title={stack.url}
                   >
                     <ExternalLink size={10} className="shrink-0" />

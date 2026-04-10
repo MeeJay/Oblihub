@@ -9,6 +9,11 @@ import profileRoutes from './profile.routes';
 import dockerRoutes from './docker.routes';
 import managedStackRoutes from './managed-stacks.routes';
 import proxyRoutes from './proxy.routes';
+import usersRoutes from './users.routes';
+import permissionsRoutes from './permissions.routes';
+import statsRoutes from './stats.routes';
+import uptimeRoutes from './uptime.routes';
+import templatesRoutes from './templates.routes';
 
 const router = Router();
 
@@ -22,5 +27,10 @@ router.use('/profile', profileRoutes);
 router.use('/docker', dockerRoutes);
 router.use('/managed-stacks', managedStackRoutes);
 router.use('/proxy', proxyRoutes);
+router.use('/users', usersRoutes);
+router.use('/', permissionsRoutes);
+router.use('/stats', statsRoutes);
+router.use('/uptime', uptimeRoutes);
+router.use('/templates', templatesRoutes);
 
 export { router as routes };

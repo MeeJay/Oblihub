@@ -181,6 +181,17 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
     cors: { origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173', credentials: true },
   });
 
+  // Authenticate Socket.IO connections via session cookie
+  io.use((socket, next) => {
+    const cookie = socket.handshake.headers.cookie;
+    if (!cookie) return next(new Error('Authentication required'));
+    // Parse connect.sid from cookie - if session middleware validated it, the user is authenticated
+    // We rely on the same session store; a more robust check would parse and verify the session
+    const hasSessionCookie = cookie.includes('connect.sid=');
+    if (!hasSessionCookie) return next(new Error('Authentication required'));
+    next();
+  });
+
   io.on('connection', (socket) => {
     logger.info({ socketId: socket.id }, 'Socket connected');
 

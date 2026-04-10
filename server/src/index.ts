@@ -8,6 +8,8 @@ import { logger } from './utils/logger';
 import { authService } from './services/auth.service';
 import { setUpdateServiceIO } from './services/update.service';
 import { startDiscoveryWorker, stopDiscoveryWorker } from './workers/DiscoveryWorker';
+import { startStatsWorker, stopStatsWorker, cleanupOldStats } from './workers/StatsWorker';
+import { startUptimeWorker, stopUptimeWorker } from './workers/UptimeWorker';
 import { schedulerService } from './services/scheduler.service';
 import { dockerService } from './services/docker.service';
 
@@ -52,6 +54,14 @@ async function main() {
   // Start per-stack check scheduler
   await schedulerService.startAll();
 
+  // Start container stats worker
+  startStatsWorker(io);
+  // Cleanup old stats every hour
+  setInterval(() => cleanupOldStats(), 60 * 60 * 1000);
+
+  // Start uptime monitoring worker
+  await startUptimeWorker();
+
   // Nginx proxy: regenerate configs on startup + auto-renewal
   if (config.allowNginx) {
     const { nginxService } = await import('./services/nginx.service');
@@ -74,6 +84,8 @@ async function main() {
   const shutdown = () => {
     logger.info('Shutting down...');
     stopDiscoveryWorker();
+    stopStatsWorker();
+    stopUptimeWorker();
     schedulerService.stopAll();
     server.close();
     process.exit(0);

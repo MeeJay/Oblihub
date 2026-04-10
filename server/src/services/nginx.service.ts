@@ -3,7 +3,7 @@ import * as path from 'path';
 import { config } from '../config';
 import { db } from '../db';
 import { dockerService } from './docker.service';
-import { proxyHostService, redirectionService, streamService, deadHostService, accessListService } from './proxy.service';
+import { proxyHostService, redirectionService, streamService, deadHostService, accessListService, customPageService } from './proxy.service';
 import type { ProxyHost, RedirectionHost, DeadHost, AccessList } from '@oblihub/shared';
 import { logger } from '../utils/logger';
 
@@ -13,9 +13,10 @@ const STREAM_DIR = path.join(PROXY_DIR, 'stream.d');
 const CERTS_DIR = path.join(PROXY_DIR, 'certs');
 const ACME_DIR = path.join(PROXY_DIR, 'acme-challenge');
 const HTPASSWD_DIR = path.join(PROXY_DIR, 'htpasswd');
+const ERROR_PAGES_DIR = path.join(PROXY_DIR, 'error_pages');
 
 function ensureDirs() {
-  for (const dir of [PROXY_DIR, CONF_DIR, STREAM_DIR, CERTS_DIR, ACME_DIR, HTPASSWD_DIR]) {
+  for (const dir of [PROXY_DIR, CONF_DIR, STREAM_DIR, CERTS_DIR, ACME_DIR, HTPASSWD_DIR, ERROR_PAGES_DIR]) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
   }
   // Ensure acme-challenge is world-readable for nginx
@@ -41,6 +42,42 @@ function cachingSnippet(): string {
         add_header X-Cache-Status $upstream_cache_status;
         expires 1d;
     }`;
+}
+
+function gzipSnippet(): string {
+  return `
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1000;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript image/svg+xml;`;
+}
+
+function corsSnippet(): string {
+  return `
+    # CORS headers
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Origin, X-Requested-With" always;
+    add_header Access-Control-Max-Age 86400 always;
+    if ($request_method = 'OPTIONS') {
+        return 204;
+    }`;
+}
+
+function rateLimitDirective(hostId: number, burst: number): string {
+  return `    limit_req zone=rl_${hostId} burst=${burst} nodelay;`;
+}
+
+function customHeadersSnippet(headers: { name: string; value: string; action: 'add' | 'remove' }[]): string {
+  return headers.map(h => {
+    const name = sanitizeForNginx(h.name);
+    const value = sanitizeForNginx(h.value);
+    if (h.action === 'remove') return `    proxy_hide_header ${name};`;
+    return `    add_header ${name} "${value}" always;`;
+  }).join('\n');
 }
 
 function hstsSnippet(subdomains: boolean): string {
@@ -69,9 +106,13 @@ function accessListBlock(listId: number, _list?: AccessList): string {
 
 // ── Proxy Host config ──
 
+function sanitizeForNginx(value: string): string {
+  return value.replace(/[;\n\r{}#'"\\]/g, '');
+}
+
 function generateProxyHostConfig(host: ProxyHost): string {
-  const domains = host.domainNames.join(' ');
-  const upstream = `${host.forwardScheme}://${host.forwardHost}:${host.forwardPort}`;
+  const domains = host.domainNames.map(d => sanitizeForNginx(d)).join(' ');
+  const upstream = `${sanitizeForNginx(host.forwardScheme)}://${sanitizeForNginx(host.forwardHost)}:${host.forwardPort}`;
   const certDomain = host.certificate?.domainNames?.[0] || '';
   const certFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.fullchain.crt`) : '';
   const keyFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.key`) : '';
@@ -137,6 +178,37 @@ function generateProxyHostConfig(host: ProxyHost): string {
     conf += cachingSnippet() + '\n\n';
   }
 
+  if (host.gzipEnabled) {
+    conf += gzipSnippet() + '\n\n';
+  }
+
+  if (host.corsEnabled) {
+    conf += corsSnippet() + '\n\n';
+  }
+
+  if (host.clientMaxBodySize) {
+    conf += `    client_max_body_size ${sanitizeForNginx(host.clientMaxBodySize)};\n\n`;
+  }
+
+  if (host.rateLimitRps) {
+    conf += rateLimitDirective(host.id, host.rateLimitBurst || 10) + '\n\n';
+  }
+
+  if (host.customResponseHeaders?.length) {
+    conf += customHeadersSnippet(host.customResponseHeaders) + '\n\n';
+  }
+
+  // Error pages
+  if (host.errorPageId) {
+    const errorPageFile = `/etc/nginx/error_pages/page_${host.errorPageId}.html`;
+    conf += `    error_page 400 401 403 404 500 502 503 504 /custom_error_${host.errorPageId}.html;\n`;
+    conf += `    location = /custom_error_${host.errorPageId}.html {\n`;
+    conf += `        internal;\n`;
+    conf += `        root /etc/nginx/error_pages;\n`;
+    conf += `        try_files /page_${host.errorPageId}.html =500;\n`;
+    conf += `    }\n\n`;
+  }
+
   // Resolver for dynamic upstream DNS (Docker internal DNS)
   conf += `    resolver 127.0.0.11 valid=10s ipv6=off;\n`;
   conf += `    set $upstream ${upstream};\n\n`;
@@ -157,9 +229,16 @@ function generateProxyHostConfig(host: ProxyHost): string {
     conf += `        proxy_set_header Connection $http_connection;\n`;
   }
 
-  conf += `        proxy_connect_timeout 60s;\n`;
-  conf += `        proxy_send_timeout 60s;\n`;
-  conf += `        proxy_read_timeout 60s;\n`;
+  if (host.proxyBuffering === false) {
+    conf += `        proxy_buffering off;\n`;
+  }
+
+  const connectTimeout = host.proxyConnectTimeout || 60;
+  const sendTimeout = host.proxySendTimeout || 60;
+  const readTimeout = host.proxyReadTimeout || 60;
+  conf += `        proxy_connect_timeout ${connectTimeout}s;\n`;
+  conf += `        proxy_send_timeout ${sendTimeout}s;\n`;
+  conf += `        proxy_read_timeout ${readTimeout}s;\n`;
   conf += `    }\n`;
 
   if (host.advancedConfig) {
@@ -214,7 +293,9 @@ function generateDeadHostConfig(host: DeadHost): string {
 
 // ── Main nginx.conf ──
 
-function generateMainConfig(): string {
+function generateMainConfig(rateLimitedHosts: { id: number; rps: number }[] = []): string {
+  const rateLimitZones = rateLimitedHosts.map(h => `    limit_req_zone $binary_remote_addr zone=rl_${h.id}:10m rate=${h.rps}r/s;`).join('\n');
+
   return `user nginx;
 worker_processes auto;
 error_log /var/log/nginx/error.log warn;
@@ -241,7 +322,7 @@ http {
     types_hash_max_size 2048;
     client_max_body_size 100m;
 
-    # WebSocket support
+${rateLimitZones ? `    # Rate limit zones\n${rateLimitZones}\n` : ''}    # WebSocket support
     map $http_upgrade $connection_upgrade {
         default upgrade;
         '' close;
@@ -298,8 +379,18 @@ export const nginxService = {
   async regenerateAndReload(): Promise<void> {
     ensureDirs();
 
-    // Write main config
-    fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig());
+    // Get all proxy hosts for rate limit zones
+    const allHosts = await proxyHostService.getEnabled();
+    const rateLimitedHosts = allHosts.filter(h => h.rateLimitRps).map(h => ({ id: h.id, rps: h.rateLimitRps! }));
+
+    // Write main config (with rate limit zones)
+    fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig(rateLimitedHosts));
+
+    // Write custom error pages to disk
+    const customPages = await customPageService.getAll();
+    for (const page of customPages) {
+      fs.writeFileSync(path.join(ERROR_PAGES_DIR, `page_${page.id}.html`), page.htmlContent);
+    }
 
     // Clear old configs
     for (const f of fs.readdirSync(CONF_DIR)) fs.unlinkSync(path.join(CONF_DIR, f));
@@ -413,11 +504,13 @@ export const nginxService = {
 
   /** Get paths for certificate files by domain name */
   getCertPathsByDomain(domain: string) {
+    // Sanitize domain to prevent path traversal
+    const safeDomain = domain.replace(/[^a-zA-Z0-9._-]/g, '_');
     return {
-      cert: path.join(CERTS_DIR, `${domain}.crt`),
-      key: path.join(CERTS_DIR, `${domain}.key`),
-      chain: path.join(CERTS_DIR, `${domain}.chain.crt`),
-      fullchain: path.join(CERTS_DIR, `${domain}.fullchain.crt`),
+      cert: path.join(CERTS_DIR, `${safeDomain}.crt`),
+      key: path.join(CERTS_DIR, `${safeDomain}.key`),
+      chain: path.join(CERTS_DIR, `${safeDomain}.chain.crt`),
+      fullchain: path.join(CERTS_DIR, `${safeDomain}.fullchain.crt`),
     };
   },
 

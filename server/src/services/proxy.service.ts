@@ -1,5 +1,5 @@
 import { db } from '../db';
-import type { ProxyHost, RedirectionHost, StreamHost, DeadHost, AccessList, Certificate } from '@oblihub/shared';
+import type { ProxyHost, RedirectionHost, StreamHost, DeadHost, AccessList, Certificate, CustomPage } from '@oblihub/shared';
 import { logger } from '../utils/logger';
 
 // ── Helpers ──
@@ -37,6 +37,17 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null): Prox
     advancedConfig: (row.advanced_config as string) || null,
     enabled: row.enabled as boolean,
     stackId: (row.stack_id as number) || null,
+    clientMaxBodySize: (row.client_max_body_size as string) || null,
+    proxyConnectTimeout: (row.proxy_connect_timeout as number) || null,
+    proxySendTimeout: (row.proxy_send_timeout as number) || null,
+    proxyReadTimeout: (row.proxy_read_timeout as number) || null,
+    proxyBuffering: row.proxy_buffering as boolean | null ?? null,
+    rateLimitRps: (row.rate_limit_rps as number) || null,
+    rateLimitBurst: (row.rate_limit_burst as number) || null,
+    gzipEnabled: (row.gzip_enabled as boolean) || false,
+    corsEnabled: (row.cors_enabled as boolean) || false,
+    customResponseHeaders: (row.custom_response_headers as { name: string; value: string; action: 'add' | 'remove' }[]) || null,
+    errorPageId: (row.error_page_id as number) || null,
     certificate: cert || null,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
@@ -174,6 +185,17 @@ export const proxyHostService = {
       advanced_config: data.advancedConfig || null,
       enabled: data.enabled !== false,
       stack_id: data.stackId || null,
+      client_max_body_size: data.clientMaxBodySize || null,
+      proxy_connect_timeout: data.proxyConnectTimeout || null,
+      proxy_send_timeout: data.proxySendTimeout || null,
+      proxy_read_timeout: data.proxyReadTimeout || null,
+      proxy_buffering: data.proxyBuffering ?? null,
+      rate_limit_rps: data.rateLimitRps || null,
+      rate_limit_burst: data.rateLimitBurst || null,
+      gzip_enabled: data.gzipEnabled || false,
+      cors_enabled: data.corsEnabled || false,
+      custom_response_headers: data.customResponseHeaders ? JSON.stringify(data.customResponseHeaders) : null,
+      error_page_id: data.errorPageId || null,
     }).returning('*');
     return proxyRow(row, await getCert(row.certificate_id));
   },
@@ -196,6 +218,17 @@ export const proxyHostService = {
     if (data.advancedConfig !== undefined) update.advanced_config = data.advancedConfig;
     if (data.enabled !== undefined) update.enabled = data.enabled;
     if (data.stackId !== undefined) update.stack_id = data.stackId;
+    if (data.clientMaxBodySize !== undefined) update.client_max_body_size = data.clientMaxBodySize;
+    if (data.proxyConnectTimeout !== undefined) update.proxy_connect_timeout = data.proxyConnectTimeout;
+    if (data.proxySendTimeout !== undefined) update.proxy_send_timeout = data.proxySendTimeout;
+    if (data.proxyReadTimeout !== undefined) update.proxy_read_timeout = data.proxyReadTimeout;
+    if (data.proxyBuffering !== undefined) update.proxy_buffering = data.proxyBuffering;
+    if (data.rateLimitRps !== undefined) update.rate_limit_rps = data.rateLimitRps;
+    if (data.rateLimitBurst !== undefined) update.rate_limit_burst = data.rateLimitBurst;
+    if (data.gzipEnabled !== undefined) update.gzip_enabled = data.gzipEnabled;
+    if (data.corsEnabled !== undefined) update.cors_enabled = data.corsEnabled;
+    if (data.customResponseHeaders !== undefined) update.custom_response_headers = data.customResponseHeaders ? JSON.stringify(data.customResponseHeaders) : null;
+    if (data.errorPageId !== undefined) update.error_page_id = data.errorPageId;
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');
     return row ? proxyRow(row, await getCert(row.certificate_id)) : null;
   },
@@ -370,5 +403,61 @@ export const accessListService = {
 
   async delete(id: number): Promise<void> {
     await db('access_lists').where({ id }).delete();
+  },
+};
+
+// ── Custom Pages ──
+
+function customPageRow(row: Record<string, unknown>): CustomPage {
+  return {
+    id: row.id as number,
+    name: row.name as string,
+    description: (row.description as string) || null,
+    errorCodes: (row.error_codes as number[]) || [],
+    htmlContent: row.html_content as string,
+    theme: (row.theme as string) || 'custom',
+    isBuiltin: row.is_builtin as boolean,
+    createdAt: (row.created_at as Date).toISOString(),
+    updatedAt: (row.updated_at as Date).toISOString(),
+  };
+}
+
+export const customPageService = {
+  async getAll(): Promise<CustomPage[]> {
+    const rows = await db('custom_pages').orderBy('is_builtin', 'desc').orderBy('name');
+    return rows.map(customPageRow);
+  },
+
+  async getById(id: number): Promise<CustomPage | null> {
+    const row = await db('custom_pages').where({ id }).first();
+    return row ? customPageRow(row) : null;
+  },
+
+  async create(data: { name: string; description?: string; errorCodes: number[]; htmlContent: string; theme?: string }): Promise<CustomPage> {
+    const [row] = await db('custom_pages').insert({
+      name: data.name,
+      description: data.description || null,
+      error_codes: JSON.stringify(data.errorCodes),
+      html_content: data.htmlContent,
+      theme: data.theme || 'custom',
+      is_builtin: false,
+    }).returning('*');
+    return customPageRow(row);
+  },
+
+  async update(id: number, data: { name?: string; description?: string; errorCodes?: number[]; htmlContent?: string }): Promise<CustomPage | null> {
+    const update: Record<string, unknown> = { updated_at: new Date() };
+    if (data.name !== undefined) update.name = data.name;
+    if (data.description !== undefined) update.description = data.description;
+    if (data.errorCodes !== undefined) update.error_codes = JSON.stringify(data.errorCodes);
+    if (data.htmlContent !== undefined) update.html_content = data.htmlContent;
+    const [row] = await db('custom_pages').where({ id }).update(update).returning('*');
+    return row ? customPageRow(row) : null;
+  },
+
+  async delete(id: number): Promise<void> {
+    const page = await db('custom_pages').where({ id }).first();
+    if (page?.is_builtin) throw new Error('Cannot delete built-in page');
+    await db('custom_pages').where({ id }).delete();
   },
 };

@@ -52,6 +52,16 @@ router.delete('/dead-hosts/:id', proxyController.deleteDeadHost);
 router.get('/access-lists', proxyController.listAccessLists);
 router.post('/access-lists', proxyController.createAccessList);
 router.delete('/access-lists/:id', proxyController.deleteAccessList);
+router.post('/access-lists/:id/clients', proxyController.addAccessListClient);
+router.delete('/access-lists/:id/clients/:clientId', proxyController.removeAccessListClient);
+router.post('/access-lists/:id/auth', proxyController.addAccessListAuth);
+router.delete('/access-lists/:id/auth/:authId', proxyController.removeAccessListAuth);
+
+// Custom pages
+router.get('/custom-pages', proxyController.listCustomPages);
+router.post('/custom-pages', proxyController.createCustomPage);
+router.put('/custom-pages/:id', proxyController.updateCustomPage);
+router.delete('/custom-pages/:id', proxyController.deleteCustomPage);
 
 // Status
 router.get('/status', proxyController.getProxyStatus);

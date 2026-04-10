@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { LayoutDashboard, Settings, User, LogOut, ArrowLeftRight, Layers, HardDrive, Network, Database, Globe, Shield, ArrowRight, Radio, Ban, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Settings, User, Users, LogOut, ArrowLeftRight, Layers, HardDrive, Network, Database, Globe, Shield, ArrowRight, Radio, Ban, ShieldCheck, FileText, Activity, Package } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { settingsApi } from '@/api/settings.api';
 import { systemApi } from '@/api/stacks.api';
@@ -22,6 +22,11 @@ import { RedirectionsPage } from '@/pages/RedirectionsPage';
 import { StreamsPage } from '@/pages/StreamsPage';
 import { DeadHostsPage } from '@/pages/DeadHostsPage';
 import { AccessListsPage } from '@/pages/AccessListsPage';
+import { CustomPagesPage } from '@/pages/CustomPagesPage';
+import { UptimeMonitorsPage } from '@/pages/UptimeMonitorsPage';
+import { AppStorePage } from '@/pages/AppStorePage';
+import { UsersPage } from '@/pages/UsersPage';
+import { RolesPage } from '@/pages/RolesPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isInitialized } = useAuthStore();
@@ -131,6 +136,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
         <aside className="w-52 shrink-0 border-r border-border bg-bg-secondary flex flex-col">
           <nav className="flex-1 p-3 space-y-1">
             <SidebarLink href="/" icon={LayoutDashboard} label="Dashboard" active={location.pathname === '/' || location.pathname.startsWith('/stack/')} />
+            <SidebarLink href="/app-store" icon={Package} label="App Store" active={location.pathname === '/app-store'} />
 
             {allowStack && (
               <>
@@ -156,6 +162,8 @@ function AppLayout({ children }: { children: React.ReactNode }) {
                 <SidebarLink href="/dead-hosts" icon={Ban} label="404 Hosts" active={location.pathname === '/dead-hosts'} />
                 <SidebarLink href="/certificates" icon={Shield} label="SSL Certificates" active={location.pathname === '/certificates'} />
                 <SidebarLink href="/access-lists" icon={ShieldCheck} label="Access Lists" active={location.pathname === '/access-lists'} />
+                <SidebarLink href="/custom-pages" icon={FileText} label="Error Pages" active={location.pathname === '/custom-pages'} />
+                <SidebarLink href="/uptime" icon={Activity} label="Uptime" active={location.pathname === '/uptime'} />
               </>
             )}
 
@@ -164,6 +172,8 @@ function AppLayout({ children }: { children: React.ReactNode }) {
                 <div className="pt-3 pb-1">
                   <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-3">System</div>
                 </div>
+                <SidebarLink href="/users" icon={Users} label="Users" active={location.pathname === '/users'} />
+                <SidebarLink href="/roles" icon={Shield} label="Roles" active={location.pathname === '/roles'} />
                 <SidebarLink href="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} />
               </>
             )}
@@ -210,6 +220,11 @@ export default function App() {
         <Route path="/dead-hosts" element={<ProtectedRoute><AppLayout><DeadHostsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/certificates" element={<ProtectedRoute><AppLayout><CertificatesPage /></AppLayout></ProtectedRoute>} />
         <Route path="/access-lists" element={<ProtectedRoute><AppLayout><AccessListsPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/custom-pages" element={<ProtectedRoute><AppLayout><CustomPagesPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/uptime" element={<ProtectedRoute><AppLayout><UptimeMonitorsPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/app-store" element={<ProtectedRoute><AppLayout><AppStorePage /></AppLayout></ProtectedRoute>} />
+        <Route path="/users" element={<ProtectedRoute><AppLayout><UsersPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/roles" element={<ProtectedRoute><AppLayout><RolesPage /></AppLayout></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><AppLayout><SettingsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><AppLayout><ProfilePage /></AppLayout></ProtectedRoute>} />
         <Route path="*" element={<NotFoundPage />} />

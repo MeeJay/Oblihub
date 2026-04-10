@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { proxyHostService, redirectionService, streamService, deadHostService, certificateService, accessListService } from '../services/proxy.service';
+import { proxyHostService, redirectionService, streamService, deadHostService, certificateService, accessListService, customPageService } from '../services/proxy.service';
 import { stackService } from '../services/stack.service';
 import { dockerService } from '../services/docker.service';
 import { nginxService } from '../services/nginx.service';
@@ -213,6 +213,45 @@ export const proxyController = {
     } catch (err) { next(err); }
   },
 
+  async addAccessListClient(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { address, directive } = req.body;
+      if (!address) throw new AppError(400, 'Address required');
+      await accessListService.addClient(parseInt(req.params.id, 10), address, directive || 'allow');
+      await nginxService.regenerateAndReload();
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  async removeAccessListClient(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await accessListService.removeClient(parseInt(req.params.clientId, 10));
+      await nginxService.regenerateAndReload();
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  async addAccessListAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { username, password } = req.body;
+      if (!username || !password) throw new AppError(400, 'Username and password required');
+      // Hash password for htpasswd (apr1 compatible)
+      const bcrypt = await import('bcrypt');
+      const hash = await bcrypt.hash(password, 10);
+      await accessListService.addAuth(parseInt(req.params.id, 10), username, hash);
+      await nginxService.regenerateAndReload();
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  async removeAccessListAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await accessListService.removeAuth(parseInt(req.params.authId, 10));
+      await nginxService.regenerateAndReload();
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
   // ── Nginx control ──
 
   async reloadNginx(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -226,6 +265,40 @@ export const proxyController = {
     try {
       const result = await nginxService.testConfig();
       res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  },
+
+  // ── Custom Pages ──
+
+  async listCustomPages(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try { res.json({ success: true, data: await customPageService.getAll() }); } catch (err) { next(err); }
+  },
+
+  async createCustomPage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { name, description, errorCodes, htmlContent, theme } = req.body;
+      if (!name || !htmlContent) throw new AppError(400, 'Name and HTML content required');
+      const page = await customPageService.create({ name, description, errorCodes: errorCodes || [500], htmlContent, theme });
+      await nginxService.regenerateAndReload();
+      res.json({ success: true, data: page });
+    } catch (err) { next(err); }
+  },
+
+  async updateCustomPage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const page = await customPageService.update(id, req.body);
+      if (!page) throw new AppError(404, 'Custom page not found');
+      await nginxService.regenerateAndReload();
+      res.json({ success: true, data: page });
+    } catch (err) { next(err); }
+  },
+
+  async deleteCustomPage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await customPageService.delete(parseInt(req.params.id, 10));
+      await nginxService.regenerateAndReload();
+      res.json({ success: true });
     } catch (err) { next(err); }
   },
 

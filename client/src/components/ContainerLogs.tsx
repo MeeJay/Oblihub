@@ -56,8 +56,8 @@ export function ContainerLogs({ dockerId, onClose }: Props) {
   }, [dockerId, socket]);
 
   useEffect(() => {
-    if (autoScroll && !paused) {
-      bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+    if (autoScroll && !paused && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
   }, [lines, autoScroll, paused]);
 
@@ -87,7 +87,7 @@ export function ContainerLogs({ dockerId, onClose }: Props) {
             <button
               onClick={() => {
                 setAutoScroll(true);
-                bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+                if (containerRef.current) containerRef.current.scrollTop = containerRef.current.scrollHeight;
               }}
               className="p-1 rounded hover:bg-bg-hover text-text-muted"
               title="Scroll to bottom"

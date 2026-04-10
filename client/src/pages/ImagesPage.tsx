@@ -54,21 +54,23 @@ export function ImagesPage() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-text-primary flex items-center gap-2"><HardDrive size={20} /> Images</h1>
-        <button
-          onClick={async () => {
-            if (!confirm('Remove all unused images? This cannot be undone.')) return;
-            try {
-              const result = await dockerApi.pruneImages();
-              toast.success(`Pruned ${result.deleted.length} image(s), reclaimed ${formatSize(result.spaceReclaimed)}`);
-              load();
-            } catch { toast.error('Prune failed'); }
-          }}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-status-down/30 text-status-down hover:bg-status-down/10">
-          <Eraser size={14} /> Prune
-        </button>
-        <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              if (!confirm('Remove all unused images? This cannot be undone.')) return;
+              try {
+                const result = await dockerApi.pruneImages();
+                toast.success(`Pruned ${result.deleted.length} image(s), reclaimed ${formatSize(result.spaceReclaimed)}`);
+                load();
+              } catch { toast.error('Prune failed'); }
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-status-down/30 text-status-down hover:bg-status-down/10">
+            <Eraser size={14} /> Prune
+          </button>
+          <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
+            <RefreshCw size={14} /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* Pull image */}

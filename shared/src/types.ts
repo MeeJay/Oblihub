@@ -26,6 +26,9 @@ export interface Stack {
   autoUpdate: boolean;
   enabled: boolean;
   url: string | null;
+  notifyUpdateAvailable: boolean | null;
+  notifyUpdateApplied: boolean | null;
+  notifyDelay: number | null;
   lastCheckedAt: string | null;
   lastUpdatedAt: string | null;
   containers: Container[];
@@ -176,7 +179,30 @@ export interface ProxyHost {
   advancedConfig: string | null;
   enabled: boolean;
   stackId: number | null;
+  clientMaxBodySize: string | null;
+  proxyConnectTimeout: number | null;
+  proxySendTimeout: number | null;
+  proxyReadTimeout: number | null;
+  proxyBuffering: boolean | null;
+  rateLimitRps: number | null;
+  rateLimitBurst: number | null;
+  gzipEnabled: boolean;
+  corsEnabled: boolean;
+  customResponseHeaders: { name: string; value: string; action: 'add' | 'remove' }[] | null;
+  errorPageId: number | null;
   certificate?: Certificate | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomPage {
+  id: number;
+  name: string;
+  description: string | null;
+  errorCodes: number[];
+  htmlContent: string;
+  theme: string;
+  isBuiltin: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -246,6 +272,101 @@ export interface AccessListClient {
 export interface AccessListAuth {
   id: number;
   username: string;
+}
+
+// ── Container stats types ──
+export interface ContainerStats {
+  dockerId: string;
+  containerName: string;
+  cpuPercent: number;
+  memoryUsage: number;
+  memoryLimit: number;
+  memoryPercent: number;
+  networkRx: number;
+  networkTx: number;
+  timestamp: string;
+}
+
+export interface ResourceAlert {
+  id: number;
+  name: string;
+  metric: 'cpu' | 'memory';
+  threshold: number;
+  operator: 'gt' | 'lt';
+  stackId: number | null;
+  enabled: boolean;
+  cooldownMinutes: number;
+  lastTriggeredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Uptime monitoring types ──
+export interface UptimeMonitor {
+  id: number;
+  name: string;
+  url: string;
+  type: 'http' | 'tcp' | 'keyword';
+  intervalSeconds: number;
+  timeoutMs: number;
+  expectedStatus: number;
+  keyword: string | null;
+  proxyHostId: number | null;
+  enabled: boolean;
+  currentStatus: 'up' | 'down' | 'pending';
+  consecutiveFailures: number;
+  uptimePercent?: number;
+  avgResponseTime?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UptimeHeartbeat {
+  id: number;
+  monitorId: number;
+  status: 'up' | 'down';
+  responseTimeMs: number | null;
+  statusCode: number | null;
+  message: string | null;
+  timestamp: string;
+}
+
+export interface StatusPage {
+  id: number;
+  name: string;
+  slug: string;
+  isPublic: boolean;
+  customCss: string | null;
+  monitorIds: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── App template types ──
+export interface AppTemplate {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  icon: string | null;
+  category: string;
+  composeTemplate: string;
+  envSchema: EnvSchemaField[];
+  defaultProxyPort: number | null;
+  documentationUrl: string | null;
+  isBuiltin: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnvSchemaField {
+  key: string;
+  label: string;
+  type: 'text' | 'password' | 'number' | 'select';
+  required: boolean;
+  default: string;
+  description: string;
+  options?: string[];
 }
 
 // ── API response wrapper ──

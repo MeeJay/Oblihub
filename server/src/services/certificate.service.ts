@@ -7,9 +7,38 @@ import { certificateService } from './proxy.service';
 import { nginxService } from './nginx.service';
 import { logger } from '../utils/logger';
 
+// Queue for serializing cert requests (prevent parallel ACME conflicts)
+const certQueue: Array<() => Promise<void>> = [];
+let certProcessing = false;
+
+async function processCertQueue(): Promise<void> {
+  if (certProcessing) return;
+  certProcessing = true;
+  while (certQueue.length > 0) {
+    const task = certQueue.shift()!;
+    try { await task(); } catch (err) {
+      logger.error({ err }, 'Cert queue task failed');
+    }
+  }
+  certProcessing = false;
+}
+
 export const letsEncryptService = {
-  /** Request a certificate from Let's Encrypt */
+  /** Request a certificate from Let's Encrypt (queued to prevent parallel conflicts) */
   async requestCertificate(certId: number, domains: string[], email: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      certQueue.push(async () => {
+        try {
+          await this._doRequestCertificate(certId, domains, email);
+          resolve();
+        } catch (err) { reject(err); }
+      });
+      processCertQueue();
+    });
+  },
+
+  /** Internal: actual cert request logic */
+  async _doRequestCertificate(certId: number, domains: string[], email: string): Promise<void> {
     try {
       await certificateService.updateStatus(certId, 'pending', undefined, null);
 

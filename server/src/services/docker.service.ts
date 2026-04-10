@@ -491,12 +491,13 @@ export const dockerService = {
   },
 
   /** Create a volume */
-  async createVolume(opts: { name: string; driver?: string; labels?: Record<string, string> }): Promise<Docker.VolumeCreateResponse> {
+  async createVolume(opts: { name: string; driver?: string; labels?: Record<string, string>; driverOpts?: Record<string, string> }): Promise<Docker.VolumeCreateResponse> {
     const docker = getDocker();
     const volume = await docker.createVolume({
       Name: opts.name,
       Driver: opts.driver || 'local',
       Labels: opts.labels || {},
+      DriverOpts: opts.driverOpts || {},
     });
     logger.info({ name: opts.name }, 'Volume created');
     return volume;

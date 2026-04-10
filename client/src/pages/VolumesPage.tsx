@@ -16,7 +16,7 @@ export function VolumesPage() {
   const [volumes, setVolumes] = useState<DockerVolume[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ name: '', driver: 'local' });
+  const [createForm, setCreateForm] = useState({ name: '', driver: 'local', device: '', type: '', o: '' });
 
   const load = async () => {
     try {
@@ -30,9 +30,13 @@ export function VolumesPage() {
   const handleCreate = async () => {
     if (!createForm.name.trim()) return;
     try {
-      await dockerApi.createVolume(createForm);
+      const driverOpts: Record<string, string> = {};
+      if (createForm.type) driverOpts.type = createForm.type;
+      if (createForm.device) driverOpts.device = createForm.device;
+      if (createForm.o) driverOpts.o = createForm.o;
+      await dockerApi.createVolume({ name: createForm.name, driver: createForm.driver === 'cifs' ? 'local' : createForm.driver, driverOpts: Object.keys(driverOpts).length > 0 ? driverOpts : undefined });
       toast.success(`Volume ${createForm.name} created`);
-      setCreateForm({ name: '', driver: 'local' });
+      setCreateForm({ name: '', driver: 'local', device: '', type: '', o: '' });
       setShowCreate(false);
       load();
     } catch { toast.error('Failed to create volume'); }
@@ -81,13 +85,45 @@ export function VolumesPage() {
           <h3 className="text-sm font-semibold text-text-secondary">Create Volume</h3>
           <div className="grid grid-cols-2 gap-3">
             <input value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} placeholder="Volume name" className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
-            <select value={createForm.driver} onChange={e => setCreateForm(f => ({ ...f, driver: e.target.value }))} className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
-              <option value="local">local</option>
+            <select value={createForm.driver} onChange={e => {
+              const driver = e.target.value;
+              if (driver === 'nfs') setCreateForm(f => ({ ...f, driver, type: 'nfs', device: ':/path/to/share', o: 'addr=nfs-server,rw,nfsvers=4' }));
+              else if (driver === 'cifs') setCreateForm(f => ({ ...f, driver: 'local', type: 'cifs', device: '//server/share', o: 'username=user,password=pass' }));
+              else if (driver === 's3') setCreateForm(f => ({ ...f, driver, type: '', device: '', o: '' }));
+              else setCreateForm(f => ({ ...f, driver, type: '', device: '', o: '' }));
+            }} className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+              <option value="local">Local</option>
+              <option value="nfs">NFS</option>
+              <option value="cifs">SMB / CIFS</option>
+              <option value="s3">S3 (rexray/s3fs)</option>
             </select>
           </div>
+          {(createForm.type || createForm.driver === 's3') && (
+            <div className="space-y-2">
+              {createForm.driver !== 's3' && (
+                <>
+                  <div>
+                    <label className="text-xs text-text-muted block mb-1">Device / Share</label>
+                    <input value={createForm.device} onChange={e => setCreateForm(f => ({ ...f, device: e.target.value }))} placeholder={createForm.type === 'nfs' ? ':/exports/data' : '//192.168.1.100/share'}
+                      className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-text-muted block mb-1">Mount Options</label>
+                    <input value={createForm.o} onChange={e => setCreateForm(f => ({ ...f, o: e.target.value }))} placeholder={createForm.type === 'nfs' ? 'addr=nfs-server,rw,nfsvers=4' : 'username=user,password=pass,vers=3.0'}
+                      className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  </div>
+                </>
+              )}
+              {createForm.driver === 's3' && (
+                <div className="text-xs text-text-muted p-2 bg-bg-tertiary rounded-lg">
+                  S3 volumes require the <code className="bg-bg-secondary px-1 rounded">rexray/s3fs</code> Docker plugin. Install it first with: <code className="bg-bg-secondary px-1 rounded">docker plugin install rexray/s3fs</code>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">Create</button>
-            <button onClick={() => setShowCreate(false)} className="px-4 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">Cancel</button>
+            <button onClick={() => { setShowCreate(false); setCreateForm({ name: '', driver: 'local', device: '', type: '', o: '' }); }} className="px-4 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">Cancel</button>
           </div>
         </div>
       )}

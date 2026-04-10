@@ -10,7 +10,7 @@ export const stacksApi = {
     const res = await apiClient.get<ApiResponse<Stack>>(`/stacks/${id}`);
     return res.data.data!;
   },
-  async update(id: number, data: Partial<Pick<Stack, 'name' | 'checkInterval' | 'autoUpdate' | 'enabled' | 'url'>>): Promise<Stack> {
+  async update(id: number, data: Partial<Pick<Stack, 'name' | 'checkInterval' | 'autoUpdate' | 'enabled' | 'url' | 'notifyUpdateAvailable' | 'notifyUpdateApplied' | 'notifyDelay'>>): Promise<Stack> {
     const res = await apiClient.patch<ApiResponse<Stack>>(`/stacks/${id}`, data);
     return res.data.data!;
   },
