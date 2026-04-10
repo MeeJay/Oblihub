@@ -52,9 +52,15 @@ async function main() {
   // Start per-stack check scheduler
   await schedulerService.startAll();
 
-  // Start certificate auto-renewal check (every 12 hours)
+  // Nginx proxy: regenerate configs on startup + auto-renewal
   if (config.allowNginx) {
+    const { nginxService } = await import('./services/nginx.service');
     const { letsEncryptService } = await import('./services/certificate.service');
+    nginxService.regenerateAndReload().then(() => {
+      logger.info('Nginx proxy configs regenerated on startup');
+    }).catch(err => {
+      logger.warn({ err }, 'Nginx proxy config regeneration failed on startup (proxy may not be running yet)');
+    });
     setInterval(() => letsEncryptService.checkRenewals(), 12 * 60 * 60 * 1000);
     logger.info('Certificate auto-renewal scheduler started (12h interval)');
   }
