@@ -49,9 +49,9 @@ function hstsSnippet(subdomains: boolean): string {
 }
 
 function sslBlock(certPath: string, keyPath: string, http2: boolean): string {
-  const h2 = http2 ? ' http2' : '';
-  return `    listen 443 ssl${h2};
-    listen [::]:443 ssl${h2};
+  const h2 = http2 ? '\n    http2 on;' : '';
+  return `    listen 443 ssl;
+    listen [::]:443 ssl;${h2}
     ssl_certificate ${certPath};
     ssl_certificate_key ${keyPath};
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -135,9 +135,13 @@ function generateProxyHostConfig(host: ProxyHost): string {
     conf += cachingSnippet() + '\n\n';
   }
 
+  // Resolver for dynamic upstream DNS (Docker internal DNS)
+  conf += `    resolver 127.0.0.11 valid=10s ipv6=off;\n`;
+  conf += `    set $upstream ${upstream};\n\n`;
+
   // Main location
   conf += `    location / {\n`;
-  conf += `        proxy_pass ${upstream};\n`;
+  conf += `        proxy_pass $upstream;\n`;
   conf += `        proxy_set_header Host $host;\n`;
   conf += `        proxy_set_header X-Real-IP $remote_addr;\n`;
   conf += `        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n`;
