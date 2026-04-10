@@ -16,8 +16,10 @@ const HTPASSWD_DIR = path.join(PROXY_DIR, 'htpasswd');
 
 function ensureDirs() {
   for (const dir of [PROXY_DIR, CONF_DIR, STREAM_DIR, CERTS_DIR, ACME_DIR, HTPASSWD_DIR]) {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
   }
+  // Ensure acme-challenge is world-readable for nginx
+  try { fs.chmodSync(ACME_DIR, 0o755); } catch { /* ignore */ }
 }
 
 // ── Config snippets ──
@@ -209,7 +211,7 @@ function generateMainConfig(): string {
   return `user nginx;
 worker_processes auto;
 error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
+pid /run/nginx.pid;
 
 events {
     worker_connections 1024;

@@ -41,9 +41,9 @@ export const letsEncryptService = {
 
         const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
 
-        // Write challenge file
+        // Write challenge file (world-readable for nginx user)
         const challengePath = path.join(acmeDir, challenge.token);
-        fs.writeFileSync(challengePath, keyAuthorization);
+        fs.writeFileSync(challengePath, keyAuthorization, { mode: 0o644 });
 
         // Verify challenge
         await client.verifyChallenge(auth, challenge);
