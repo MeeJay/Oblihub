@@ -72,7 +72,7 @@ function accessListBlock(listId: number, _list?: AccessList): string {
 function generateProxyHostConfig(host: ProxyHost): string {
   const domains = host.domainNames.join(' ');
   const upstream = `${host.forwardScheme}://${host.forwardHost}:${host.forwardPort}`;
-  const certFile = path.join(CERTS_DIR, `host_${host.id}.crt`);
+  const certFile = path.join(CERTS_DIR, `host_${host.id}.fullchain.crt`);
   const keyFile = path.join(CERTS_DIR, `host_${host.id}.key`);
   const hasCert = host.certificate && host.certificate.status === 'valid' && host.certificateId
     && fs.existsSync(certFile) && fs.existsSync(keyFile);
@@ -102,7 +102,7 @@ function generateProxyHostConfig(host: ProxyHost): string {
 
   if (hasCert) {
     conf += sslBlock(
-      `/etc/nginx/certs/host_${host.id}.crt`,
+      `/etc/nginx/certs/host_${host.id}.fullchain.crt`,
       `/etc/nginx/certs/host_${host.id}.key`,
       host.http2Support,
     ) + '\n';
@@ -180,7 +180,7 @@ function generateRedirectionConfig(host: RedirectionHost): string {
 
   if (hasCert) {
     conf += sslBlock(
-      `/etc/nginx/certs/redir_${host.id}.crt`,
+      `/etc/nginx/certs/redir_${host.id}.fullchain.crt`,
       `/etc/nginx/certs/redir_${host.id}.key`,
       host.http2Support,
     ) + '\n';
@@ -408,6 +408,7 @@ export const nginxService = {
       cert: path.join(CERTS_DIR, `${hostType}_${hostId}.crt`),
       key: path.join(CERTS_DIR, `${hostType}_${hostId}.key`),
       chain: path.join(CERTS_DIR, `${hostType}_${hostId}.chain.crt`),
+      fullchain: path.join(CERTS_DIR, `${hostType}_${hostId}.fullchain.crt`),
     };
   },
 
@@ -418,6 +419,9 @@ export const nginxService = {
     fs.writeFileSync(paths.cert, cert);
     fs.writeFileSync(paths.key, key);
     if (chain) fs.writeFileSync(paths.chain, chain);
+    // Write fullchain (cert + chain) for nginx ssl_certificate
+    const fullchain = chain ? cert + '\n' + chain : cert;
+    fs.writeFileSync(paths.fullchain, fullchain);
   },
 
   /** Get the ACME challenge directory path */
