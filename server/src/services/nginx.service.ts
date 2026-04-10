@@ -72,10 +72,11 @@ function accessListBlock(listId: number, _list?: AccessList): string {
 function generateProxyHostConfig(host: ProxyHost): string {
   const domains = host.domainNames.join(' ');
   const upstream = `${host.forwardScheme}://${host.forwardHost}:${host.forwardPort}`;
-  const certFile = path.join(CERTS_DIR, `host_${host.id}.fullchain.crt`);
-  const keyFile = path.join(CERTS_DIR, `host_${host.id}.key`);
+  const certDomain = host.certificate?.domainNames?.[0] || '';
+  const certFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.fullchain.crt`) : '';
+  const keyFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.key`) : '';
   const hasCert = host.certificate && host.certificate.status === 'valid' && host.certificateId
-    && fs.existsSync(certFile) && fs.existsSync(keyFile);
+    && certFile && keyFile && fs.existsSync(certFile) && fs.existsSync(keyFile);
 
   let conf = `# Proxy Host ${host.id} - ${domains}\n`;
 
@@ -101,9 +102,10 @@ function generateProxyHostConfig(host: ProxyHost): string {
   conf += `server {\n`;
 
   if (hasCert) {
+    const sslDomain = host.certificate?.domainNames?.[0] || '';
     conf += sslBlock(
-      `/etc/nginx/certs/host_${host.id}.fullchain.crt`,
-      `/etc/nginx/certs/host_${host.id}.key`,
+      `/etc/nginx/certs/${sslDomain}.fullchain.crt`,
+      `/etc/nginx/certs/${sslDomain}.key`,
       host.http2Support,
     ) + '\n';
   }
@@ -179,9 +181,10 @@ function generateRedirectionConfig(host: RedirectionHost): string {
   let conf = `# Redirection ${host.id} - ${domains}\nserver {\n`;
 
   if (hasCert) {
+    const sslDomain = host.certificate?.domainNames?.[0] || '';
     conf += sslBlock(
-      `/etc/nginx/certs/redir_${host.id}.fullchain.crt`,
-      `/etc/nginx/certs/redir_${host.id}.key`,
+      `/etc/nginx/certs/${sslDomain}.fullchain.crt`,
+      `/etc/nginx/certs/${sslDomain}.key`,
       host.http2Support,
     ) + '\n';
   }
@@ -302,24 +305,24 @@ export const nginxService = {
     for (const f of fs.readdirSync(CONF_DIR)) fs.unlinkSync(path.join(CONF_DIR, f));
     for (const f of fs.readdirSync(STREAM_DIR)) fs.unlinkSync(path.join(STREAM_DIR, f));
 
-    // Generate proxy host configs
+    // Generate proxy host configs (named by primary domain)
     const proxyHosts = await proxyHostService.getEnabled();
     for (const host of proxyHosts) {
-      const filename = `proxy_host_${host.id}.conf`;
+      const filename = `${host.domainNames[0] || `proxy_${host.id}`}.conf`;
       fs.writeFileSync(path.join(CONF_DIR, filename), generateProxyHostConfig(host));
     }
 
     // Generate redirection configs
     const redirections = await redirectionService.getAll();
     for (const host of redirections.filter(r => r.enabled)) {
-      const filename = `redir_${host.id}.conf`;
+      const filename = `redir_${host.domainNames[0] || host.id}.conf`;
       fs.writeFileSync(path.join(CONF_DIR, filename), generateRedirectionConfig(host));
     }
 
     // Generate dead host configs
     const deadHosts = await deadHostService.getAll();
     for (const host of deadHosts.filter(h => h.enabled)) {
-      const filename = `dead_${host.id}.conf`;
+      const filename = `dead_${host.domainNames[0] || host.id}.conf`;
       fs.writeFileSync(path.join(CONF_DIR, filename), generateDeadHostConfig(host));
     }
 
@@ -402,24 +405,23 @@ export const nginxService = {
     }
   },
 
-  /** Get paths for certificate files */
-  getCertPaths(hostType: string, hostId: number) {
+  /** Get paths for certificate files by domain name */
+  getCertPathsByDomain(domain: string) {
     return {
-      cert: path.join(CERTS_DIR, `${hostType}_${hostId}.crt`),
-      key: path.join(CERTS_DIR, `${hostType}_${hostId}.key`),
-      chain: path.join(CERTS_DIR, `${hostType}_${hostId}.chain.crt`),
-      fullchain: path.join(CERTS_DIR, `${hostType}_${hostId}.fullchain.crt`),
+      cert: path.join(CERTS_DIR, `${domain}.crt`),
+      key: path.join(CERTS_DIR, `${domain}.key`),
+      chain: path.join(CERTS_DIR, `${domain}.chain.crt`),
+      fullchain: path.join(CERTS_DIR, `${domain}.fullchain.crt`),
     };
   },
 
-  /** Write certificate files */
-  writeCertFiles(hostType: string, hostId: number, cert: string, key: string, chain?: string): void {
+  /** Write certificate files named by primary domain */
+  writeCertFiles(domain: string, cert: string, key: string, chain?: string): void {
     ensureDirs();
-    const paths = this.getCertPaths(hostType, hostId);
+    const paths = this.getCertPathsByDomain(domain);
     fs.writeFileSync(paths.cert, cert);
-    fs.writeFileSync(paths.key, key);
+    fs.writeFileSync(paths.key, key, { mode: 0o600 });
     if (chain) fs.writeFileSync(paths.chain, chain);
-    // Write fullchain (cert + chain) for nginx ssl_certificate
     const fullchain = chain ? cert + '\n' + chain : cert;
     fs.writeFileSync(paths.fullchain, fullchain);
   },
