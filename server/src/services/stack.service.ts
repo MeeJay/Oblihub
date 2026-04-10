@@ -204,9 +204,11 @@ export const stackService = {
     return this.getById(id);
   },
 
-  /** Delete a stack and its containers from the database */
+  /** Delete a stack, its containers, and its history from the database */
   async delete(id: number): Promise<void> {
+    await db('update_history').where({ stack_id: id }).delete();
     await db('containers').where({ stack_id: id }).delete();
+    await db('notification_bindings').where({ scope: 'stack', scope_id: id }).delete();
     await db('stacks').where({ id }).delete();
   },
 
