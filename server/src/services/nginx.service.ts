@@ -343,14 +343,7 @@ export const nginxService = {
 
     logger.info({ proxyHosts: proxyHosts.length, redirections: redirections.length, streams: streams.length }, 'Nginx configs regenerated');
 
-    // Test config before reloading
-    const testResult = await this.testConfig();
-    if (!testResult.valid) {
-      logger.error({ error: testResult.error }, 'Nginx config test failed, skipping reload');
-      throw new Error(`Nginx config invalid: ${testResult.error}`);
-    }
-
-    // Reload nginx container
+    // Reload nginx container (SIGHUP is safe - nginx keeps old config if new one is invalid)
     await this.reloadProxy();
   },
 

@@ -84,10 +84,12 @@ export const letsEncryptService = {
         expiresAt,
       }, null);
 
-      logger.info({ certId, domains }, 'Let\'s Encrypt certificate obtained');
+      logger.info({ certId, domains, primaryDomain }, 'Let\'s Encrypt certificate obtained');
 
       // Regenerate nginx configs to use new cert
+      logger.info('Regenerating nginx configs after cert provisioning...');
       await nginxService.regenerateAndReload();
+      logger.info('Nginx configs regenerated and reloaded after cert provisioning');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       logger.error({ certId, err }, 'Failed to obtain Let\'s Encrypt certificate');
