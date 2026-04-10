@@ -364,9 +364,22 @@ export const nginxService = {
       }
 
       const container = d.getContainer(proxy.Id);
-      // Use kill -HUP to the master process instead of nginx -s reload (avoids PID file issues)
-      await container.kill({ signal: 'HUP' });
-      logger.info('Nginx proxy reloaded (SIGHUP)');
+      // Use docker exec to reload nginx (PID 1 may be sh, not nginx)
+      const exec = await container.exec({
+        Cmd: ['nginx', '-s', 'reload'],
+        AttachStdout: true,
+        AttachStderr: true,
+      });
+      const stream = await exec.start({});
+      // Collect output for logging
+      let output = '';
+      await new Promise<void>((resolve) => {
+        stream.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+        stream.on('end', resolve);
+        stream.on('error', resolve);
+      });
+      if (output.trim()) logger.info({ output: output.trim() }, 'Nginx reload output');
+      logger.info('Nginx proxy reloaded');
     } catch (err) {
       logger.error({ err }, 'Failed to reload nginx proxy');
     }

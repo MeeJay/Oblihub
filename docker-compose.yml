@@ -58,14 +58,7 @@ services:
       - "${PROXY_HTTPS_PORT:-443}:443"
     volumes:
       - proxy_data:/etc/nginx
-    command: >
-      sh -c "
-        mkdir -p /etc/nginx/conf.d /etc/nginx/stream.d /etc/nginx/certs /etc/nginx/acme-challenge /etc/nginx/htpasswd &&
-        if [ ! -f /etc/nginx/nginx.conf ]; then
-          echo 'events { worker_connections 1024; } http { server { listen 80 default_server; location / { return 444; } } }' > /etc/nginx/nginx.conf;
-        fi &&
-        nginx -g 'daemon off;'
-      "
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /etc/nginx/conf.d /etc/nginx/stream.d /etc/nginx/certs /etc/nginx/acme-challenge /etc/nginx/htpasswd && [ -f /etc/nginx/nginx.conf ] || echo 'events { worker_connections 1024; } http { server { listen 80 default_server; location / { return 444; } } }' > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"]
     healthcheck:
       test: ["CMD", "nginx", "-t"]
       interval: 30s
