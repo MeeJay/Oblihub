@@ -96,12 +96,36 @@ function sslBlock(certPath: string, keyPath: string, http2: boolean): string {
     ssl_prefer_server_ciphers off;`;
 }
 
-function accessListBlock(listId: number, _list?: AccessList): string {
-  // Generate htpasswd and IP rules
-  return `
-    # Access list ${listId}
-    auth_basic "Restricted";
-    auth_basic_user_file /etc/nginx/htpasswd/access_list_${listId};`;
+function accessListBlock(listId: number, list?: AccessList): string {
+  if (!list) return '';
+  const hasClients = list.clients.length > 0;
+  const hasAuth = list.auth.length > 0;
+  if (!hasClients && !hasAuth) return ''; // No rules = allow all
+
+  let conf = `\n    # Access list: ${list.name}\n`;
+
+  // IP rules first (deny before auth)
+  if (hasClients) {
+    for (const c of list.clients) {
+      conf += `    ${c.directive === 'allow' ? 'allow' : 'deny'} ${c.address.replace(/[;\n\r{}#'"\\]/g, '')};\n`;
+    }
+    // Deny all others not explicitly allowed
+    const hasAllow = list.clients.some(c => c.directive === 'allow');
+    if (hasAllow) conf += `    deny all;\n`;
+  }
+
+  // Basic auth (only if there are auth entries)
+  if (hasAuth) {
+    if (hasClients && !list.satisfyAny) {
+      conf += `    satisfy all;\n`; // Need both IP + auth
+    } else if (hasClients && list.satisfyAny) {
+      conf += `    satisfy any;\n`; // Either IP or auth
+    }
+    conf += `    auth_basic "Restricted";\n`;
+    conf += `    auth_basic_user_file /etc/nginx/htpasswd/access_list_${listId};\n`;
+  }
+
+  return conf;
 }
 
 // ── Proxy Host config ──
@@ -110,7 +134,7 @@ function sanitizeForNginx(value: string): string {
   return value.replace(/[;\n\r{}#'"\\]/g, '');
 }
 
-function generateProxyHostConfig(host: ProxyHost): string {
+function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []): string {
   const domains = host.domainNames.map(d => sanitizeForNginx(d)).join(' ');
   const upstream = `${sanitizeForNginx(host.forwardScheme)}://${sanitizeForNginx(host.forwardHost)}:${host.forwardPort}`;
   const certDomain = host.certificate?.domainNames?.[0] || '';
@@ -171,7 +195,8 @@ function generateProxyHostConfig(host: ProxyHost): string {
   }
 
   if (host.accessListId) {
-    conf += accessListBlock(host.accessListId) + '\n\n';
+    const accessList = accessLists.find(al => al.id === host.accessListId);
+    conf += accessListBlock(host.accessListId, accessList) + '\n\n';
   }
 
   if (host.cachingEnabled) {
@@ -428,6 +453,9 @@ export const nginxService = {
     for (const f of fs.readdirSync(STREAM_DIR)) fs.unlinkSync(path.join(STREAM_DIR, f));
 
     // Generate proxy host configs (named by primary domain)
+    // Load access lists for config generation
+    const allAccessLists = await accessListService.getAll();
+
     // Include disabled hosts with return 503 so they keep their cert and don't leak to other vhosts
     const allProxyHosts = await proxyHostService.getAll();
     for (const host of allProxyHosts) {
@@ -450,7 +478,7 @@ export const nginxService = {
       } else {
         // Apply default error page
         if (!host.errorPageId && defaultErrorPageId) host.errorPageId = defaultErrorPageId;
-        fs.writeFileSync(path.join(CONF_DIR, `${host.domainNames[0] || `proxy_${host.id}`}.conf`), generateProxyHostConfig(host));
+        fs.writeFileSync(path.join(CONF_DIR, `${host.domainNames[0] || `proxy_${host.id}`}.conf`), generateProxyHostConfig(host, allAccessLists));
       }
     }
 

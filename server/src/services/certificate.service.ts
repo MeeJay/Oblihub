@@ -25,9 +25,11 @@ async function processCertQueue(): Promise<void> {
 
 async function doRequestCertificate(certId: number, domains: string[], email: string): Promise<void> {
     try {
+      logger.info({ certId, domains, email }, 'Starting LE certificate request');
       await certificateService.updateStatus(certId, 'pending', undefined, null);
 
       // Create ACME client
+      logger.info({ certId }, 'Creating ACME client...');
       const accountKey = await acme.crypto.createPrivateKey();
       const client = new acme.Client({
         directoryUrl: acme.directory.letsencrypt.production,
@@ -35,17 +37,20 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
       });
 
       // Register account
+      logger.info({ certId }, 'Registering ACME account...');
       await client.createAccount({
         termsOfServiceAgreed: true,
         contact: [`mailto:${email}`],
       });
 
       // Create order
+      logger.info({ certId, domains }, 'Creating ACME order...');
       const order = await client.createOrder({
         identifiers: domains.map(d => ({ type: 'dns', value: d })),
       });
 
       // Process authorizations (HTTP-01 challenge)
+      logger.info({ certId }, 'Processing ACME authorizations...');
       const authorizations = await client.getAuthorizations(order);
       const acmeDir = nginxService.getAcmeDir();
 
@@ -53,6 +58,7 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
         const challenge = auth.challenges.find((c: { type: string }) => c.type === 'http-01');
         if (!challenge) throw new Error(`No HTTP-01 challenge for ${auth.identifier.value}`);
 
+        logger.info({ certId, domain: auth.identifier.value, token: challenge.token }, 'Writing ACME challenge...');
         const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
 
         // Write challenge file (world-readable for nginx user)
@@ -60,9 +66,11 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
         fs.writeFileSync(challengePath, keyAuthorization, { mode: 0o644 });
 
         // Verify challenge
+        logger.info({ certId, domain: auth.identifier.value }, 'Completing ACME challenge...');
         await client.verifyChallenge(auth, challenge);
         await client.completeChallenge(challenge);
         await client.waitForValidStatus(challenge);
+        logger.info({ certId, domain: auth.identifier.value }, 'ACME challenge validated');
 
         // Clean up challenge file
         try { fs.unlinkSync(challengePath); } catch { /* ignore */ }
