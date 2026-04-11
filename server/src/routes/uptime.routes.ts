@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { db } from '../db';
 import { requireAuth } from '../middleware/auth';
+import { requirePermission } from '../middleware/permissions';
 import { rescheduleMonitor } from '../workers/UptimeWorker';
 import { AppError } from '../middleware/errorHandler';
 
@@ -41,7 +42,7 @@ router.get('/status/:slug', async (req: Request, res: Response, next: NextFuncti
 router.use(requireAuth);
 
 // Monitors CRUD
-router.get('/monitors', async (_req, res, next) => {
+router.get('/monitors', requirePermission('uptime.view'), async (_req, res, next) => {
   try {
     const monitors = await db('uptime_monitors').orderBy('id');
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -66,7 +67,7 @@ router.get('/monitors', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/monitors', async (req, res, next) => {
+router.post('/monitors', requirePermission('uptime.manage'), async (req, res, next) => {
   try {
     const { name, url, type, intervalSeconds, timeoutMs, expectedStatus, keyword, proxyHostId } = req.body;
     if (!name || !url) throw new AppError(400, 'Name and URL required');
@@ -81,7 +82,7 @@ router.post('/monitors', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.delete('/monitors/:id', async (req, res, next) => {
+router.delete('/monitors/:id', requirePermission('uptime.manage'), async (req, res, next) => {
   try {
     const id = parseInt(req.params.id, 10);
     rescheduleMonitor(id, 0, false);

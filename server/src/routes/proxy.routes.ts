@@ -53,22 +53,22 @@ router.delete('/dead-hosts/:id', requirePermission('proxy.manage'), proxyControl
 router.get('/access-lists', requirePermission('proxy.access_lists'), proxyController.listAccessLists);
 router.post('/access-lists', requirePermission('proxy.access_lists'), proxyController.createAccessList);
 router.delete('/access-lists/:id', requirePermission('proxy.access_lists'), proxyController.deleteAccessList);
-router.post('/access-lists/:id/clients', proxyController.addAccessListClient);
-router.delete('/access-lists/:id/clients/:clientId', proxyController.removeAccessListClient);
-router.post('/access-lists/:id/auth', proxyController.addAccessListAuth);
-router.delete('/access-lists/:id/auth/:authId', proxyController.removeAccessListAuth);
+router.post('/access-lists/:id/clients', requirePermission('proxy.access_lists'), proxyController.addAccessListClient);
+router.delete('/access-lists/:id/clients/:clientId', requirePermission('proxy.access_lists'), proxyController.removeAccessListClient);
+router.post('/access-lists/:id/auth', requirePermission('proxy.access_lists'), proxyController.addAccessListAuth);
+router.delete('/access-lists/:id/auth/:authId', requirePermission('proxy.access_lists'), proxyController.removeAccessListAuth);
 
 // Custom pages
-router.get('/custom-pages', proxyController.listCustomPages);
-router.post('/custom-pages', proxyController.createCustomPage);
-router.put('/custom-pages/:id', proxyController.updateCustomPage);
-router.delete('/custom-pages/:id', proxyController.deleteCustomPage);
+router.get('/custom-pages', requirePermission('proxy.custom_pages'), proxyController.listCustomPages);
+router.post('/custom-pages', requirePermission('proxy.custom_pages'), proxyController.createCustomPage);
+router.put('/custom-pages/:id', requirePermission('proxy.custom_pages'), proxyController.updateCustomPage);
+router.delete('/custom-pages/:id', requirePermission('proxy.custom_pages'), proxyController.deleteCustomPage);
 
 // Status
 router.get('/status', proxyController.getProxyStatus);
 
 // Nginx control
-router.post('/nginx/reload', proxyController.reloadNginx);
-router.post('/nginx/test', proxyController.testNginx);
+router.post('/nginx/reload', requirePermission('proxy.nginx'), proxyController.reloadNginx);
+router.post('/nginx/test', requirePermission('proxy.nginx'), proxyController.testNginx);
 
 export default router;

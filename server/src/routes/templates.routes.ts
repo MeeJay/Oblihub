@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { managedStackService } from '../services/managed-stack.service';
 import { composeService } from '../services/compose.service';
 import { config } from '../config';
+import { requirePermission } from '../middleware/permissions';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 
@@ -16,7 +17,7 @@ router.use((_req: Request, res: Response, next: NextFunction) => {
 });
 
 // List all templates
-router.get('/', async (_req, res, next) => {
+router.get('/', requirePermission('templates.view'), async (_req, res, next) => {
   try {
     const rows = await db('app_templates').orderBy('category').orderBy('name');
     res.json({ success: true, data: rows.map(r => ({
@@ -30,7 +31,7 @@ router.get('/', async (_req, res, next) => {
 });
 
 // Deploy a template
-router.post('/:id/deploy', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/:id/deploy', requirePermission('templates.deploy'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const templateId = parseInt(req.params.id, 10);
     const template = await db('app_templates').where({ id: templateId }).first();

@@ -34,10 +34,13 @@ router.get('/callback', async (req, res) => {
       .where({ foreign_source: 'obligate', foreign_user_id: assertion.obligateUserId })
       .first() as { local_user_id: number } | undefined;
 
+    // Map role from Obligate (support admin, user, viewer, and custom roles)
+    const role = assertion.role || 'user';
+
     if (existingLink) {
       localUserId = existingLink.local_user_id;
       await db('users').where({ id: localUserId }).update({
-        role: assertion.role === 'admin' ? 'admin' : 'user',
+        role,
         email: assertion.email,
         display_name: assertion.displayName,
         updated_at: new Date(),
@@ -47,7 +50,7 @@ router.get('/callback', async (req, res) => {
         username: `og_${assertion.username}`,
         display_name: assertion.displayName || assertion.username,
         email: assertion.email,
-        role: assertion.role === 'admin' ? 'admin' : 'user',
+        role,
         is_active: true,
         foreign_source: 'obligate',
         foreign_id: assertion.obligateUserId,
@@ -58,6 +61,19 @@ router.get('/callback', async (req, res) => {
         foreign_user_id: assertion.obligateUserId,
         local_user_id: localUserId,
       });
+    }
+
+    // Sync team memberships from Obligate assertion
+    if (assertion.teams && assertion.teams.length > 0) {
+      const { teamService } = await import('../services/team.service');
+      const allTeams = await teamService.getAll();
+      // Remove from teams not in assertion
+      for (const team of allTeams) {
+        const isMember = team.members.some(m => m.userId === localUserId);
+        const shouldBeMember = assertion.teams.includes(team.name);
+        if (isMember && !shouldBeMember) await teamService.removeMember(team.id, localUserId);
+        if (!isMember && shouldBeMember) await teamService.addMember(team.id, localUserId);
+      }
     }
 
     req.session.userId = localUserId;
