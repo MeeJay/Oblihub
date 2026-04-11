@@ -7,21 +7,8 @@ import { certificateService } from './proxy.service';
 import { nginxService } from './nginx.service';
 import { logger } from '../utils/logger';
 
-// Queue for serializing cert requests (prevent parallel ACME conflicts)
-const certQueue: Array<() => Promise<void>> = [];
-let certProcessing = false;
-
-async function processCertQueue(): Promise<void> {
-  if (certProcessing) return;
-  certProcessing = true;
-  while (certQueue.length > 0) {
-    const task = certQueue.shift()!;
-    try { await task(); } catch (err) {
-      logger.error({ err }, 'Cert queue task failed');
-    }
-  }
-  certProcessing = false;
-}
+// Simple mutex for serializing cert requests
+let certMutex: Promise<void> = Promise.resolve();
 
 async function doRequestCertificate(certId: number, domains: string[], email: string): Promise<void> {
     try {
@@ -99,19 +86,21 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 90); // LE certs are 90 days
 
+      logger.info({ certId, primaryDomain }, 'Updating cert status to valid...');
       await certificateService.updateStatus(certId, 'valid', {
         cert: certPaths.cert,
         key: certPaths.key,
         chain: certPaths.chain,
         expiresAt,
       }, null);
+      logger.info({ certId, domains, primaryDomain }, 'Let\'s Encrypt certificate obtained and status updated');
 
-      logger.info({ certId, domains, primaryDomain }, 'Let\'s Encrypt certificate obtained');
-
-      // Regenerate nginx configs to use new cert
-      logger.info('Regenerating nginx configs after cert provisioning...');
-      await nginxService.regenerateAndReload();
-      logger.info('Nginx configs regenerated and reloaded after cert provisioning');
+      // Regenerate nginx configs to use new cert (non-blocking)
+      nginxService.regenerateAndReload().then(() => {
+        logger.info({ certId }, 'Nginx reloaded after cert provisioning');
+      }).catch(err => {
+        logger.warn({ certId, err }, 'Nginx reload after cert provisioning failed (non-fatal)');
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       logger.error({ certId, err }, 'Failed to obtain Let\'s Encrypt certificate');
@@ -121,18 +110,15 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
 }
 
 export const letsEncryptService = {
-  /** Request a certificate from Let's Encrypt (queued to prevent parallel conflicts) */
+  /** Request a certificate from Let's Encrypt (serialized via mutex) */
   async requestCertificate(certId: number, domains: string[], email: string): Promise<void> {
     logger.info({ certId, domains }, 'Queueing certificate request');
-    return new Promise<void>((resolve, reject) => {
-      certQueue.push(async () => {
-        try {
-          await doRequestCertificate(certId, domains, email);
-          resolve();
-        } catch (err) { reject(err); }
-      });
-      processCertQueue();
-    });
+    // Chain onto the mutex so requests run one at a time
+    certMutex = certMutex.then(
+      () => doRequestCertificate(certId, domains, email),
+      () => doRequestCertificate(certId, domains, email), // even if previous failed, continue
+    );
+    return certMutex;
   },
 
   /** Upload a custom certificate */

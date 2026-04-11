@@ -38,6 +38,8 @@ function cachingSnippet(): string {
   return `
     # Cache static assets
     location ~* \\.(css|js|jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot|webp|avif)$ {
+        proxy_pass $upstream;
+        proxy_cache proxy_cache;
         proxy_cache_valid 200 1d;
         add_header X-Cache-Status $upstream_cache_status;
         expires 1d;
