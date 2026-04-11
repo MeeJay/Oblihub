@@ -14,8 +14,11 @@ export const stacksApi = {
     const res = await apiClient.patch<ApiResponse<Stack>>(`/stacks/${id}`, data);
     return res.data.data!;
   },
-  async delete(id: number): Promise<void> {
-    await apiClient.delete(`/stacks/${id}`);
+  async delete(id: number, opts?: { containers?: boolean; volumes?: boolean }): Promise<void> {
+    const params = new URLSearchParams();
+    if (opts?.containers) params.set('containers', 'true');
+    if (opts?.volumes) params.set('volumes', 'true');
+    await apiClient.delete(`/stacks/${id}?${params}`);
   },
   async check(id: number): Promise<void> {
     await apiClient.post(`/stacks/${id}/check`);
@@ -41,6 +44,9 @@ export const containersApi = {
   },
   async start(id: number): Promise<void> {
     await apiClient.post(`/containers/${id}/start`);
+  },
+  async remove(id: number, removeVolumes = false): Promise<void> {
+    await apiClient.delete(`/containers/${id}?volumes=${removeVolumes}`);
   },
   async inspect(id: number): Promise<{ env: string[]; ports: Record<string, { HostIp: string; HostPort: string }[]>; mounts: { Type: string; Source: string; Destination: string; Mode: string }[]; networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }> }> {
     const res = await apiClient.get<ApiResponse<{ env: string[]; ports: Record<string, { HostIp: string; HostPort: string }[]>; mounts: { Type: string; Source: string; Destination: string; Mode: string }[]; networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }> }>>(`/containers/${id}/inspect`);

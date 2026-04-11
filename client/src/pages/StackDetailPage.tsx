@@ -164,6 +164,16 @@ export function StackDetailPage() {
     } catch { toast.error(`Failed to start ${c.containerName}`); }
   };
 
+  const handleRemoveContainer = async (c: Container) => {
+    const withVolumes = confirm(`Remove container "${c.containerName}"?\n\nClick OK to remove.\nNote: volumes will be kept. To also remove volumes, use the stack delete option.`);
+    if (!withVolumes && !confirm('Are you sure?')) return;
+    try {
+      await containersApi.remove(c.id);
+      toast.success(`${c.containerName} removed`);
+      load();
+    } catch { toast.error(`Failed to remove ${c.containerName}`); }
+  };
+
   if (loading) return <div className="flex items-center justify-center h-full"><div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" /></div>;
   if (!stack) return <div className="p-6 text-text-muted">Stack not found</div>;
 
@@ -207,19 +217,29 @@ export function StackDetailPage() {
           <button onClick={() => stacksApi.triggerUpdate(stack.id).then(load)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">
             <Play size={14} /> Update All
           </button>
-          {allowStack && !(selfProject && stack.composeProject === selfProject) && (
+          {!(selfProject && stack.composeProject === selfProject) && (
             <button
               onClick={async () => {
-                const msg = managedStack
-                  ? 'Delete this managed stack? This will run "docker compose down" and remove all containers.'
-                  : 'Remove this stack from Oblihub? The containers will keep running but won\'t be tracked anymore.';
-                if (!confirm(msg)) return;
+                const choice = prompt(
+                  `Delete stack "${stack.name}"?\n\n` +
+                  `Type:\n` +
+                  `  "remove" - Remove from Oblihub only (containers keep running)\n` +
+                  `  "delete" - Stop & remove all containers\n` +
+                  `  "purge"  - Stop & remove containers + volumes\n\n` +
+                  `Type your choice:`
+                );
+                if (!choice) return;
+                const c = choice.trim().toLowerCase();
+                if (!['remove', 'delete', 'purge'].includes(c)) { toast.error('Invalid choice'); return; }
                 try {
                   if (managedStack) {
                     await managedStacksApi.delete(managedStack.id);
                   }
-                  await stacksApi.delete(stack.id);
-                  toast.success('Stack deleted');
+                  await stacksApi.delete(stack.id, {
+                    containers: c === 'delete' || c === 'purge',
+                    volumes: c === 'purge',
+                  });
+                  toast.success(c === 'remove' ? 'Stack removed from Oblihub' : c === 'delete' ? 'Stack & containers deleted' : 'Stack, containers & volumes purged');
                   navigate('/');
                 } catch { toast.error('Failed to delete stack'); }
               }}
@@ -325,6 +345,13 @@ export function StackDetailPage() {
                     title="Start"
                   >
                     <Play size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleRemoveContainer(c)}
+                    className="p-1.5 rounded-md text-text-muted hover:text-status-down hover:bg-bg-hover transition-colors"
+                    title="Remove container"
+                  >
+                    <Trash2 size={14} />
                   </button>
                 </div>
               </div>

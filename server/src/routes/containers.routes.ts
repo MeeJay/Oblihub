@@ -11,6 +11,7 @@ router.post('/:id/check', stackController.checkContainer);
 router.post('/:id/restart', stackController.restartContainer);
 router.post('/:id/stop', stackController.stopContainer);
 router.post('/:id/start', stackController.startContainer);
+router.delete('/:id', stackController.removeContainer);
 router.get('/:id/inspect', stackController.inspectContainer);
 
 export default router;

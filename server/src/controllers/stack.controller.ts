@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import { db } from '../db';
 import { stackService } from '../services/stack.service';
 import { updateService } from '../services/update.service';
 import { schedulerService } from '../services/scheduler.service';
@@ -26,9 +27,23 @@ export const stackController = {
   async delete(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = parseInt(req.params.id, 10);
+      const removeContainers = req.query.containers === 'true';
+      const removeVolumes = req.query.volumes === 'true';
       const stack = await stackService.getById(id);
       if (!stack) throw new AppError(404, 'Stack not found');
       schedulerService.reschedule(id, 0, false);
+      // Optionally remove Docker containers
+      if (removeContainers) {
+        const { dockerService } = await import('../services/docker.service');
+        for (const c of stack.containers) {
+          try {
+            await dockerService.removeContainer(c.dockerId, removeVolumes);
+            logger.info({ containerName: c.containerName }, 'Container removed with stack');
+          } catch (err) {
+            logger.warn({ containerName: c.containerName, err }, 'Failed to remove container');
+          }
+        }
+      }
       await stackService.delete(id);
       res.json({ success: true });
     } catch (err) { next(err); }
@@ -171,6 +186,22 @@ export const stackController = {
           networks,
         },
       });
+    } catch (err) { next(err); }
+  },
+
+  async removeContainer(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const removeVolumes = req.query.volumes === 'true';
+      const container = await stackService.getContainerById(id);
+      if (!container) throw new AppError(404, 'Container not found');
+      const { dockerService } = await import('../services/docker.service');
+      await dockerService.removeContainer(container.dockerId, removeVolumes);
+      // Remove from DB
+      await db('update_history').where({ container_id: id }).delete();
+      await db('containers').where({ id }).delete();
+      logger.info({ containerId: id, containerName: container.containerName, removeVolumes }, 'Container removed');
+      res.json({ success: true });
     } catch (err) { next(err); }
   },
 

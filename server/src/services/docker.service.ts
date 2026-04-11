@@ -208,6 +208,18 @@ export const dockerService = {
     logger.info({ dockerId }, 'Container restarted');
   },
 
+  /** Remove a container (stop + remove, optionally remove volumes) */
+  async removeContainer(dockerId: string, removeVolumes = false): Promise<void> {
+    const docker = getDocker();
+    const container = docker.getContainer(dockerId);
+    logger.info({ dockerId, removeVolumes }, 'Removing container...');
+    try {
+      await container.stop({ t: 5 });
+    } catch { /* already stopped */ }
+    await container.remove({ force: true, v: removeVolumes });
+    logger.info({ dockerId }, 'Container removed');
+  },
+
   /** Stop a container */
   async stopContainer(dockerId: string): Promise<void> {
     const docker = getDocker();
