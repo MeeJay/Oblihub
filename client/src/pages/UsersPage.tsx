@@ -181,8 +181,7 @@ export function UsersPage() {
                   {editingId === user.id ? (
                     <select value={editForm.role} onChange={e => setEditForm(f => ({ ...f, role: e.target.value }))}
                       className="rounded border border-border bg-bg-tertiary px-2 py-0.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
-                      <option value="user">User</option>
-                      <option value="admin">Admin</option>
+                      {roles.map(r => <option key={r.name} value={r.name}>{r.label}</option>)}
                     </select>
                   ) : (
                     <RoleBadge role={user.role} />
