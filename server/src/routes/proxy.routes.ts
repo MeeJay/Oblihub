@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { proxyController } from '../controllers/proxy.controller';
 import { requireAuth } from '../middleware/auth';
+import { requirePermission } from '../middleware/permissions';
 import { config } from '../config';
 
 const router = Router();
@@ -16,42 +17,42 @@ router.use((_req: Request, res: Response, next: NextFunction) => {
 });
 
 // Proxy hosts
-router.get('/hosts', proxyController.listProxyHosts);
-router.get('/hosts/by-stack/:stackId', proxyController.getProxyHostsByStack);
-router.post('/hosts/quick-setup', proxyController.quickSetupProxyHost);
-router.get('/hosts/:id', proxyController.getProxyHost);
-router.post('/hosts', proxyController.createProxyHost);
-router.put('/hosts/:id', proxyController.updateProxyHost);
-router.delete('/hosts/:id', proxyController.deleteProxyHost);
-router.post('/hosts/:id/toggle', proxyController.toggleProxyHost);
+router.get('/hosts', requirePermission('proxy.view'), proxyController.listProxyHosts);
+router.get('/hosts/by-stack/:stackId', requirePermission('proxy.view'), proxyController.getProxyHostsByStack);
+router.post('/hosts/quick-setup', requirePermission('proxy.manage'), proxyController.quickSetupProxyHost);
+router.get('/hosts/:id', requirePermission('proxy.view'), proxyController.getProxyHost);
+router.post('/hosts', requirePermission('proxy.manage'), proxyController.createProxyHost);
+router.put('/hosts/:id', requirePermission('proxy.manage'), proxyController.updateProxyHost);
+router.delete('/hosts/:id', requirePermission('proxy.manage'), proxyController.deleteProxyHost);
+router.post('/hosts/:id/toggle', requirePermission('proxy.manage'), proxyController.toggleProxyHost);
 
 // Certificates
-router.get('/certificates', proxyController.listCertificates);
-router.post('/certificates', proxyController.createCertificate);
-router.post('/certificates/:id/upload', proxyController.uploadCertificate);
-router.delete('/certificates/:id', proxyController.deleteCertificate);
+router.get('/certificates', requirePermission('proxy.certificates'), proxyController.listCertificates);
+router.post('/certificates', requirePermission('proxy.certificates'), proxyController.createCertificate);
+router.post('/certificates/:id/upload', requirePermission('proxy.certificates'), proxyController.uploadCertificate);
+router.delete('/certificates/:id', requirePermission('proxy.certificates'), proxyController.deleteCertificate);
 
 // Redirections
-router.get('/redirections', proxyController.listRedirections);
-router.post('/redirections', proxyController.createRedirection);
-router.put('/redirections/:id', proxyController.updateRedirection);
-router.delete('/redirections/:id', proxyController.deleteRedirection);
+router.get('/redirections', requirePermission('proxy.manage'), proxyController.listRedirections);
+router.post('/redirections', requirePermission('proxy.manage'), proxyController.createRedirection);
+router.put('/redirections/:id', requirePermission('proxy.manage'), proxyController.updateRedirection);
+router.delete('/redirections/:id', requirePermission('proxy.manage'), proxyController.deleteRedirection);
 
 // Streams
-router.get('/streams', proxyController.listStreams);
-router.post('/streams', proxyController.createStream);
-router.put('/streams/:id', proxyController.updateStream);
-router.delete('/streams/:id', proxyController.deleteStream);
+router.get('/streams', requirePermission('proxy.manage'), proxyController.listStreams);
+router.post('/streams', requirePermission('proxy.manage'), proxyController.createStream);
+router.put('/streams/:id', requirePermission('proxy.manage'), proxyController.updateStream);
+router.delete('/streams/:id', requirePermission('proxy.manage'), proxyController.deleteStream);
 
 // Dead hosts
-router.get('/dead-hosts', proxyController.listDeadHosts);
-router.post('/dead-hosts', proxyController.createDeadHost);
-router.delete('/dead-hosts/:id', proxyController.deleteDeadHost);
+router.get('/dead-hosts', requirePermission('proxy.manage'), proxyController.listDeadHosts);
+router.post('/dead-hosts', requirePermission('proxy.manage'), proxyController.createDeadHost);
+router.delete('/dead-hosts/:id', requirePermission('proxy.manage'), proxyController.deleteDeadHost);
 
 // Access lists
-router.get('/access-lists', proxyController.listAccessLists);
-router.post('/access-lists', proxyController.createAccessList);
-router.delete('/access-lists/:id', proxyController.deleteAccessList);
+router.get('/access-lists', requirePermission('proxy.access_lists'), proxyController.listAccessLists);
+router.post('/access-lists', requirePermission('proxy.access_lists'), proxyController.createAccessList);
+router.delete('/access-lists/:id', requirePermission('proxy.access_lists'), proxyController.deleteAccessList);
 router.post('/access-lists/:id/clients', proxyController.addAccessListClient);
 router.delete('/access-lists/:id/clients/:clientId', proxyController.removeAccessListClient);
 router.post('/access-lists/:id/auth', proxyController.addAccessListAuth);

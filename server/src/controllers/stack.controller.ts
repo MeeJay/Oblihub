@@ -8,10 +8,13 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 
 export const stackController = {
-  async list(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      const { filterStacksByTeam } = await import('../middleware/permissions');
+      const session = req.session as { userId?: number; role?: string };
       const stacks = await stackService.getAll();
-      res.json({ success: true, data: stacks });
+      const filtered = await filterStacksByTeam(session.userId!, session.role || 'user', stacks);
+      res.json({ success: true, data: filtered });
     } catch (err) { next(err); }
   },
 

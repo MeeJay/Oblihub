@@ -35,8 +35,33 @@ export const managedStackController = {
   async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled. Set ALLOW_STACK=true to enable.');
-      const { name, composeContent, envContent } = req.body;
+      const session = req.session as { userId?: number; role?: string };
+      const { name, composeContent, envContent, teamId } = req.body;
       if (!name || !composeContent) throw new AppError(400, 'Name and compose content are required');
+
+      // Non-admin must have a team to create a stack
+      if (session.role !== 'admin') {
+        const { teamService } = await import('../services/team.service');
+        const userTeams = await teamService.getTeamsForUser(session.userId!);
+        if (userTeams.length === 0) throw new AppError(403, 'You must be in a team to create stacks');
+
+        // Auto-assign to first team if no teamId specified, or validate the teamId
+        const targetTeamId = teamId || userTeams[0].id;
+        const isInTeam = userTeams.some(t => t.id === targetTeamId);
+        if (!isInTeam) throw new AppError(403, 'You are not a member of this team');
+
+        const stack = await managedStackService.create({ name, composeContent, envContent });
+
+        // Auto-assign the new stack to the team's resources
+        await teamService.addResource(targetTeamId, 'stack', stack.id);
+        // Also set stack.team_id for reference
+        const { db } = await import('../db');
+        await db('stacks').where({ compose_project: stack.composeProject }).update({ team_id: targetTeamId });
+
+        res.json({ success: true, data: stack });
+        return;
+      }
+
       const stack = await managedStackService.create({ name, composeContent, envContent });
       res.json({ success: true, data: stack });
     } catch (err) { next(err); }

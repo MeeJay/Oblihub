@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, Plus, Trash2, Edit2, Users, Power, PowerOff, Shield, ExternalLink, X, Save } from 'lucide-react';
 import { usersApi } from '@/api/users.api';
+import { permissionsApi, type Role } from '@/api/permissions.api';
 import type { User } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
@@ -21,13 +22,17 @@ function SsoBadge() {
 export function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [createForm, setCreateForm] = useState({ username: '', password: '', displayName: '', email: '', role: 'user' });
   const [editForm, setEditForm] = useState({ displayName: '', email: '', role: '', password: '' });
 
   const load = async () => {
-    try { setUsers(await usersApi.list()); }
+    try {
+      const [u, r] = await Promise.all([usersApi.list(), permissionsApi.getRoles().catch(() => [])]);
+      setUsers(u); setRoles(r);
+    }
     catch { toast.error('Failed to load users'); }
     finally { setLoading(false); }
   };
@@ -121,8 +126,7 @@ export function UsersPage() {
           </div>
           <select value={createForm.role} onChange={e => setCreateForm(f => ({ ...f, role: e.target.value }))}
             className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
-            <option value="user">User</option>
-            <option value="admin">Admin</option>
+            {roles.map(r => <option key={r.name} value={r.name}>{r.label}</option>)}
           </select>
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">Create</button>

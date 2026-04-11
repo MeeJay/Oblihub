@@ -3,6 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code, Link, Box, AlertTriangle } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { systemApi } from '@/api/stacks.api';
+import { teamsApi } from '@/api/teams.api';
+import { useAuthStore } from '@/store/authStore';
+import type { Team } from '@oblihub/shared';
 import { ComposePreview } from '@/components/ComposePreview';
 import type { ManagedStack, ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -71,6 +74,10 @@ export function StackEditorPage() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [isSelf, setIsSelf] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'admin';
 
   const load = useCallback(async () => {
     if (isNew) return;
@@ -88,6 +95,14 @@ export function StackEditorPage() {
   }, [id, isNew]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Load teams for non-admin stack creation
+  useEffect(() => {
+    teamsApi.list().then(t => {
+      setTeams(t);
+      if (t.length > 0 && !selectedTeamId) setSelectedTeamId(t[0].id);
+    }).catch(() => {});
+  }, []);
 
   // Detect self stack
   useEffect(() => {
@@ -120,11 +135,12 @@ export function StackEditorPage() {
   const handleSave = async () => {
     if (!name.trim()) { toast.error('Stack name is required'); return; }
     if (!composeContent.trim()) { toast.error('Compose content is required'); return; }
+    if (isNew && !isAdmin && !selectedTeamId) { toast.error('Select a team for this stack'); return; }
     setSaving(true);
     try {
       const envContent = getEnvContent();
       if (isNew) {
-        const created = await managedStacksApi.create({ name, composeContent, envContent });
+        const created = await managedStacksApi.create({ name, composeContent, envContent, teamId: isAdmin ? selectedTeamId : selectedTeamId! });
         toast.success('Stack created');
         navigate(`/stack-editor/${created.id}`, { replace: true });
       } else {
@@ -249,6 +265,13 @@ export function StackEditorPage() {
             </span>
           )}
           {dirty && <span className="text-[10px] text-status-pending">unsaved</span>}
+          {isNew && teams.length > 0 && (
+            <select value={selectedTeamId || ''} onChange={e => setSelectedTeamId(parseInt(e.target.value) || null)}
+              className="rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+              {isAdmin && <option value="">No team</option>}
+              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
