@@ -44,10 +44,31 @@ function stripDockerHeader(buf: Buffer): string {
   return chunks.join('');
 }
 
+async function checkContainerAccess(socket: Socket, dockerId: string): Promise<boolean> {
+  const userId = (socket as unknown as { userId?: number }).userId;
+  const userRole = (socket as unknown as { userRole?: string }).userRole;
+  if (!userId) return false;
+  if (userRole === 'admin') return true;
+  // Find container by dockerId and check team access
+  try {
+    const { db } = await import('./db');
+    const container = await db('containers').where({ docker_id: dockerId }).first();
+    if (!container) return false;
+    const { teamService } = await import('./services/team.service');
+    return teamService.userHasAccess(userId, 'container', container.id);
+  } catch { return false; }
+}
+
 function setupLogHandlers(socket: Socket) {
   socket.on(SOCKET_EVENTS.CONTAINER_LOGS_SUBSCRIBE, async (data: { dockerId: string; tail?: number }) => {
     const state = getState(socket);
     const { dockerId, tail = 100 } = data;
+
+    // Check access
+    if (!await checkContainerAccess(socket, dockerId)) {
+      socket.emit(SOCKET_EVENTS.CONTAINER_LOGS_ERROR, { dockerId, error: 'Access denied' });
+      return;
+    }
 
     // Clean up existing log stream for this container
     const existing = state.logStreams.get(dockerId);
@@ -96,6 +117,12 @@ function setupExecHandlers(socket: Socket) {
   socket.on(SOCKET_EVENTS.CONTAINER_EXEC_START, async (data: { dockerId: string; cols?: number; rows?: number }) => {
     if (!config.allowConsole) {
       socket.emit(SOCKET_EVENTS.CONTAINER_EXEC_ERROR, { dockerId: data.dockerId, error: 'Console access is disabled. Set ALLOW_CONSOLE=true to enable.' });
+      return;
+    }
+
+    // Check access
+    if (!await checkContainerAccess(socket, data.dockerId)) {
+      socket.emit(SOCKET_EVENTS.CONTAINER_EXEC_ERROR, { dockerId: data.dockerId, error: 'Access denied' });
       return;
     }
 
@@ -182,13 +209,24 @@ export function createSocketServer(httpServer: HttpServer): SocketIOServer {
   });
 
   // Authenticate Socket.IO connections via session cookie
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const cookie = socket.handshake.headers.cookie;
     if (!cookie) return next(new Error('Authentication required'));
-    // Parse connect.sid from cookie - if session middleware validated it, the user is authenticated
-    // We rely on the same session store; a more robust check would parse and verify the session
     const hasSessionCookie = cookie.includes('connect.sid=');
     if (!hasSessionCookie) return next(new Error('Authentication required'));
+    // Parse session ID from cookie to get userId for permission checks
+    const sidMatch = cookie.match(/connect\.sid=s%3A([^.]+)/);
+    if (sidMatch) {
+      try {
+        const { db } = await import('./db');
+        const sessionRow = await db('session').where('sid', sidMatch[1]).first();
+        if (sessionRow?.sess) {
+          const sess = typeof sessionRow.sess === 'string' ? JSON.parse(sessionRow.sess) : sessionRow.sess;
+          (socket as unknown as { userId: number; userRole: string }).userId = sess.userId;
+          (socket as unknown as { userId: number; userRole: string }).userRole = sess.role || 'user';
+        }
+      } catch { /* continue without userId - will be blocked on sensitive ops */ }
+    }
     next();
   });
 

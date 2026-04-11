@@ -13,10 +13,9 @@ export function startDiscoveryWorker(io: SocketIOServer): void {
       const containers = await dockerService.listContainers();
       await stackService.syncWithDocker(containers);
 
-      // Emit updated stacks to all connected clients
-      const stacks = await stackService.getAll();
-      io.emit(SOCKET_EVENTS.STACKS_UPDATED, stacks);
-      io.emit(SOCKET_EVENTS.DISCOVERY_COMPLETE, { containerCount: containers.length, stackCount: stacks.length });
+      // Signal clients to re-fetch via API (which filters by team/permissions)
+      // DO NOT broadcast stack data via socket - it bypasses team/permission checks
+      io.emit(SOCKET_EVENTS.DISCOVERY_COMPLETE, { containerCount: containers.length });
     } catch (err) {
       logger.error(err, 'Discovery worker failed');
     }

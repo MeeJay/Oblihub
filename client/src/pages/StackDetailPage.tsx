@@ -57,37 +57,41 @@ export function StackDetailPage() {
 
   useEffect(() => { load(); }, [id]);
 
-  // Real-time updates via Socket.io
+  // Real-time updates: re-fetch via API on discovery (respects permissions)
   useEffect(() => {
-    const onStacksUpdated = (data: Stack[]) => {
-      if (!id) return;
-      const updated = data.find(s => s.id === Number(id));
-      if (updated) setStack(updated);
-    };
-    socket.on(SOCKET_EVENTS.STACKS_UPDATED, onStacksUpdated);
-    return () => { socket.off(SOCKET_EVENTS.STACKS_UPDATED, onStacksUpdated); };
+    const onDiscovery = () => { load(); };
+    socket.on(SOCKET_EVENTS.DISCOVERY_COMPLETE, onDiscovery);
+    return () => { socket.off(SOCKET_EVENTS.DISCOVERY_COMPLETE, onDiscovery); };
   }, [socket, id]);
 
-  // Real-time container stats
+  // Poll container stats via API (respects permissions)
   useEffect(() => {
-    const onStats = (data: ContainerStatsType[]) => {
-      if (!stack) return;
-      const stackDockerIds = new Set(stack.containers.map(c => c.dockerId));
-      setContainerStats(prev => {
-        const next = { ...prev };
-        for (const s of data) {
-          if (!stackDockerIds.has(s.dockerId)) continue;
-          const existing = next[s.dockerId] || { cpu: [], mem: [], cpuNow: 0, memNow: 0 };
-          const cpu = [...existing.cpu, s.cpuPercent].slice(-30);
-          const mem = [...existing.mem, s.memoryPercent].slice(-30);
-          next[s.dockerId] = { cpu, mem, cpuNow: s.cpuPercent, memNow: s.memoryPercent };
-        }
-        return next;
-      });
+    if (!stack?.containers?.length) return;
+    const fetchStats = async () => {
+      try {
+        const { statsApi } = await import('@/api/stats.api');
+        const data = await statsApi.getLatest();
+        const stackDockerIds = new Set(stack.containers.map(c => c.dockerId));
+        setContainerStats(prev => {
+          const next = { ...prev };
+          for (const s of data) {
+            if (!stackDockerIds.has(s.dockerId)) continue;
+            const existing = next[s.dockerId] || { cpu: [], mem: [], cpuNow: 0, memNow: 0 };
+            next[s.dockerId] = {
+              cpu: [...existing.cpu, s.cpuPercent].slice(-30),
+              mem: [...existing.mem, s.memoryPercent].slice(-30),
+              cpuNow: s.cpuPercent,
+              memNow: s.memoryPercent,
+            };
+          }
+          return next;
+        });
+      } catch { /* ignore */ }
     };
-    socket.on(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, onStats);
-    return () => { socket.off(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, onStats); };
-  }, [socket, stack?.containers]);
+    fetchStats();
+    const interval = setInterval(fetchStats, 10000);
+    return () => clearInterval(interval);
+  }, [stack?.containers]);
 
   useEffect(() => {
     systemApi.getFeatures().then(f => {

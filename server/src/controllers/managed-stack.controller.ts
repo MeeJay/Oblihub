@@ -74,11 +74,18 @@ export const managedStackController = {
 
         const stack = await managedStackService.create({ name, composeContent, envContent });
 
-        // Auto-assign the new stack to the team's resources
-        await teamService.addResource(targetTeamId, 'stack', stack.id);
-        // Also set stack.team_id for reference
+        // Ensure the stack exists in the stacks table and assign to team
         const { db } = await import('../db');
-        await db('stacks').where({ compose_project: stack.composeProject }).update({ team_id: targetTeamId });
+        let discoveredStack = await db('stacks').where({ compose_project: stack.composeProject }).first();
+        if (!discoveredStack) {
+          // Pre-create the stack entry so team assignment works immediately
+          const [newStack] = await db('stacks').insert({ name: stack.name, compose_project: stack.composeProject, team_id: targetTeamId }).returning('*');
+          discoveredStack = newStack;
+        } else {
+          await db('stacks').where({ id: discoveredStack.id }).update({ team_id: targetTeamId });
+        }
+        // Assign stack to team resources using the stacks table ID
+        await teamService.addResource(targetTeamId, 'stack', discoveredStack.id);
 
         res.json({ success: true, data: stack });
         return;

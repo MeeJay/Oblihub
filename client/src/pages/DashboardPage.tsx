@@ -84,11 +84,11 @@ export function DashboardPage() {
     finally { setLoading(false); }
   };
 
-  // Real-time updates via Socket.io
+  // Real-time updates: re-fetch via API on discovery (respects team/permission filters)
   useEffect(() => {
-    const onStacksUpdated = (data: Stack[]) => { setStacks(data); setLoading(false); };
-    socket.on(SOCKET_EVENTS.STACKS_UPDATED, onStacksUpdated);
-    return () => { socket.off(SOCKET_EVENTS.STACKS_UPDATED, onStacksUpdated); };
+    const onDiscovery = () => { load(); };
+    socket.on(SOCKET_EVENTS.DISCOVERY_COMPLETE, onDiscovery);
+    return () => { socket.off(SOCKET_EVENTS.DISCOVERY_COMPLETE, onDiscovery); };
   }, [socket]);
 
   useEffect(() => {
@@ -117,32 +117,37 @@ export function DashboardPage() {
     }).catch(() => {});
   }, []);
 
-  // Aggregate container stats per stack
+  // Poll container stats via API (respects permissions)
   useEffect(() => {
-    const onStats = (data: ContainerStats[]) => {
-      setStackStats(prev => {
-        const next = { ...prev };
-        // Group stats by stack
-        for (const s of stacks) {
-          const containerIds = new Set(s.containers.map(c => c.dockerId));
-          const stackContainerStats = data.filter(d => containerIds.has(d.dockerId));
-          if (stackContainerStats.length === 0) continue;
-          const avgCpu = stackContainerStats.reduce((sum, c) => sum + c.cpuPercent, 0) / stackContainerStats.length;
-          const avgMem = stackContainerStats.reduce((sum, c) => sum + c.memoryPercent, 0) / stackContainerStats.length;
-          const existing = next[s.id] || { cpu: [], mem: [], cpuNow: 0, memNow: 0 };
-          next[s.id] = {
-            cpu: [...existing.cpu, avgCpu].slice(-20),
-            mem: [...existing.mem, avgMem].slice(-20),
-            cpuNow: Math.round(avgCpu * 10) / 10,
-            memNow: Math.round(avgMem * 10) / 10,
-          };
-        }
-        return next;
-      });
+    if (stacks.length === 0) return;
+    const fetchStats = async () => {
+      try {
+        const { statsApi } = await import('@/api/stats.api');
+        const data = await statsApi.getLatest();
+        setStackStats(prev => {
+          const next = { ...prev };
+          for (const s of stacks) {
+            const containerIds = new Set(s.containers.map(c => c.dockerId));
+            const stackContainerStats = data.filter(d => containerIds.has(d.dockerId));
+            if (stackContainerStats.length === 0) continue;
+            const avgCpu = stackContainerStats.reduce((sum, c) => sum + c.cpuPercent, 0) / stackContainerStats.length;
+            const avgMem = stackContainerStats.reduce((sum, c) => sum + c.memoryPercent, 0) / stackContainerStats.length;
+            const existing = next[s.id] || { cpu: [], mem: [], cpuNow: 0, memNow: 0 };
+            next[s.id] = {
+              cpu: [...existing.cpu, avgCpu].slice(-20),
+              mem: [...existing.mem, avgMem].slice(-20),
+              cpuNow: Math.round(avgCpu * 10) / 10,
+              memNow: Math.round(avgMem * 10) / 10,
+            };
+          }
+          return next;
+        });
+      } catch { /* ignore */ }
     };
-    socket.on(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, onStats);
-    return () => { socket.off(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, onStats); };
-  }, [socket, stacks]);
+    fetchStats();
+    const interval = setInterval(fetchStats, 15000);
+    return () => clearInterval(interval);
+  }, [stacks]);
 
   const getOrigin = (stack: Stack): StackOrigin => {
     if (selfProject && stack.composeProject === selfProject) return 'self';

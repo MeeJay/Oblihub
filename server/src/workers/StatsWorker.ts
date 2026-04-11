@@ -76,10 +76,8 @@ export function startStatsWorker(io: SocketIOServer): void {
         }
       }
 
-      // Emit to all clients
-      if (statsData.length > 0) {
-        io.emit(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, statsData);
-      }
+      // Stats are available via REST API (filtered by permissions)
+      // DO NOT broadcast via socket - it bypasses team/permission checks
     } catch (err) {
       logger.error(err, 'Stats worker failed');
     }
