@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, Plus, Trash2, Edit2, Globe, Shield, Zap, Lock, Power, PowerOff, ChevronDown, ChevronRight } from 'lucide-react';
 import { proxyApi } from '@/api/proxy.api';
-import type { ProxyHost, Certificate, AccessList } from '@oblihub/shared';
+import type { ProxyHost, Certificate, AccessList, CustomPage } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 const DEFAULT_HOST: Partial<ProxyHost> = {
@@ -23,6 +23,7 @@ export function ProxyHostsPage() {
   const [hosts, setHosts] = useState<ProxyHost[]>([]);
   const [certs, setCerts] = useState<Certificate[]>([]);
   const [accessLists, setAccessLists] = useState<AccessList[]>([]);
+  const [customPages, setCustomPages] = useState<CustomPage[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<ProxyHost> | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
@@ -32,10 +33,11 @@ export function ProxyHostsPage() {
 
   const load = async () => {
     try {
-      const [h, c, a] = await Promise.all([proxyApi.listHosts(), proxyApi.listCertificates(), proxyApi.listAccessLists()]);
+      const [h, c, a, p] = await Promise.all([proxyApi.listHosts(), proxyApi.listCertificates(), proxyApi.listAccessLists(), proxyApi.listCustomPages()]);
       setHosts(h);
       setCerts(c);
       setAccessLists(a);
+      setCustomPages(p);
     } catch { toast.error('Failed to load proxy hosts'); }
     finally { setLoading(false); }
   };
@@ -59,6 +61,7 @@ export function ProxyHostsPage() {
     setEditing({ ...host });
     setEditId(host.id);
     setDomainInput('');
+    setCertMode(host.certificateId ? 'existing' : 'none');
   };
 
   const addDomain = () => {
@@ -260,6 +263,82 @@ export function ProxyHostsPage() {
                   <option value="">No restriction</option>
                   {accessLists.map(al => <option key={al.id} value={al.id}>{al.name} ({al.clients.length} rules, {al.auth.length} users)</option>)}
                 </select>
+              </div>
+
+              {/* Performance */}
+              <div className="border-t border-border pt-4">
+                <div className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Performance</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-text-muted block mb-1">Max Body Size</label>
+                    <input value={editing.clientMaxBodySize || ''} onChange={e => setEditing(h => h ? { ...h, clientMaxBodySize: e.target.value || null } : null)}
+                      placeholder="100m" className="w-full rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-muted block mb-1">Connect Timeout (sec)</label>
+                    <input type="number" value={editing.proxyConnectTimeout || ''} onChange={e => setEditing(h => h ? { ...h, proxyConnectTimeout: parseInt(e.target.value) || null } : null)}
+                      placeholder="60" className="w-full rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-muted block mb-1">Send Timeout (sec)</label>
+                    <input type="number" value={editing.proxySendTimeout || ''} onChange={e => setEditing(h => h ? { ...h, proxySendTimeout: parseInt(e.target.value) || null } : null)}
+                      placeholder="60" className="w-full rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-text-muted block mb-1">Read Timeout (sec)</label>
+                    <input type="number" value={editing.proxyReadTimeout || ''} onChange={e => setEditing(h => h ? { ...h, proxyReadTimeout: parseInt(e.target.value) || null } : null)}
+                      placeholder="60" className="w-full rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Rate Limiting */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-text-muted block mb-1">Rate Limit (req/sec)</label>
+                  <input type="number" value={editing.rateLimitRps || ''} onChange={e => setEditing(h => h ? { ...h, rateLimitRps: parseInt(e.target.value) || null } : null)}
+                    placeholder="Off" className="w-full rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-text-muted block mb-1">Rate Limit Burst</label>
+                  <input type="number" value={editing.rateLimitBurst || ''} onChange={e => setEditing(h => h ? { ...h, rateLimitBurst: parseInt(e.target.value) || null } : null)}
+                    placeholder="10" className="w-full rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                </div>
+              </div>
+
+              {/* Error Page */}
+              <div>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">Error Page</label>
+                <select value={editing.errorPageId || ''} onChange={e => setEditing(h => h ? { ...h, errorPageId: parseInt(e.target.value) || null } : null)}
+                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+                  <option value="">Use global default</option>
+                  {customPages.map(p => <option key={p.id} value={p.id}>{p.name} ({p.errorCodes.join(', ')})</option>)}
+                </select>
+              </div>
+
+              {/* Custom Response Headers */}
+              <div>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">Custom Response Headers</label>
+                <div className="space-y-1.5 mb-2">
+                  {(editing.customResponseHeaders || []).map((h, i) => (
+                    <div key={i} className="flex gap-1.5 items-center">
+                      <select value={h.action} onChange={e => { const headers = [...(editing.customResponseHeaders || [])]; headers[i] = { ...h, action: e.target.value as 'add' | 'remove' }; setEditing(ed => ed ? { ...ed, customResponseHeaders: headers } : null); }}
+                        className="rounded border border-border bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-primary w-16">
+                        <option value="add">Add</option><option value="remove">Remove</option>
+                      </select>
+                      <input value={h.name} onChange={e => { const headers = [...(editing.customResponseHeaders || [])]; headers[i] = { ...h, name: e.target.value }; setEditing(ed => ed ? { ...ed, customResponseHeaders: headers } : null); }}
+                        placeholder="Header-Name" className="flex-1 rounded border border-border bg-bg-tertiary px-2 py-0.5 text-xs font-mono text-text-primary" />
+                      {h.action === 'add' && (
+                        <input value={h.value} onChange={e => { const headers = [...(editing.customResponseHeaders || [])]; headers[i] = { ...h, value: e.target.value }; setEditing(ed => ed ? { ...ed, customResponseHeaders: headers } : null); }}
+                          placeholder="value" className="flex-1 rounded border border-border bg-bg-tertiary px-2 py-0.5 text-xs font-mono text-text-primary" />
+                      )}
+                      <button onClick={() => { const headers = (editing.customResponseHeaders || []).filter((_, j) => j !== i); setEditing(ed => ed ? { ...ed, customResponseHeaders: headers.length ? headers : null } : null); }}
+                        className="p-0.5 text-text-muted hover:text-status-down">&times;</button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setEditing(ed => ed ? { ...ed, customResponseHeaders: [...(ed.customResponseHeaders || []), { name: '', value: '', action: 'add' as const }] } : null)}
+                  className="text-xs text-accent hover:text-accent-hover">+ Add header</button>
               </div>
 
               {/* Advanced config */}

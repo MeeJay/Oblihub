@@ -56,6 +56,7 @@ router.get('/monitors', async (_req, res, next) => {
         intervalSeconds: m.interval_seconds, timeoutMs: m.timeout_ms, expectedStatus: m.expected_status,
         keyword: m.keyword, proxyHostId: m.proxy_host_id, enabled: m.enabled,
         currentStatus: m.current_status, consecutiveFailures: m.consecutive_failures,
+        notificationChannelId: m.notification_channel_id || null,
         uptimePercent: total > 0 ? Math.round((up / total) * 10000) / 100 : 100,
         avgResponseTime: Math.round(avgTime),
         createdAt: m.created_at, updatedAt: m.updated_at,
@@ -98,6 +99,58 @@ router.post('/monitors/:id/toggle', async (req, res, next) => {
     await db('uptime_monitors').where({ id }).update({ enabled });
     rescheduleMonitor(id, monitor.interval_seconds, enabled);
     res.json({ success: true, data: { enabled } });
+  } catch (err) { next(err); }
+});
+
+// Update monitor notification channel
+router.patch('/monitors/:id', async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { notificationChannelId, intervalSeconds } = req.body;
+    const update: Record<string, unknown> = { updated_at: new Date() };
+    if (notificationChannelId !== undefined) update.notification_channel_id = notificationChannelId;
+    if (intervalSeconds !== undefined) {
+      update.interval_seconds = intervalSeconds;
+      const monitor = await db('uptime_monitors').where({ id }).first();
+      if (monitor) rescheduleMonitor(id, intervalSeconds, monitor.enabled);
+    }
+    await db('uptime_monitors').where({ id }).update(update);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// Get monitor for a proxy host
+router.get('/monitors/by-proxy/:proxyHostId', async (req, res, next) => {
+  try {
+    const proxyHostId = parseInt(req.params.proxyHostId, 10);
+    const monitor = await db('uptime_monitors').where({ proxy_host_id: proxyHostId }).first();
+    res.json({ success: true, data: monitor ? {
+      id: monitor.id, name: monitor.name, url: monitor.url, currentStatus: monitor.current_status,
+      enabled: monitor.enabled, intervalSeconds: monitor.interval_seconds,
+    } : null });
+  } catch (err) { next(err); }
+});
+
+// Sync: create monitors for all proxy hosts that don't have one
+router.post('/monitors/sync-proxy-hosts', async (req, res, next) => {
+  try {
+    const proxyHosts = await db('proxy_hosts').where({ enabled: true });
+    let created = 0;
+    for (const host of proxyHosts) {
+      const existing = await db('uptime_monitors').where({ proxy_host_id: host.id }).first();
+      if (existing) continue;
+      const domains = host.domain_names as string[];
+      if (!domains?.length) continue;
+      const scheme = host.ssl_forced ? 'https' : 'http';
+      const [row] = await db('uptime_monitors').insert({
+        name: domains[0], url: `${scheme}://${domains[0]}`,
+        type: 'http', interval_seconds: 60, timeout_ms: 5000, expected_status: 200,
+        proxy_host_id: host.id, enabled: true,
+      }).returning('*');
+      rescheduleMonitor(row.id, 60, true);
+      created++;
+    }
+    res.json({ success: true, data: { created } });
   } catch (err) { next(err); }
 });
 

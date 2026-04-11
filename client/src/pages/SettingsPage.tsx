@@ -4,6 +4,7 @@ import { settingsApi } from '@/api/settings.api';
 import { notificationsApi, type PluginMeta } from '@/api/notifications.api';
 import { systemApi } from '@/api/stacks.api';
 import { proxyApi } from '@/api/proxy.api';
+import type { CustomPage } from '@oblihub/shared';
 import { useAuthStore } from '@/store/authStore';
 import type { NotificationChannel } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -452,8 +453,109 @@ export function SettingsPage() {
       <SsoSection config={config} setConfig={setConfig} onSave={handleSave} saving={saving} />
       <DefaultSettingsSection config={config} setConfig={setConfig} onSave={handleSave} saving={saving} />
       <NotificationChannelsSection />
+      <NotificationGlobalSection config={config} setConfig={setConfig} onSave={handleSave} saving={saving} />
       <ProxyStatusSection />
       <SystemInfoSection />
+    </div>
+  );
+}
+
+// ── Notification Global Section ──
+function NotificationGlobalSection({ config, setConfig, onSave, saving }: {
+  config: Record<string, string | null>;
+  setConfig: (c: Record<string, string | null>) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  const notifyAvailable = config.notify_update_available !== 'false';
+  const notifyApplied = config.notify_update_applied !== 'false';
+  const notifyDelay = config.notify_delay || '300';
+  const [channels, setChannels] = useState<{ id: number; name: string; type: string }[]>([]);
+  const [errorPages, setErrorPages] = useState<CustomPage[]>([]);
+  const defaultChannelIds: number[] = (() => { try { return JSON.parse(config.default_notification_channel_ids || '[]'); } catch { return []; } })();
+  const defaultErrorPageId = config.default_error_page_id ? parseInt(config.default_error_page_id) : null;
+
+  useEffect(() => {
+    notificationsApi.getChannels().then(chs => setChannels(chs.map(c => ({ id: c.id, name: c.name, type: c.type })))).catch(() => {});
+    proxyApi.listCustomPages().then(setErrorPages).catch(() => {});
+  }, []);
+
+  const toggleChannel = (id: number) => {
+    const next = defaultChannelIds.includes(id) ? defaultChannelIds.filter(x => x !== id) : [...defaultChannelIds, id];
+    setConfig({ ...config, default_notification_channel_ids: JSON.stringify(next) });
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary p-4 mb-6">
+      <h2 className="text-sm font-semibold text-text-secondary mb-4">Notification & Proxy Defaults</h2>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-text-primary">Notify: Update Available</div>
+            <div className="text-xs text-text-muted">Send notification when a container image update is detected</div>
+          </div>
+          <button onClick={() => setConfig({ ...config, notify_update_available: notifyAvailable ? 'false' : 'true' })}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${notifyAvailable ? 'bg-status-up' : 'bg-bg-tertiary border border-border'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${notifyAvailable ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-text-primary">Notify: Update Applied</div>
+            <div className="text-xs text-text-muted">Send notification when a container is successfully updated</div>
+          </div>
+          <button onClick={() => setConfig({ ...config, notify_update_applied: notifyApplied ? 'false' : 'true' })}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${notifyApplied ? 'bg-status-up' : 'bg-bg-tertiary border border-border'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${notifyApplied ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-text-primary">Notification Delay</div>
+            <div className="text-xs text-text-muted">Minimum seconds between repeat notifications for the same event</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="number" min={0} max={86400} value={notifyDelay}
+              onChange={e => setConfig({ ...config, notify_delay: e.target.value || '300' })}
+              className="w-24 rounded-lg border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary text-right focus:outline-none focus:ring-1 focus:ring-accent" />
+            <span className="text-xs text-text-muted">sec</span>
+          </div>
+        </div>
+
+        {/* Default notification channels */}
+        <div>
+          <div className="text-sm font-medium text-text-primary mb-1">Default Notification Channels</div>
+          <div className="text-xs text-text-muted mb-2">Channels used for all notifications unless overridden per stack</div>
+          <div className="flex flex-wrap gap-2">
+            {channels.map(ch => {
+              const active = defaultChannelIds.includes(ch.id);
+              return (
+                <button key={ch.id} onClick={() => toggleChannel(ch.id)}
+                  className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${active ? 'border-accent bg-accent/10 text-accent font-medium' : 'border-border text-text-muted hover:bg-bg-hover'}`}>
+                  {ch.name} <span className="text-[9px] text-text-muted">({ch.type})</span>
+                </button>
+              );
+            })}
+            {channels.length === 0 && <span className="text-xs text-text-muted">No channels configured</span>}
+          </div>
+        </div>
+
+        {/* Default error page */}
+        <div>
+          <div className="text-sm font-medium text-text-primary mb-1">Default Error Page</div>
+          <div className="text-xs text-text-muted mb-2">Error page used for all proxy hosts unless overridden</div>
+          <select value={defaultErrorPageId || ''} onChange={e => setConfig({ ...config, default_error_page_id: e.target.value || null })}
+            className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+            <option value="">None (nginx default)</option>
+            {errorPages.map(p => <option key={p.id} value={p.id}>{p.name} ({p.errorCodes.join(', ')})</option>)}
+          </select>
+        </div>
+
+        <button onClick={onSave} disabled={saving}
+          className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50">
+          <Save size={14} /> {saving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -23,22 +23,7 @@ async function processCertQueue(): Promise<void> {
   certProcessing = false;
 }
 
-export const letsEncryptService = {
-  /** Request a certificate from Let's Encrypt (queued to prevent parallel conflicts) */
-  async requestCertificate(certId: number, domains: string[], email: string): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      certQueue.push(async () => {
-        try {
-          await this._doRequestCertificate(certId, domains, email);
-          resolve();
-        } catch (err) { reject(err); }
-      });
-      processCertQueue();
-    });
-  },
-
-  /** Internal: actual cert request logic */
-  async _doRequestCertificate(certId: number, domains: string[], email: string): Promise<void> {
+async function doRequestCertificate(certId: number, domains: string[], email: string): Promise<void> {
     try {
       await certificateService.updateStatus(certId, 'pending', undefined, null);
 
@@ -125,6 +110,21 @@ export const letsEncryptService = {
       await certificateService.updateStatus(certId, 'error', undefined, msg);
       throw err;
     }
+}
+
+export const letsEncryptService = {
+  /** Request a certificate from Let's Encrypt (queued to prevent parallel conflicts) */
+  async requestCertificate(certId: number, domains: string[], email: string): Promise<void> {
+    logger.info({ certId, domains }, 'Queueing certificate request');
+    return new Promise<void>((resolve, reject) => {
+      certQueue.push(async () => {
+        try {
+          await doRequestCertificate(certId, domains, email);
+          resolve();
+        } catch (err) { reject(err); }
+      });
+      processCertQueue();
+    });
   },
 
   /** Upload a custom certificate */

@@ -80,24 +80,36 @@ async function checkMonitor(monitorId: number): Promise<void> {
   });
 
   // Notify on status change (down after 3 consecutive failures, or back up)
-  if (result.status === 'down' && consecutive === 3 && prevStatus !== 'down') {
-    notificationService.sendForStack(0, 'Uptime', {
+  const shouldNotifyDown = result.status === 'down' && consecutive === 3 && prevStatus !== 'down';
+  const shouldNotifyUp = result.status === 'up' && prevStatus === 'down';
+
+  if (shouldNotifyDown || shouldNotifyUp) {
+    const payload = {
       stackName: 'Uptime',
       containerName: monitor.name,
-      eventType: 'update_failed' as const,
-      message: `Monitor "${monitor.name}" is DOWN: ${result.message || 'No response'}`,
+      eventType: (shouldNotifyDown ? 'update_failed' : 'update_applied') as 'update_failed' | 'update_applied',
+      message: shouldNotifyDown
+        ? `Monitor "${monitor.name}" is DOWN: ${result.message || 'No response'}`
+        : `Monitor "${monitor.name}" is back UP (${result.responseTimeMs}ms)`,
       timestamp: new Date().toISOString(),
-    }).catch(() => {});
-    logger.warn({ monitorId, name: monitor.name, message: result.message }, 'Monitor is DOWN');
-  } else if (result.status === 'up' && prevStatus === 'down') {
-    notificationService.sendForStack(0, 'Uptime', {
-      stackName: 'Uptime',
-      containerName: monitor.name,
-      eventType: 'update_applied' as const,
-      message: `Monitor "${monitor.name}" is back UP (${result.responseTimeMs}ms)`,
-      timestamp: new Date().toISOString(),
-    }).catch(() => {});
-    logger.info({ monitorId, name: monitor.name }, 'Monitor is back UP');
+    };
+
+    // Use monitor-specific channel, or stack channel if proxy_host has stack_id, or global default
+    if (monitor.notification_channel_id) {
+      // Send to specific channel
+      const channel = await db('notification_channels').where({ id: monitor.notification_channel_id, is_enabled: true }).first();
+      if (channel) {
+        const { getPlugin } = await import('../notifications/registry');
+        const plugin = getPlugin(channel.type);
+        if (plugin) plugin.send(channel.config, payload).catch(() => {});
+      }
+    } else {
+      // Fall back to global notification channels
+      notificationService.sendForStack(0, 'Uptime', payload).catch(() => {});
+    }
+
+    if (shouldNotifyDown) logger.warn({ monitorId, name: monitor.name }, 'Monitor is DOWN');
+    else logger.info({ monitorId, name: monitor.name }, 'Monitor is back UP');
   }
 
   // Cleanup old heartbeats (keep 30 days)

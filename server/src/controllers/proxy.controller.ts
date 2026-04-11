@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import { db } from '../db';
 import { proxyHostService, redirectionService, streamService, deadHostService, certificateService, accessListService, customPageService } from '../services/proxy.service';
 import { stackService } from '../services/stack.service';
 import { dockerService } from '../services/docker.service';
@@ -30,6 +31,22 @@ export const proxyController = {
     try {
       const host = await proxyHostService.create(req.body);
       await nginxService.regenerateAndReload();
+      // Auto-create uptime monitor if requested
+      if (host.autoMonitor && host.domainNames[0]) {
+        const { rescheduleMonitor } = await import('../workers/UptimeWorker');
+        const scheme = host.sslForced ? 'https' : 'http';
+        const [row] = await db('uptime_monitors').insert({
+          name: host.domainNames[0],
+          url: `${scheme}://${host.domainNames[0]}`,
+          type: 'http',
+          interval_seconds: 60,
+          timeout_ms: 5000,
+          expected_status: 200,
+          proxy_host_id: host.id,
+          enabled: true,
+        }).returning('*');
+        rescheduleMonitor(row.id, 60, true);
+      }
       res.json({ success: true, data: host });
     } catch (err) { next(err); }
   },
@@ -354,10 +371,27 @@ export const proxyController = {
         websocketSupport: true,
         enabled: true,
         stackId,
+        autoMonitor: true,
       });
 
       await nginxService.regenerateAndReload();
-      logger.info({ hostId: host.id, domains: domainNames, forward: `${container.containerName}:${forwardPort}` }, 'Quick setup proxy host created');
+
+      // Auto-create uptime monitor
+      const { rescheduleMonitor } = await import('../workers/UptimeWorker');
+      const scheme = requestCertificate ? 'https' : 'http';
+      const [monitorRow] = await db('uptime_monitors').insert({
+        name: domainNames[0],
+        url: `${scheme}://${domainNames[0]}`,
+        type: 'http',
+        interval_seconds: 60,
+        timeout_ms: 5000,
+        expected_status: 200,
+        proxy_host_id: host.id,
+        enabled: true,
+      }).returning('*');
+      rescheduleMonitor(monitorRow.id, 60, true);
+
+      logger.info({ hostId: host.id, domains: domainNames, forward: `${container.containerName}:${forwardPort}`, monitorId: monitorRow.id }, 'Quick setup proxy host + monitor created');
       res.json({ success: true, data: host });
     } catch (err) { next(err); }
   },

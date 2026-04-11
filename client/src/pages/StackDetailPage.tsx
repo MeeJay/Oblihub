@@ -10,6 +10,7 @@ import { SOCKET_EVENTS } from '@oblihub/shared';
 import type { ContainerStats as ContainerStatsType } from '@oblihub/shared';
 import { ContainerLogs } from '@/components/ContainerLogs';
 import { ContainerConsole } from '@/components/ContainerConsole';
+import { NotificationBindingsPanel } from '@/components/NotificationBindingsPanel';
 import type { Stack, Container, UpdateHistoryEntry, ManagedStack, ProxyHost } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
@@ -681,21 +682,21 @@ export function StackDetailPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium text-text-primary">Notify: Update Available</div>
-                  <div className="text-xs text-text-muted">{stack.notifyUpdateAvailable === null ? 'Using global setting' : 'Overridden'}</div>
+                  <div className="text-xs text-text-muted">{stack.notifyUpdateAvailable === null ? 'Using global setting' : 'Overridden for this stack'}</div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={async () => {
-                      const next = stack.notifyUpdateAvailable === null ? false : stack.notifyUpdateAvailable ? false : null;
-                      const updated = await stacksApi.update(stack.id, { notifyUpdateAvailable: next });
-                      setStack(updated);
-                    }}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.notifyUpdateAvailable === null ? 'bg-bg-tertiary border border-border' : stack.notifyUpdateAvailable ? 'bg-status-up' : 'bg-status-down'}`}>
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.notifyUpdateAvailable === null ? 'translate-x-3' : stack.notifyUpdateAvailable ? 'translate-x-6' : 'translate-x-1'}`} />
-                  </button>
-                  {stack.notifyUpdateAvailable !== null && (
-                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateAvailable: null }); setStack(updated); toast.success('Reset to global'); }}
-                      className="text-[10px] text-accent hover:text-accent-hover">Reset</button>
+                  {stack.notifyUpdateAvailable === null ? (
+                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateAvailable: true }); setStack(updated); }}
+                      className="px-2.5 py-1 text-[10px] rounded-md border border-border text-text-muted hover:bg-bg-hover">Override</button>
+                  ) : (
+                    <>
+                      <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateAvailable: !stack.notifyUpdateAvailable }); setStack(updated); }}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.notifyUpdateAvailable ? 'bg-status-up' : 'bg-status-down'}`}>
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.notifyUpdateAvailable ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                      <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateAvailable: null }); setStack(updated); toast.success('Reset to global'); }}
+                        className="px-2.5 py-1 text-[10px] rounded-md border border-accent/30 text-accent hover:bg-accent/10">Reset</button>
+                    </>
                   )}
                 </div>
               </div>
@@ -704,21 +705,21 @@ export function StackDetailPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium text-text-primary">Notify: Update Applied</div>
-                  <div className="text-xs text-text-muted">{stack.notifyUpdateApplied === null ? 'Using global setting' : 'Overridden'}</div>
+                  <div className="text-xs text-text-muted">{stack.notifyUpdateApplied === null ? 'Using global setting' : 'Overridden for this stack'}</div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={async () => {
-                      const next = stack.notifyUpdateApplied === null ? false : stack.notifyUpdateApplied ? false : null;
-                      const updated = await stacksApi.update(stack.id, { notifyUpdateApplied: next });
-                      setStack(updated);
-                    }}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.notifyUpdateApplied === null ? 'bg-bg-tertiary border border-border' : stack.notifyUpdateApplied ? 'bg-status-up' : 'bg-status-down'}`}>
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.notifyUpdateApplied === null ? 'translate-x-3' : stack.notifyUpdateApplied ? 'translate-x-6' : 'translate-x-1'}`} />
-                  </button>
-                  {stack.notifyUpdateApplied !== null && (
-                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateApplied: null }); setStack(updated); toast.success('Reset to global'); }}
-                      className="text-[10px] text-accent hover:text-accent-hover">Reset</button>
+                  {stack.notifyUpdateApplied === null ? (
+                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateApplied: true }); setStack(updated); }}
+                      className="px-2.5 py-1 text-[10px] rounded-md border border-border text-text-muted hover:bg-bg-hover">Override</button>
+                  ) : (
+                    <>
+                      <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateApplied: !stack.notifyUpdateApplied }); setStack(updated); }}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${stack.notifyUpdateApplied ? 'bg-status-up' : 'bg-status-down'}`}>
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${stack.notifyUpdateApplied ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                      <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyUpdateApplied: null }); setStack(updated); toast.success('Reset to global'); }}
+                        className="px-2.5 py-1 text-[10px] rounded-md border border-accent/30 text-accent hover:bg-accent/10">Reset</button>
+                    </>
                   )}
                 </div>
               </div>
@@ -730,19 +731,19 @@ export function StackDetailPage() {
                   <div className="text-xs text-text-muted">{stack.notifyDelay === null ? 'Using global setting' : `${stack.notifyDelay}s (overridden)`}</div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <input type="number" min={0} max={86400}
-                    value={stack.notifyDelay ?? ''}
-                    placeholder="global"
-                    onChange={async (e) => {
-                      const val = e.target.value ? parseInt(e.target.value, 10) : null;
-                      const updated = await stacksApi.update(stack.id, { notifyDelay: val });
-                      setStack(updated);
-                    }}
-                    className="w-20 rounded-lg border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary text-right focus:outline-none focus:ring-1 focus:ring-accent" />
-                  <span className="text-xs text-text-muted">sec</span>
-                  {stack.notifyDelay !== null && (
-                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyDelay: null }); setStack(updated); toast.success('Reset to global'); }}
-                      className="text-[10px] text-accent hover:text-accent-hover">Reset</button>
+                  {stack.notifyDelay === null ? (
+                    <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyDelay: 300 }); setStack(updated); }}
+                      className="px-2.5 py-1 text-[10px] rounded-md border border-border text-text-muted hover:bg-bg-hover">Override</button>
+                  ) : (
+                    <>
+                      <input type="number" min={0} max={86400} value={stack.notifyDelay}
+                        onBlur={async (e) => { const updated = await stacksApi.update(stack.id, { notifyDelay: parseInt(e.target.value) || 300 }); setStack(updated); }}
+                        onChange={e => setStack(s => s ? { ...s, notifyDelay: parseInt(e.target.value) || 0 } : null)}
+                        className="w-20 rounded-lg border border-border bg-bg-tertiary px-2 py-1.5 text-sm text-text-primary text-right focus:outline-none focus:ring-1 focus:ring-accent" />
+                      <span className="text-xs text-text-muted">sec</span>
+                      <button onClick={async () => { const updated = await stacksApi.update(stack.id, { notifyDelay: null }); setStack(updated); toast.success('Reset to global'); }}
+                        className="px-2.5 py-1 text-[10px] rounded-md border border-accent/30 text-accent hover:bg-accent/10">Reset</button>
+                    </>
                   )}
                 </div>
               </div>

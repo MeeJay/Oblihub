@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield } from 'lucide-react';
+import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield, Cpu, MemoryStick } from 'lucide-react';
 import { stacksApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { proxyApi } from '@/api/proxy.api';
 import { useSocket } from '@/hooks/useSocket';
+import { Sparkline } from '@/components/Sparkline';
 import { SOCKET_EVENTS } from '@oblihub/shared';
-import type { Stack, ManagedStack } from '@oblihub/shared';
+import type { Stack, ManagedStack, ContainerStats } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 function StatusBadge({ status }: { status: string }) {
@@ -69,6 +70,7 @@ export function DashboardPage() {
   const [selfProject, setSelfProject] = useState<string | null>(null);
   const [managedProjects, setManagedProjects] = useState<Set<string>>(new Set());
   const [proxyStackIds, setProxyStackIds] = useState<Set<number>>(new Set());
+  const [stackStats, setStackStats] = useState<Record<number, { cpu: number[]; mem: number[]; cpuNow: number; memNow: number }>>({});
   const socket = useSocket();
 
   const load = async () => {
@@ -106,6 +108,33 @@ export function DashboardPage() {
       systemApi.getInfo().then(info => setAllowStack(info.allowStack)).catch(() => {});
     });
   }, []);
+
+  // Aggregate container stats per stack
+  useEffect(() => {
+    const onStats = (data: ContainerStats[]) => {
+      setStackStats(prev => {
+        const next = { ...prev };
+        // Group stats by stack
+        for (const s of stacks) {
+          const containerIds = new Set(s.containers.map(c => c.dockerId));
+          const stackContainerStats = data.filter(d => containerIds.has(d.dockerId));
+          if (stackContainerStats.length === 0) continue;
+          const avgCpu = stackContainerStats.reduce((sum, c) => sum + c.cpuPercent, 0) / stackContainerStats.length;
+          const avgMem = stackContainerStats.reduce((sum, c) => sum + c.memoryPercent, 0) / stackContainerStats.length;
+          const existing = next[s.id] || { cpu: [], mem: [], cpuNow: 0, memNow: 0 };
+          next[s.id] = {
+            cpu: [...existing.cpu, avgCpu].slice(-20),
+            mem: [...existing.mem, avgMem].slice(-20),
+            cpuNow: Math.round(avgCpu * 10) / 10,
+            memNow: Math.round(avgMem * 10) / 10,
+          };
+        }
+        return next;
+      });
+    };
+    socket.on(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, onStats);
+    return () => { socket.off(SOCKET_EVENTS.CONTAINER_STATS_UPDATE, onStats); };
+  }, [socket, stacks]);
 
   const getOrigin = (stack: Stack): StackOrigin => {
     if (selfProject && stack.composeProject === selfProject) return 'self';
@@ -215,6 +244,18 @@ export function DashboardPage() {
                     }`} title={`${c.containerName}: ${c.status}`} />
                   ))}
                 </div>
+                {stackStats[stack.id] && (
+                  <div className="flex items-center gap-3 mt-2">
+                    <div className="flex items-center gap-1">
+                      <Sparkline data={stackStats[stack.id].cpu} width={50} height={16} color="#4a9eff" />
+                      <span className="text-[9px] text-text-muted">{stackStats[stack.id].cpuNow}%</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Sparkline data={stackStats[stack.id].mem} width={50} height={16} color="#3fb950" />
+                      <span className="text-[9px] text-text-muted">{stackStats[stack.id].memNow}%</span>
+                    </div>
+                  </div>
+                )}
                 <div className="mt-3 flex items-center gap-2">
                   <button onClick={(e) => { e.stopPropagation(); stacksApi.check(stack.id).then(() => setTimeout(load, 2000)).catch(() => toast.error('Check failed')); }}
                     className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-border text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors">

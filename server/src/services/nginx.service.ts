@@ -200,13 +200,18 @@ function generateProxyHostConfig(host: ProxyHost): string {
 
   // Error pages
   if (host.errorPageId) {
-    const errorPageFile = `/etc/nginx/error_pages/page_${host.errorPageId}.html`;
-    conf += `    error_page 400 401 403 404 500 502 503 504 /custom_error_${host.errorPageId}.html;\n`;
-    conf += `    location = /custom_error_${host.errorPageId}.html {\n`;
-    conf += `        internal;\n`;
-    conf += `        root /etc/nginx/error_pages;\n`;
-    conf += `        try_files /page_${host.errorPageId}.html =500;\n`;
-    conf += `    }\n\n`;
+    // Per-code error pages with dynamic content
+    const errorCodes = [400, 401, 403, 404, 500, 502, 503, 504];
+    for (const code of errorCodes) {
+      conf += `    error_page ${code} /oblihub_err_${host.errorPageId}_${code}.html;\n`;
+    }
+    for (const code of errorCodes) {
+      conf += `    location = /oblihub_err_${host.errorPageId}_${code}.html {\n`;
+      conf += `        internal;\n`;
+      conf += `        alias /etc/nginx/error_pages/page_${host.errorPageId}_${code}.html;\n`;
+      conf += `    }\n`;
+    }
+    conf += '\n';
   }
 
   // Resolver for dynamic upstream DNS (Docker internal DNS)
@@ -379,17 +384,43 @@ export const nginxService = {
   async regenerateAndReload(): Promise<void> {
     ensureDirs();
 
-    // Get all proxy hosts for rate limit zones
+    // Get global default error page
+    const { appConfigService } = await import('./appConfig.service');
+    const defaultErrorPageIdStr = await appConfigService.get('default_error_page_id');
+    const defaultErrorPageId = defaultErrorPageIdStr ? parseInt(defaultErrorPageIdStr) : null;
+
+    // Get all proxy hosts for rate limit zones, apply default error page
     const allHosts = await proxyHostService.getEnabled();
+    for (const host of allHosts) {
+      if (!host.errorPageId && defaultErrorPageId) {
+        host.errorPageId = defaultErrorPageId;
+      }
+    }
     const rateLimitedHosts = allHosts.filter(h => h.rateLimitRps).map(h => ({ id: h.id, rps: h.rateLimitRps! }));
 
     // Write main config (with rate limit zones)
     fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig(rateLimitedHosts));
 
-    // Write custom error pages to disk
+    // Write custom error pages to disk (one file per error code with dynamic replacement)
+    const ERROR_MESSAGES: Record<number, string> = {
+      400: 'Bad Request', 401: 'Unauthorized', 403: 'Access Denied', 404: 'Page Not Found',
+      500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout',
+    };
     const customPages = await customPageService.getAll();
     for (const page of customPages) {
-      fs.writeFileSync(path.join(ERROR_PAGES_DIR, `page_${page.id}.html`), page.htmlContent);
+      // Generate a page per error code with dynamic code/message
+      for (const code of page.errorCodes) {
+        const message = ERROR_MESSAGES[code] || `Error ${code}`;
+        const html = page.htmlContent
+          .replace(/\{\{CODE\}\}/g, String(code))
+          .replace(/\{\{MESSAGE\}\}/g, message);
+        fs.writeFileSync(path.join(ERROR_PAGES_DIR, `page_${page.id}_${code}.html`), html);
+      }
+      // Also write a generic fallback
+      const fallbackHtml = page.htmlContent
+        .replace(/\{\{CODE\}\}/g, 'Error')
+        .replace(/\{\{MESSAGE\}\}/g, 'Something went wrong');
+      fs.writeFileSync(path.join(ERROR_PAGES_DIR, `page_${page.id}.html`), fallbackHtml);
     }
 
     // Clear old configs

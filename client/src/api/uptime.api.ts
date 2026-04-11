@@ -13,6 +13,17 @@ export const uptimeApi = {
   async deleteMonitor(id: number): Promise<void> {
     await apiClient.delete(`/uptime/monitors/${id}`);
   },
+  async updateMonitor(id: number, data: { notificationChannelId?: number | null; intervalSeconds?: number }): Promise<void> {
+    await apiClient.patch(`/uptime/monitors/${id}`, data);
+  },
+  async getMonitorByProxy(proxyHostId: number): Promise<UptimeMonitor | null> {
+    const res = await apiClient.get<ApiResponse<UptimeMonitor | null>>(`/uptime/monitors/by-proxy/${proxyHostId}`);
+    return res.data.data!;
+  },
+  async syncProxyHosts(): Promise<{ created: number }> {
+    const res = await apiClient.post<ApiResponse<{ created: number }>>('/uptime/monitors/sync-proxy-hosts');
+    return res.data.data!;
+  },
   async toggleMonitor(id: number): Promise<{ enabled: boolean }> {
     const res = await apiClient.post<ApiResponse<{ enabled: boolean }>>(`/uptime/monitors/${id}/toggle`);
     return res.data.data!;

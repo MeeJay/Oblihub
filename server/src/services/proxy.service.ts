@@ -48,6 +48,7 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null): Prox
     corsEnabled: (row.cors_enabled as boolean) || false,
     customResponseHeaders: (row.custom_response_headers as { name: string; value: string; action: 'add' | 'remove' }[]) || null,
     errorPageId: (row.error_page_id as number) || null,
+    autoMonitor: (row.auto_monitor as boolean) || false,
     certificate: cert || null,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
@@ -196,6 +197,7 @@ export const proxyHostService = {
       cors_enabled: data.corsEnabled || false,
       custom_response_headers: data.customResponseHeaders ? JSON.stringify(data.customResponseHeaders) : null,
       error_page_id: data.errorPageId || null,
+      auto_monitor: data.autoMonitor || false,
     }).returning('*');
     return proxyRow(row, await getCert(row.certificate_id));
   },
@@ -229,6 +231,7 @@ export const proxyHostService = {
     if (data.corsEnabled !== undefined) update.cors_enabled = data.corsEnabled;
     if (data.customResponseHeaders !== undefined) update.custom_response_headers = data.customResponseHeaders ? JSON.stringify(data.customResponseHeaders) : null;
     if (data.errorPageId !== undefined) update.error_page_id = data.errorPageId;
+    if (data.autoMonitor !== undefined) update.auto_monitor = data.autoMonitor;
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');
     return row ? proxyRow(row, await getCert(row.certificate_id)) : null;
   },

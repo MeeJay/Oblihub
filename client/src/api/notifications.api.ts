@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ApiResponse, NotificationChannel } from '@oblihub/shared';
+import type { ApiResponse, NotificationChannel, NotificationBinding } from '@oblihub/shared';
 
 export interface PluginMeta {
   type: string;
@@ -29,5 +29,16 @@ export const notificationsApi = {
   async getPlugins(): Promise<PluginMeta[]> {
     const res = await apiClient.get<ApiResponse<PluginMeta[]>>('/notifications/plugins');
     return res.data.data!;
+  },
+  async getBindings(scope: string, scopeId: number | null): Promise<NotificationBinding[]> {
+    const params = scopeId !== null ? `?scope=${scope}&scopeId=${scopeId}` : `?scope=${scope}`;
+    const res = await apiClient.get<ApiResponse<NotificationBinding[]>>(`/notifications/bindings${params}`);
+    return res.data.data!;
+  },
+  async createBinding(channelId: number, scope: string, scopeId: number | null, overrideMode: string): Promise<void> {
+    await apiClient.post('/notifications/bindings', { channelId, scope, scopeId, overrideMode });
+  },
+  async removeBinding(channelId: number, scope: string, scopeId: number | null): Promise<void> {
+    await apiClient.delete('/notifications/bindings', { data: { channelId, scope, scopeId } });
   },
 };

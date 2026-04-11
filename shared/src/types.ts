@@ -190,6 +190,7 @@ export interface ProxyHost {
   corsEnabled: boolean;
   customResponseHeaders: { name: string; value: string; action: 'add' | 'remove' }[] | null;
   errorPageId: number | null;
+  autoMonitor: boolean;
   certificate?: Certificate | null;
   createdAt: string;
   updatedAt: string;
