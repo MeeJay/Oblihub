@@ -27,6 +27,7 @@ import { UptimeMonitorsPage } from '@/pages/UptimeMonitorsPage';
 import { AppStorePage } from '@/pages/AppStorePage';
 import { UsersPage } from '@/pages/UsersPage';
 import { RolesPage } from '@/pages/RolesPage';
+import { TeamsPage } from '@/pages/TeamsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isInitialized } = useAuthStore();
@@ -174,6 +175,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
                 </div>
                 <SidebarLink href="/users" icon={Users} label="Users" active={location.pathname === '/users'} />
                 <SidebarLink href="/roles" icon={Shield} label="Roles" active={location.pathname === '/roles'} />
+                <SidebarLink href="/teams" icon={Users} label="Teams" active={location.pathname === '/teams'} />
                 <SidebarLink href="/settings" icon={Settings} label="Settings" active={location.pathname === '/settings'} />
               </>
             )}
@@ -225,6 +227,7 @@ export default function App() {
         <Route path="/app-store" element={<ProtectedRoute><AppLayout><AppStorePage /></AppLayout></ProtectedRoute>} />
         <Route path="/users" element={<ProtectedRoute><AppLayout><UsersPage /></AppLayout></ProtectedRoute>} />
         <Route path="/roles" element={<ProtectedRoute><AppLayout><RolesPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/teams" element={<ProtectedRoute><AppLayout><TeamsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><AppLayout><SettingsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><AppLayout><ProfilePage /></AppLayout></ProtectedRoute>} />
         <Route path="*" element={<NotFoundPage />} />

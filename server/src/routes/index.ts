@@ -14,6 +14,7 @@ import permissionsRoutes from './permissions.routes';
 import statsRoutes from './stats.routes';
 import uptimeRoutes from './uptime.routes';
 import templatesRoutes from './templates.routes';
+import teamsRoutes from './teams.routes';
 
 const router = Router();
 
@@ -32,5 +33,6 @@ router.use('/', permissionsRoutes);
 router.use('/stats', statsRoutes);
 router.use('/uptime', uptimeRoutes);
 router.use('/templates', templatesRoutes);
+router.use('/teams', teamsRoutes);
 
 export { router as routes };

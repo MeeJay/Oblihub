@@ -370,6 +370,37 @@ export interface EnvSchemaField {
   options?: string[];
 }
 
+// ── Team types ──
+export interface Team {
+  id: number;
+  name: string;
+  description: string | null;
+  allResources: boolean;
+  maxStacks: number | null;
+  maxContainers: number | null;
+  maxCertificates: number | null;
+  maxProxyHosts: number | null;
+  members: TeamMember[];
+  resources: TeamResource[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TeamMember {
+  id: number;
+  userId: number;
+  username: string;
+  displayName: string | null;
+}
+
+export interface TeamResource {
+  id: number;
+  resourceType: 'stack' | 'container';
+  resourceId: number;
+  resourceName: string;
+  excluded: boolean;
+}
+
 // ── API response wrapper ──
 export interface ApiResponse<T = unknown> {
   success: boolean;

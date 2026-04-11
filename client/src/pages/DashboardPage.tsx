@@ -4,6 +4,7 @@ import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield
 import { stacksApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { proxyApi } from '@/api/proxy.api';
+import { teamsApi } from '@/api/teams.api';
 import { useSocket } from '@/hooks/useSocket';
 import { Sparkline } from '@/components/Sparkline';
 import { SOCKET_EVENTS } from '@oblihub/shared';
@@ -71,6 +72,8 @@ export function DashboardPage() {
   const [managedProjects, setManagedProjects] = useState<Set<string>>(new Set());
   const [proxyStackIds, setProxyStackIds] = useState<Set<number>>(new Set());
   const [stackStats, setStackStats] = useState<Record<number, { cpu: number[]; mem: number[]; cpuNow: number; memNow: number }>>({});
+  const [stackTeamNames, setStackTeamNames] = useState<Record<number, string[]>>({});
+  const [globalTeams, setGlobalTeams] = useState<string[]>([]);
   const socket = useSocket();
 
   const load = async () => {
@@ -107,6 +110,11 @@ export function DashboardPage() {
     }).catch(() => {
       systemApi.getInfo().then(info => setAllowStack(info.allowStack)).catch(() => {});
     });
+    // Load team labels for stacks
+    teamsApi.getStackTeams().then(data => {
+      setStackTeamNames(data.stackTeams);
+      setGlobalTeams(data.globalTeams);
+    }).catch(() => {});
   }, []);
 
   // Aggregate container stats per stack
@@ -210,6 +218,9 @@ export function DashboardPage() {
                   {stack.containers.some(c => c.image.includes('nginx')) && (
                     <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-accent/10 text-accent">Nginx</span>
                   )}
+                  {(stackTeamNames[stack.id] || globalTeams).map(t => (
+                    <span key={t} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#6366f1]/10 text-[#6366f1] border border-[#6366f1]/20 text-[9px]">{t}</span>
+                  ))}
                   <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded ${stack.enabled ? 'bg-status-up/10 text-status-up' : 'bg-bg-tertiary text-text-muted'}`}>
                     {stack.enabled ? 'Monitoring' : 'Paused'}
                   </span>
