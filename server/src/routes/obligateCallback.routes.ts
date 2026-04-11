@@ -110,7 +110,25 @@ router.get('/app-info', async (req, res) => {
     const receivedKey = authHeader.slice(7);
     logger.info({ hasStoredKey: !!raw.apiKey, storedKeyLen: raw.apiKey?.length, receivedKeyLen: receivedKey.length, match: receivedKey === raw.apiKey }, 'app-info auth check');
     if (!raw.apiKey || receivedKey !== raw.apiKey) { res.status(401).json({ success: false, error: 'Invalid API key' }); return; }
-    res.json({ success: true, data: { roles: ['admin', 'user'], teams: [], tenants: [] } });
+    // Return teams + roles in Obligate-compatible format
+    const { teamService } = await import('../services/team.service');
+    const { permissionService } = await import('../services/permission.service');
+    const allTeams = await teamService.getAll();
+    const allRoles = await permissionService.getAllRoles();
+    const teams = allTeams.map(t => ({
+      id: t.id,
+      name: t.name,
+      tenantSlug: 'default',
+      tenantName: 'Default',
+    }));
+    res.json({
+      success: true,
+      data: {
+        roles: allRoles.map(r => r.name),
+        teams,
+        tenants: [{ slug: 'default', name: 'Default' }],
+      },
+    });
   } catch (err) {
     logger.error(err, 'app-info error');
     res.status(500).json({ success: false, error: 'Failed' });
