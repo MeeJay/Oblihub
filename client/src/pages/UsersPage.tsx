@@ -30,7 +30,14 @@ export function UsersPage() {
 
   const load = async () => {
     try {
-      const [u, r] = await Promise.all([usersApi.list(), permissionsApi.getRoles().catch(() => [])]);
+      const [u, r] = await Promise.all([
+        usersApi.list(),
+        permissionsApi.getRoles().catch(() => [
+          { id: 0, name: 'admin', label: 'Administrator', description: null, isSystem: true, permissions: [], createdAt: '', updatedAt: '' },
+          { id: 0, name: 'user', label: 'User', description: null, isSystem: true, permissions: [], createdAt: '', updatedAt: '' },
+          { id: 0, name: 'viewer', label: 'Viewer', description: null, isSystem: true, permissions: [], createdAt: '', updatedAt: '' },
+        ]),
+      ]);
       setUsers(u); setRoles(r);
     }
     catch { toast.error('Failed to load users'); }

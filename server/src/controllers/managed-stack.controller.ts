@@ -16,10 +16,32 @@ async function isSelfStack(composeProject: string): Promise<boolean> {
 }
 
 export const managedStackController = {
-  async list(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  async list(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const stacks = await managedStackService.getAll();
-      res.json({ success: true, data: stacks });
+      const session = req.session as { userId?: number; role?: string };
+      const allStacks = await managedStackService.getAll();
+      if (session.role === 'admin') {
+        res.json({ success: true, data: allStacks });
+        return;
+      }
+      // Filter by team access
+      const { teamService } = await import('../services/team.service');
+      const teams = await teamService.getTeamsForUser(session.userId!);
+      if (teams.length === 0) { res.json({ success: true, data: [] }); return; }
+      if (teams.some(t => t.allResources)) { res.json({ success: true, data: allStacks }); return; }
+      const accessibleProjects = new Set<string>();
+      for (const team of teams) {
+        for (const r of team.resources) {
+          if (r.resourceType === 'stack' && !r.excluded) {
+            // Get the stack's compose_project to match with managed stacks
+            const { db } = await import('../db');
+            const stack = await db('stacks').where({ id: r.resourceId }).first();
+            if (stack?.compose_project) accessibleProjects.add(stack.compose_project);
+          }
+        }
+      }
+      const filtered = allStacks.filter(s => accessibleProjects.has(s.composeProject));
+      res.json({ success: true, data: filtered });
     } catch (err) { next(err); }
   },
 

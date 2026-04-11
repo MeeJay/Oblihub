@@ -19,7 +19,6 @@ export function RolesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', label: '', description: '' });
   const [editedPerms, setEditedPerms] = useState<Record<number, Set<string>>>({});
-  const [dirty, setDirty] = useState<Set<number>>(new Set());
 
   const load = async () => {
     try {
@@ -29,30 +28,22 @@ export function RolesPage() {
       const initial: Record<number, Set<string>> = {};
       r.forEach(role => { initial[role.id] = new Set(role.permissions); });
       setEditedPerms(initial);
-      setDirty(new Set());
     } catch { toast.error('Failed to load'); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
 
-  const togglePerm = (roleId: number, permKey: string) => {
-    setEditedPerms(prev => {
-      const next = { ...prev };
-      const set = new Set(next[roleId] || []);
-      set.has(permKey) ? set.delete(permKey) : set.add(permKey);
-      next[roleId] = set;
-      return next;
-    });
-    setDirty(prev => new Set(prev).add(roleId));
-  };
-
-  const handleSave = async (roleId: number) => {
+  const togglePerm = async (roleId: number, permKey: string) => {
+    const next = { ...editedPerms };
+    const set = new Set(next[roleId] || []);
+    set.has(permKey) ? set.delete(permKey) : set.add(permKey);
+    next[roleId] = set;
+    setEditedPerms(next);
+    // Auto-save immediately
     try {
-      await permissionsApi.updateRolePermissions(roleId, Array.from(editedPerms[roleId] || []));
-      toast.success('Permissions saved');
-      setDirty(prev => { const n = new Set(prev); n.delete(roleId); return n; });
-    } catch { toast.error('Failed to save'); }
+      await permissionsApi.updateRolePermissions(roleId, Array.from(set));
+    } catch { toast.error('Failed to save permission'); }
   };
 
   const handleCreate = async () => {
@@ -117,9 +108,6 @@ export function RolesPage() {
                     <span className="text-xs font-semibold text-text-primary">{role.label}</span>
                     {role.isSystem && <span className="text-[9px] px-1 py-0.5 rounded bg-accent/10 text-accent">System</span>}
                     <div className="flex items-center gap-1">
-                      {dirty.has(role.id) && (
-                        <button onClick={() => handleSave(role.id)} className="p-0.5 rounded text-status-up hover:bg-bg-hover" title="Save"><Save size={12} /></button>
-                      )}
                       {!role.isSystem && (
                         <button onClick={() => handleDelete(role)} className="p-0.5 rounded text-text-muted hover:text-status-down hover:bg-bg-hover" title="Delete"><Trash2 size={12} /></button>
                       )}
