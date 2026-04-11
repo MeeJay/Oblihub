@@ -57,6 +57,10 @@ export function UptimeMonitorsPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold text-text-primary flex items-center gap-2"><Activity size={20} /> Uptime Monitors</h1>
         <div className="flex gap-2">
+          <button onClick={async () => {
+            try { const r = await uptimeApi.syncProxyHosts(); toast.success(`${r.created} monitor(s) created from proxy hosts`); load(); }
+            catch { toast.error('Sync failed'); }
+          }} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-accent/50 text-accent hover:bg-accent/10">Sync Proxy Hosts</button>
           <button onClick={() => setShowCreate(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover"><Plus size={14} /> Add Monitor</button>
           <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover"><RefreshCw size={14} /></button>
         </div>

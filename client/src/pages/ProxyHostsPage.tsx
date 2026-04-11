@@ -191,7 +191,7 @@ export function ProxyHostsPage() {
                   {(['none', 'new', 'existing'] as const).map(mode => (
                     <button key={mode} onClick={() => {
                       setCertMode(mode);
-                      if (mode === 'none') setEditing(h => h ? { ...h, certificateId: null, sslForced: false, http2Support: false } : null);
+                      if (mode === 'none') setEditing(h => h ? { ...h, certificateId: null, sslForced: false, http2Support: false, hstsEnabled: false, hstsSubdomains: false } : null);
                     }}
                       className={`flex-1 px-3 py-1.5 text-xs rounded-lg border transition-colors ${certMode === mode ? 'border-accent bg-accent/10 text-accent font-medium' : 'border-border text-text-muted hover:bg-bg-hover'}`}>
                       {mode === 'none' ? 'No SSL' : mode === 'new' ? 'Request Let\'s Encrypt' : 'Use Existing'}
@@ -233,23 +233,27 @@ export function ProxyHostsPage() {
               {/* Toggles */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[
-                  { key: 'sslForced', label: 'Force SSL', icon: Lock },
-                  { key: 'http2Support', label: 'HTTP/2', icon: Zap },
-                  { key: 'hstsEnabled', label: 'HSTS', icon: Shield },
-                  { key: 'hstsSubdomains', label: 'HSTS Subs', icon: Shield },
-                  { key: 'blockExploits', label: 'Block Exploits', icon: Shield },
-                  { key: 'cachingEnabled', label: 'Cache Assets', icon: Zap },
-                  { key: 'websocketSupport', label: 'WebSocket', icon: Zap },
-                ].map(({ key, label, icon: Icon }) => {
+                  { key: 'sslForced', label: 'Force SSL', icon: Lock, requiresSsl: true },
+                  { key: 'http2Support', label: 'HTTP/2', icon: Zap, requiresSsl: true },
+                  { key: 'hstsEnabled', label: 'HSTS', icon: Shield, requiresSsl: true },
+                  { key: 'hstsSubdomains', label: 'HSTS Subs', icon: Shield, requiresSsl: true },
+                  { key: 'blockExploits', label: 'Block Exploits', icon: Shield, requiresSsl: false },
+                  { key: 'cachingEnabled', label: 'Cache Assets', icon: Zap, requiresSsl: false },
+                  { key: 'websocketSupport', label: 'WebSocket', icon: Zap, requiresSsl: false },
+                  { key: 'gzipEnabled', label: 'Gzip', icon: Zap, requiresSsl: false },
+                  { key: 'corsEnabled', label: 'CORS', icon: Globe, requiresSsl: false },
+                ].map(({ key, label, icon: Icon, requiresSsl }) => {
                   const active = !!(editing as Record<string, unknown>)[key];
+                  const disabled = requiresSsl && certMode === 'none';
                   return (
-                    <button key={key} onClick={() => setEditing(h => h ? { ...h, [key]: !active } : null)}
-                      className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${active ? 'border-accent/50 bg-accent/10' : 'border-border hover:bg-bg-hover'}`}>
-                      <div className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ${active ? 'bg-accent' : 'bg-bg-tertiary'}`}>
-                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${active ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                    <button key={key} disabled={disabled}
+                      onClick={() => { if (!disabled) setEditing(h => h ? { ...h, [key]: !active } : null); }}
+                      className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${disabled ? 'border-border opacity-30 cursor-not-allowed' : active ? 'border-accent/50 bg-accent/10' : 'border-border hover:bg-bg-hover'}`}>
+                      <div className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ${active && !disabled ? 'bg-accent' : 'bg-bg-tertiary'}`}>
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${active && !disabled ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
                       </div>
-                      <Icon size={12} className={active ? 'text-accent' : 'text-text-muted'} />
-                      <span className={`text-xs ${active ? 'text-text-primary' : 'text-text-secondary'}`}>{label}</span>
+                      <Icon size={12} className={active && !disabled ? 'text-accent' : 'text-text-muted'} />
+                      <span className={`text-xs ${active && !disabled ? 'text-text-primary' : 'text-text-secondary'}`}>{label}</span>
                     </button>
                   );
                 })}

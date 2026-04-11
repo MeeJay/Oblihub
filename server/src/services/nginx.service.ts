@@ -340,11 +340,16 @@ ${rateLimitZones ? `    # Rate limit zones\n${rateLimitZones}\n` : ''}    # WebS
     # Proxy cache
     proxy_cache_path /tmp/nginx-cache levels=1:2 keys_zone=proxy_cache:10m max_size=1g inactive=60m;
 
-    # Default server - catch all
+    # Default server - catch all with error page
     server {
         listen 80 default_server;
         listen [::]:80 default_server;
+        listen 443 ssl default_server;
+        listen [::]:443 ssl default_server;
         server_name _;
+
+        # Self-signed fallback cert for default server (prevents SSL errors on unknown hosts)
+        ssl_reject_handshake on;
 
         location /.well-known/acme-challenge/ {
             alias /etc/nginx/acme-challenge/;
@@ -389,14 +394,9 @@ export const nginxService = {
     const defaultErrorPageIdStr = await appConfigService.get('default_error_page_id');
     const defaultErrorPageId = defaultErrorPageIdStr ? parseInt(defaultErrorPageIdStr) : null;
 
-    // Get all proxy hosts for rate limit zones, apply default error page
-    const allHosts = await proxyHostService.getEnabled();
-    for (const host of allHosts) {
-      if (!host.errorPageId && defaultErrorPageId) {
-        host.errorPageId = defaultErrorPageId;
-      }
-    }
-    const rateLimitedHosts = allHosts.filter(h => h.rateLimitRps).map(h => ({ id: h.id, rps: h.rateLimitRps! }));
+    // Get enabled proxy hosts for rate limit zones
+    const enabledHosts = await proxyHostService.getEnabled();
+    const rateLimitedHosts = enabledHosts.filter(h => h.rateLimitRps).map(h => ({ id: h.id, rps: h.rateLimitRps! }));
 
     // Write main config (with rate limit zones)
     fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig(rateLimitedHosts));
@@ -428,10 +428,30 @@ export const nginxService = {
     for (const f of fs.readdirSync(STREAM_DIR)) fs.unlinkSync(path.join(STREAM_DIR, f));
 
     // Generate proxy host configs (named by primary domain)
-    const proxyHosts = await proxyHostService.getEnabled();
-    for (const host of proxyHosts) {
-      const filename = `${host.domainNames[0] || `proxy_${host.id}`}.conf`;
-      fs.writeFileSync(path.join(CONF_DIR, filename), generateProxyHostConfig(host));
+    // Include disabled hosts with return 503 so they keep their cert and don't leak to other vhosts
+    const allProxyHosts = await proxyHostService.getAll();
+    for (const host of allProxyHosts) {
+      if (!host.enabled) {
+        // Disabled host: keep server_name + SSL but return 503
+        const domains = host.domainNames.map(d => sanitizeForNginx(d)).join(' ');
+        const certDomain = host.certificate?.domainNames?.[0] || '';
+        const certFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.fullchain.crt`) : '';
+        const keyFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.key`) : '';
+        const hasCert = host.certificate?.status === 'valid' && certFile && keyFile && fs.existsSync(certFile) && fs.existsSync(keyFile);
+
+        let conf = `# Disabled: ${domains}\nserver {\n    listen 80;\n    listen [::]:80;\n`;
+        if (hasCert) {
+          conf += `    listen 443 ssl;\n    listen [::]:443 ssl;\n    http2 on;\n`;
+          conf += `    ssl_certificate /etc/nginx/certs/${certDomain}.fullchain.crt;\n`;
+          conf += `    ssl_certificate_key /etc/nginx/certs/${certDomain}.key;\n`;
+        }
+        conf += `    server_name ${domains};\n    return 503;\n}\n`;
+        fs.writeFileSync(path.join(CONF_DIR, `${host.domainNames[0] || `proxy_${host.id}`}.conf`), conf);
+      } else {
+        // Apply default error page
+        if (!host.errorPageId && defaultErrorPageId) host.errorPageId = defaultErrorPageId;
+        fs.writeFileSync(path.join(CONF_DIR, `${host.domainNames[0] || `proxy_${host.id}`}.conf`), generateProxyHostConfig(host));
+      }
     }
 
     // Generate redirection configs
@@ -463,7 +483,7 @@ export const nginxService = {
       fs.writeFileSync(path.join(HTPASSWD_DIR, `access_list_${list.id}`), htpasswdContent);
     }
 
-    logger.info({ proxyHosts: proxyHosts.length, redirections: redirections.length, streams: streams.length }, 'Nginx configs regenerated');
+    logger.info({ proxyHosts: allProxyHosts.length, redirections: redirections.length, streams: streams.length }, 'Nginx configs regenerated');
 
     // Reload nginx container (SIGHUP is safe - nginx keeps old config if new one is invalid)
     await this.reloadProxy();

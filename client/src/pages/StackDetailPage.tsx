@@ -746,6 +746,12 @@ export function StackDetailPage() {
                     </>
                   )}
                 </div>
+              {/* Notification channels */}
+              <div className="mt-4 pt-3 border-t border-border/50">
+                <div className="text-sm font-medium text-text-primary mb-2">Notification Channels</div>
+                <div className="text-xs text-text-muted mb-2">Override which channels receive notifications for this stack</div>
+                <NotificationBindingsPanel scope="stack" scopeId={stack.id} />
+              </div>
               </div>
             </div>
           </div>
