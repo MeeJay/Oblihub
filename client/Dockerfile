@@ -10,10 +10,12 @@ COPY client/ ./client/
 RUN cd client && npm run build
 
 FROM nginx:alpine AS production
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl openssl
 COPY --from=builder /app/client/dist/ /usr/share/nginx/html/
 COPY client/nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
+COPY client/docker-entrypoint.sh /docker-entrypoint-oblihub.sh
+RUN chmod +x /docker-entrypoint-oblihub.sh
+EXPOSE 80 443
 
 # Health check verifies BOTH nginx AND backend connectivity.
 # If the backend is unreachable (e.g. after server self-update with new IP),
@@ -21,4 +23,4 @@ EXPOSE 80
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 --start-period=15s \
     CMD curl -sf http://localhost/ -o /dev/null && curl -sf http://server:3001/health -o /dev/null || exit 1
 
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/docker-entrypoint-oblihub.sh"]

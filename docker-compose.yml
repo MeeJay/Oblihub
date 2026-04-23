@@ -22,7 +22,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3001
       DATABASE_URL: postgres://oblihub:${DB_PASSWORD:-changeme}@postgres:5432/oblihub
       SESSION_SECRET: ${SESSION_SECRET:-change-this-in-production}
@@ -34,6 +34,9 @@ services:
       ALLOW_STACK: ${ALLOW_STACK:-false}
       ALLOW_NGINX: ${ALLOW_NGINX:-false}
       STACKS_DIR: /data/stacks
+      APP_NAME: ${APP_NAME:-Oblihub}
+      DISCOVERY_INTERVAL: ${DISCOVERY_INTERVAL:-30000}
+      DEFAULT_CHECK_INTERVAL: ${DEFAULT_CHECK_INTERVAL:-60}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - stacks_data:/data/stacks
@@ -47,6 +50,9 @@ services:
         condition: service_healthy
     ports:
       - "${LISTEN_PORT:-3100}:80"
+      - "${LISTEN_PORT_HTTPS:-3101}:443"
+    volumes:
+      - client_ssl:/etc/nginx/ssl
 
   proxy:
     image: nginx:alpine
@@ -69,3 +75,4 @@ volumes:
   postgres_data:
   stacks_data:
   proxy_data:
+  client_ssl:
