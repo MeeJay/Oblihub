@@ -428,22 +428,25 @@ export const nginxService = {
     // Write main config (with rate limit zones)
     fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig(rateLimitedHosts));
 
-    // Write custom error pages to disk (one file per error code with dynamic replacement)
+    // Write custom error pages to disk (one file per error code with dynamic replacement).
+    // Always write files for ALL 8 codes referenced in generateProxyHostConfig — codes that
+    // aren't in the page's declared errorCodes still get a rendered file (with the correct
+    // code label) so nginx's error_page directive never points to a missing file.
     const ERROR_MESSAGES: Record<number, string> = {
       400: 'Bad Request', 401: 'Unauthorized', 403: 'Access Denied', 404: 'Page Not Found',
       500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout',
     };
+    const ALL_ERROR_CODES = [400, 401, 403, 404, 500, 502, 503, 504];
     const customPages = await customPageService.getAll();
     for (const page of customPages) {
-      // Generate a page per error code with dynamic code/message
-      for (const code of page.errorCodes) {
+      for (const code of ALL_ERROR_CODES) {
         const message = ERROR_MESSAGES[code] || `Error ${code}`;
         const html = page.htmlContent
           .replace(/\{\{CODE\}\}/g, String(code))
           .replace(/\{\{MESSAGE\}\}/g, message);
         fs.writeFileSync(path.join(ERROR_PAGES_DIR, `page_${page.id}_${code}.html`), html);
       }
-      // Also write a generic fallback
+      // Generic fallback (no specific code)
       const fallbackHtml = page.htmlContent
         .replace(/\{\{CODE\}\}/g, 'Error')
         .replace(/\{\{MESSAGE\}\}/g, 'Something went wrong');
