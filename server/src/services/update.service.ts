@@ -72,14 +72,16 @@ export const updateService = {
       if (container.excluded || container.status === 'stopped') continue;
 
       try {
-        // Get local digest
-        const localDigest = await dockerService.getLocalDigest(`${container.image}:${container.imageTag}`);
+        // Get ALL local digests for this image (Docker may accumulate several for the same
+        // image when a registry re-manifests a tag — any of them is a valid "up-to-date" match).
+        const localDigests = await dockerService.getLocalDigests(`${container.image}:${container.imageTag}`);
+        const primaryLocalDigest = localDigests[0] ?? null;
 
-        // Check remote
+        // Check remote against full local digest set
         const { hasUpdate, remoteDigest } = await registryService.checkForUpdate(
           container.image,
           container.imageTag,
-          localDigest,
+          localDigests,
         );
 
         const newStatus = hasUpdate ? 'update_available' as const : 'up_to_date' as const;
@@ -88,7 +90,7 @@ export const updateService = {
           container.id,
           newStatus,
           remoteDigest,
-          localDigest,
+          primaryLocalDigest,
         );
 
         if (_io) {
@@ -96,7 +98,7 @@ export const updateService = {
             containerId: container.id,
             stackId,
             status: newStatus,
-            currentDigest: localDigest,
+            currentDigest: primaryLocalDigest,
             latestDigest: remoteDigest,
           });
         }
@@ -113,7 +115,7 @@ export const updateService = {
             stackName: stack.name,
             containerName: container.containerName,
             image: `${container.image}:${container.imageTag}`,
-            oldDigest: localDigest || undefined,
+            oldDigest: primaryLocalDigest || undefined,
             newDigest: remoteDigest || undefined,
             eventType: 'update_available',
             message: `Update available for ${container.containerName} (${container.image}:${container.imageTag})`,

@@ -75,7 +75,7 @@ export const registryService = {
       const res = await fetch(manifestUrl, {
         method: 'HEAD',
         headers: {
-          'Accept': 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json',
+          'Accept': 'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json',
           ...(authHeader ? { 'Authorization': authHeader } : {}),
         },
       });
@@ -85,7 +85,7 @@ export const registryService = {
         const getRes = await fetch(manifestUrl, {
           method: 'GET',
           headers: {
-            'Accept': 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json',
+            'Accept': 'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json',
             ...(authHeader ? { 'Authorization': authHeader } : {}),
           },
         });
@@ -105,20 +105,27 @@ export const registryService = {
 
   /**
    * Check if a newer version is available for an image.
+   * Compares the remote digest against the FULL set of locally-known digests
+   * (Docker may accumulate several for the same image when a registry re-manifests a tag).
+   * Accepts `currentDigests` as either a single digest (legacy) or a full list.
    */
-  async checkForUpdate(image: string, tag: string, currentDigest: string | null): Promise<{ hasUpdate: boolean; remoteDigest: string | null }> {
+  async checkForUpdate(image: string, tag: string, currentDigests: string | string[] | null): Promise<{ hasUpdate: boolean; remoteDigest: string | null }> {
     const remoteDigest = await this.getRemoteDigest(image, tag);
 
     if (!remoteDigest) {
       return { hasUpdate: false, remoteDigest: null };
     }
 
-    if (!currentDigest) {
+    const localList = Array.isArray(currentDigests)
+      ? currentDigests
+      : currentDigests ? [currentDigests] : [];
+
+    if (localList.length === 0) {
       // No local digest known — can't compare, treat as unknown
       return { hasUpdate: false, remoteDigest };
     }
 
-    const hasUpdate = remoteDigest !== currentDigest;
+    const hasUpdate = !localList.includes(remoteDigest);
     return { hasUpdate, remoteDigest };
   },
 

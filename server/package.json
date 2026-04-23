@@ -1,6 +1,6 @@
 {
   "name": "@oblihub/server",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "private": true,
   "main": "dist/src/index.js",
   "scripts": {

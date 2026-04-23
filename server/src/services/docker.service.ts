@@ -70,21 +70,33 @@ export const dockerService = {
     });
   },
 
-  /** Get the local image digest (RepoDigests) */
-  async getLocalDigest(imageName: string): Promise<string | null> {
+  /**
+   * Get ALL local digests associated with the image (full RepoDigests list).
+   * Docker may accumulate multiple sha256 digests over time when a registry
+   * re-manifests a tag (same image content, new manifest wrapping) — all of
+   * them represent valid locally-known states of the image.
+   */
+  async getLocalDigests(imageName: string): Promise<string[]> {
     try {
       const docker = getDocker();
       const imageInfo = await docker.getImage(imageName).inspect();
       const digests = imageInfo.RepoDigests || [];
-      if (digests.length === 0) return null;
-      // RepoDigests format: "registry/repo@sha256:abc..."
-      const first = digests[0];
-      const atIdx = first.indexOf('@');
-      return atIdx >= 0 ? first.substring(atIdx + 1) : null;
+      const out: string[] = [];
+      for (const d of digests) {
+        const atIdx = d.indexOf('@');
+        if (atIdx >= 0) out.push(d.substring(atIdx + 1));
+      }
+      return out;
     } catch (err) {
-      logger.warn({ imageName, err }, 'Failed to get local digest');
-      return null;
+      logger.warn({ imageName, err }, 'Failed to get local digests');
+      return [];
     }
+  },
+
+  /** Get the first local image digest (for display/storage). Returns null if none. */
+  async getLocalDigest(imageName: string): Promise<string | null> {
+    const all = await this.getLocalDigests(imageName);
+    return all[0] ?? null;
   },
 
   /** Pull a new image */

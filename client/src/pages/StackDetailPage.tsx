@@ -64,14 +64,45 @@ export function StackDetailPage() {
     return () => { socket.off(SOCKET_EVENTS.DISCOVERY_COMPLETE, onDiscovery); };
   }, [socket, id]);
 
-  // Poll container stats via API (respects permissions)
+  // Pre-populate sparklines from server-side history on load, then poll for live updates.
   useEffect(() => {
     if (!stack?.containers?.length) return;
-    const fetchStats = async () => {
+    const stackDockerIds = new Set(stack.containers.map(c => c.dockerId));
+
+    const loadHistory = async () => {
+      try {
+        const { statsApi } = await import('@/api/stats.api');
+        const history = await statsApi.getBulkRecent(15);
+        const byDockerId = new Map<string, { cpu: number[]; mem: number[] }>();
+        const sorted = [...history].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        for (const r of sorted) {
+          if (!stackDockerIds.has(r.dockerId)) continue;
+          const b = byDockerId.get(r.dockerId) || { cpu: [], mem: [] };
+          b.cpu.push(r.cpuPercent);
+          b.mem.push(r.memoryPercent);
+          byDockerId.set(r.dockerId, b);
+        }
+        setContainerStats(prev => {
+          const next = { ...prev };
+          for (const [dockerId, b] of byDockerId) {
+            const lastCpu = b.cpu[b.cpu.length - 1] || 0;
+            const lastMem = b.mem[b.mem.length - 1] || 0;
+            next[dockerId] = {
+              cpu: b.cpu.slice(-30),
+              mem: b.mem.slice(-30),
+              cpuNow: lastCpu,
+              memNow: lastMem,
+            };
+          }
+          return next;
+        });
+      } catch { /* ignore */ }
+    };
+
+    const fetchLatest = async () => {
       try {
         const { statsApi } = await import('@/api/stats.api');
         const data = await statsApi.getLatest();
-        const stackDockerIds = new Set(stack.containers.map(c => c.dockerId));
         setContainerStats(prev => {
           const next = { ...prev };
           for (const s of data) {
@@ -88,8 +119,10 @@ export function StackDetailPage() {
         });
       } catch { /* ignore */ }
     };
-    fetchStats();
-    const interval = setInterval(fetchStats, 10000);
+
+    loadHistory();
+    fetchLatest();
+    const interval = setInterval(fetchLatest, 10000);
     return () => clearInterval(interval);
   }, [stack?.containers]);
 
