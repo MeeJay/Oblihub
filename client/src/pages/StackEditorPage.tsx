@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code, Link, Box, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code, Link, Box, AlertTriangle, XCircle } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { systemApi } from '@/api/stacks.api';
 import { teamsApi } from '@/api/teams.api';
@@ -218,6 +218,16 @@ export function StackEditorPage() {
     } catch { toast.error('Redeploy failed'); }
   };
 
+  const handleCancel = async () => {
+    if (!stack) return;
+    if (!confirm('Cancel this deployment? Any running compose command will be killed.')) return;
+    try {
+      const { killed } = await managedStacksApi.cancel(stack.id);
+      toast.success(killed ? 'Deployment cancelled' : 'Status reset');
+      load();
+    } catch { toast.error('Cancel failed'); }
+  };
+
   const addEnvEntry = () => {
     setEnvEntries(e => [...e, { key: '', value: '' }]);
     setDirty(true);
@@ -285,6 +295,11 @@ export function StackEditorPage() {
                   <Play size={14} /> Deploy
                 </button>
               )}
+              {stack.status === 'deploying' && (
+                <button onClick={handleCancel} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-status-down text-white hover:bg-status-down/80">
+                  <XCircle size={14} /> Cancel
+                </button>
+              )}
               {stack.status === 'deployed' && (
                 <>
                   <button onClick={handleRedeploy} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">
@@ -332,11 +347,14 @@ export function StackEditorPage() {
         </div>
       )}
       {stack?.status === 'deploying' && (
-        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 mb-4">
+        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 mb-4 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-medium text-accent">
             <div className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
             Deploying... This may take a moment.
           </div>
+          <button onClick={handleCancel} className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-status-down/10 text-status-down hover:bg-status-down/20">
+            <XCircle size={12} /> Cancel
+          </button>
         </div>
       )}
 

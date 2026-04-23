@@ -37,4 +37,8 @@ export const managedStacksApi = {
   async redeploy(id: number): Promise<void> {
     await apiClient.post(`/managed-stacks/${id}/redeploy`);
   },
+  async cancel(id: number): Promise<{ killed: boolean }> {
+    const res = await apiClient.post<ApiResponse<{ killed: boolean }>>(`/managed-stacks/${id}/cancel`);
+    return res.data.data!;
+  },
 };

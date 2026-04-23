@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
@@ -9,6 +9,9 @@ interface ComposeResult {
   stdout: string;
   stderr: string;
 }
+
+// Active compose processes keyed by project name — used to cancel stuck deploys.
+const activeProcesses = new Map<string, ChildProcess>();
 
 function ensureStacksDir(): void {
   if (!fs.existsSync(config.stacksDir)) {
@@ -32,7 +35,6 @@ export const composeService = {
     if (envContent) {
       fs.writeFileSync(path.join(stackDir, '.env'), envContent, 'utf8');
     } else {
-      // Remove .env if it existed before
       const envPath = path.join(stackDir, '.env');
       if (fs.existsSync(envPath)) fs.unlinkSync(envPath);
     }
@@ -55,16 +57,46 @@ export const composeService = {
     logger.info({ projectName, cmd }, 'Running compose command');
 
     return new Promise((resolve) => {
-      exec(cmd, { cwd: stackDir, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const child = exec(cmd, { cwd: stackDir, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+        activeProcesses.delete(projectName);
+        const killedByCancel = (child as ChildProcess & { _cancelled?: boolean })._cancelled === true;
         const result = {
-          exitCode: error ? (error as NodeJS.ErrnoException).code ? 1 : (error as { code?: number }).code ?? 1 : 0,
+          exitCode: killedByCancel ? 130 : error ? (error as NodeJS.ErrnoException).code ? 1 : (error as { code?: number }).code ?? 1 : 0,
           stdout: stdout?.toString() || '',
-          stderr: stderr?.toString() || '',
+          stderr: killedByCancel ? 'Cancelled by user' : (stderr?.toString() || ''),
         };
-        logger.info({ projectName, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) }, 'Compose command finished');
+        logger.info({ projectName, exitCode: result.exitCode, cancelled: killedByCancel, stderr: result.stderr.slice(0, 500) }, 'Compose command finished');
         resolve(result);
       });
+      activeProcesses.set(projectName, child);
     });
+  },
+
+  /** Cancel an in-flight compose command for a project. Returns true if a process was killed. */
+  cancel(projectName: string): boolean {
+    const child = activeProcesses.get(projectName);
+    if (!child || child.killed) return false;
+
+    (child as ChildProcess & { _cancelled?: boolean })._cancelled = true;
+    logger.warn({ projectName, pid: child.pid }, 'Cancelling compose command');
+
+    try { child.kill('SIGTERM'); } catch { /* ignore */ }
+
+    // Force kill after 3s if still alive
+    setTimeout(() => {
+      const stillRunning = activeProcesses.get(projectName);
+      if (stillRunning && !stillRunning.killed) {
+        try { stillRunning.kill('SIGKILL'); } catch { /* ignore */ }
+      }
+    }, 3000);
+
+    return true;
+  },
+
+  /** Check if a compose command is currently running for a project */
+  isRunning(projectName: string): boolean {
+    const child = activeProcesses.get(projectName);
+    return !!child && !child.killed;
   },
 
   /** Deploy a stack (up -d) */

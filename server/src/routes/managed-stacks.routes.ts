@@ -22,5 +22,6 @@ router.post('/:id/stop', managedStackController.stop);
 router.post('/:id/down', managedStackController.down);
 router.post('/:id/pull', managedStackController.pull);
 router.post('/:id/redeploy', managedStackController.redeploy);
+router.post('/:id/cancel', managedStackController.cancel);
 
 export default router;

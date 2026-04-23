@@ -213,6 +213,26 @@ export const managedStackController = {
     } catch (err) { next(err); }
   },
 
+  async cancel(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
+      const id = parseInt(req.params.id, 10);
+      const stack = await managedStackService.getById(id);
+      if (!stack) throw new AppError(404, 'Managed stack not found');
+
+      const wasRunning = composeService.cancel(stack.composeProject);
+      // Always reset status — also unblocks stacks stuck in 'deploying' after a server restart mid-deploy.
+      await managedStackService.setStatus(
+        id,
+        'error',
+        wasRunning ? 'Cancelled by user' : 'Deploy status reset (no active process)',
+      );
+
+      logger.warn({ projectName: stack.composeProject, wasRunning }, 'Deploy cancelled');
+      res.json({ success: true, data: { killed: wasRunning } });
+    } catch (err) { next(err); }
+  },
+
   async redeploy(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, RefreshCw, Layers, Play, Square, RotateCcw, Trash2 } from 'lucide-react';
+import { Plus, RefreshCw, Layers, Play, Square, RotateCcw, Trash2, XCircle } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import type { ManagedStack, ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -69,6 +69,16 @@ export function ManagedStacksPage() {
     } catch { toast.error('Redeploy failed'); }
   };
 
+  const handleCancel = async (e: React.MouseEvent, s: ManagedStack) => {
+    e.stopPropagation();
+    if (!confirm(`Cancel deployment of "${s.name}"? Any in-progress compose command will be killed.`)) return;
+    try {
+      const { killed } = await managedStacksApi.cancel(s.id);
+      toast.success(killed ? `${s.name} deploy cancelled` : `${s.name} status reset`);
+      load();
+    } catch { toast.error('Cancel failed'); }
+  };
+
   const handleDelete = async (e: React.MouseEvent, s: ManagedStack) => {
     e.stopPropagation();
     if (!confirm(`Delete "${s.name}"? This will also remove its containers if deployed.`)) return;
@@ -122,6 +132,11 @@ export function ManagedStacksPage() {
                 {(s.status === 'draft' || s.status === 'stopped' || s.status === 'error') && (
                   <button onClick={e => handleDeploy(e, s)} className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-status-up/10 text-status-up hover:bg-status-up/20">
                     <Play size={10} /> Deploy
+                  </button>
+                )}
+                {s.status === 'deploying' && (
+                  <button onClick={e => handleCancel(e, s)} className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-status-down/10 text-status-down hover:bg-status-down/20">
+                    <XCircle size={10} /> Cancel
                   </button>
                 )}
                 {s.status === 'deployed' && (
