@@ -190,6 +190,7 @@ export function DashboardPage() {
     };
 
     loadHistory();
+    fetchLatest();
     const interval = setInterval(fetchLatest, 15000);
     return () => clearInterval(interval);
   }, [stacks]);

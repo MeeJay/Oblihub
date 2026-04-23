@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, RefreshCw, Layers, Play, Square, RotateCcw, Trash2, XCircle } from 'lucide-react';
+import { Plus, RefreshCw, Layers, Play, Square, RotateCcw, Trash2, XCircle, Globe } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
-import type { ManagedStack, ManagedStackStatus } from '@oblihub/shared';
+import { stacksApi } from '@/api/stacks.api';
+import type { ManagedStack, ManagedStackStatus, Stack } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 const STATUS_STYLES: Record<ManagedStackStatus, string> = {
@@ -24,16 +25,37 @@ const STATUS_LABELS: Record<ManagedStackStatus, string> = {
 export function ManagedStacksPage() {
   const navigate = useNavigate();
   const [stacks, setStacks] = useState<ManagedStack[]>([]);
+  const [liveStacks, setLiveStacks] = useState<Stack[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
     try {
-      setStacks(await managedStacksApi.list());
+      const [managed, live] = await Promise.all([
+        managedStacksApi.list(),
+        stacksApi.list().catch(() => [] as Stack[]),
+      ]);
+      setStacks(managed);
+      setLiveStacks(live);
     } catch { toast.error('Failed to load managed stacks'); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
+
+  const portsForProject = (composeProject: string) => {
+    const live = liveStacks.find(s => s.composeProject === composeProject);
+    if (!live) return [] as { hostPort: number; containerPort: number; protocol: string }[];
+    const map = new Map<string, { hostPort: number; containerPort: number; protocol: string }>();
+    for (const c of live.containers) {
+      for (const p of c.ports || []) {
+        if (p.hostPort != null) {
+          const key = `${p.hostPort}:${p.containerPort}/${p.protocol}`;
+          if (!map.has(key)) map.set(key, { hostPort: p.hostPort, containerPort: p.containerPort, protocol: p.protocol });
+        }
+      }
+    }
+    return [...map.values()].sort((a, b) => a.hostPort - b.hostPort);
+  };
 
   // Poll while any stack is deploying
   useEffect(() => {
@@ -125,9 +147,25 @@ export function ManagedStacksPage() {
                   {STATUS_LABELS[s.status]}
                 </span>
               </div>
-              <div className="text-xs text-text-muted mb-3">
+              <div className="text-xs text-text-muted mb-2">
                 Project: <code className="bg-bg-tertiary px-1 py-0.5 rounded">{s.composeProject}</code>
               </div>
+              {(() => {
+                const ports = portsForProject(s.composeProject);
+                if (ports.length === 0) return null;
+                return (
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {ports.map(p => (
+                      <span key={`${p.hostPort}:${p.containerPort}/${p.protocol}`}
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-bg-tertiary text-text-secondary text-[10px] font-mono"
+                        title={`Host :${p.hostPort} → container :${p.containerPort}/${p.protocol}`}>
+                        <Globe size={8} className="opacity-60" />
+                        {p.hostPort}<span className="opacity-50">→{p.containerPort}{p.protocol !== 'tcp' && `/${p.protocol}`}</span>
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
               <div className="flex items-center gap-2 mt-2">
                 {(s.status === 'draft' || s.status === 'stopped' || s.status === 'error') && (
                   <button onClick={e => handleDeploy(e, s)} className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-status-up/10 text-status-up hover:bg-status-up/20">
