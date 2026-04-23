@@ -132,6 +132,43 @@ export function StackEditorPage() {
     return envRaw.trim() || null;
   };
 
+  // Build the env var map used to resolve ${VAR} refs in the compose preview.
+  const resolvedEnvVars = (() => {
+    const map: Record<string, string> = {};
+    if (envMode === 'kv') {
+      for (const e of envEntries) { if (e.key) map[e.key] = e.value; }
+    } else {
+      for (const line of envRaw.split(/\r?\n/)) {
+        const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/i);
+        if (!m) continue;
+        let val = m[2];
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        map[m[1]] = val;
+      }
+    }
+    return map;
+  })();
+
+  const handleDeletePort = (serviceName: string, rawPort: string) => {
+    // Find and remove the port line within the named service's ports list.
+    // Escape regex special chars in the port string.
+    const escaped = rawPort.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Match: `- "port"` or `- port` on its own line, with any surrounding whitespace and optional quotes.
+    const portLineRe = new RegExp(`\\n[ \\t]+-[ \\t]+["']?${escaped}["']?[ \\t]*(?=\\r?\\n|$)`);
+    // Restrict to the target service block. Match service header + indented body.
+    const serviceRe = new RegExp(`((?:^|\\n)[ \\t]*${serviceName}:(?:\\r?\\n)(?:[ \\t]+[^\\n]*(?:\\r?\\n)?)+)`, 'm');
+    const m = composeContent.match(serviceRe);
+    if (!m) { toast.error(`Service "${serviceName}" not found in compose`); return; }
+    const block = m[0];
+    const newBlock = block.replace(portLineRe, '');
+    if (newBlock === block) { toast.error(`Port "${rawPort}" not found in ${serviceName}`); return; }
+    setComposeContent(composeContent.replace(block, newBlock));
+    setDirty(true);
+    toast.success(`Removed port ${rawPort}`);
+  };
+
   const handleSave = async () => {
     if (!name.trim()) { toast.error('Stack name is required'); return; }
     if (!composeContent.trim()) { toast.error('Compose content is required'); return; }
@@ -457,7 +494,7 @@ export function StackEditorPage() {
           <h2 className="text-sm font-semibold text-text-secondary">Preview</h2>
         </div>
         <div className="p-4">
-          <ComposePreview composeContent={composeContent} />
+          <ComposePreview composeContent={composeContent} envVars={resolvedEnvVars} onDeletePort={handleDeletePort} />
         </div>
       </div>
 

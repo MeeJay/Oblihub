@@ -39,6 +39,34 @@ router.get('/:dockerId', async (req: Request, res: Response, next: NextFunction)
   } catch (err) { next(err); }
 });
 
+// Get bulk history for ALL containers over a recent time window.
+// Used by the dashboard to pre-populate sparklines on login instead of waiting for polling to accrue data.
+router.get('/bulk/recent', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const minutes = Math.max(1, Math.min(120, parseInt((req.query.minutes as string) || '15', 10) || 15));
+    const since = new Date(Date.now() - minutes * 60 * 1000);
+
+    const rows = await db('container_stats')
+      .where('timestamp', '>', since)
+      .orderBy('timestamp', 'asc')
+      .select('container_docker_id', 'container_name', 'cpu_percent', 'memory_usage', 'memory_limit', 'network_rx', 'network_tx', 'timestamp');
+
+    const data = rows.map(r => ({
+      dockerId: r.container_docker_id,
+      containerName: r.container_name,
+      cpuPercent: r.cpu_percent,
+      memoryUsage: r.memory_usage,
+      memoryLimit: r.memory_limit,
+      memoryPercent: Math.round((r.memory_usage / r.memory_limit) * 10000) / 100,
+      networkRx: r.network_rx,
+      networkTx: r.network_tx,
+      timestamp: r.timestamp,
+    }));
+
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
 // Get latest stats for all containers (snapshot)
 router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
   try {

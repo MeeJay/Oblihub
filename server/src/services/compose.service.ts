@@ -1,8 +1,10 @@
 import { exec, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import Docker from 'dockerode';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { dockerService } from './docker.service';
 
 interface ComposeResult {
   exitCode: number;
@@ -133,5 +135,69 @@ export const composeService = {
     const pullResult = await this.runCompose(projectName, ['pull']);
     if (pullResult.exitCode !== 0) return pullResult;
     return this.runCompose(projectName, ['up', '-d', '--remove-orphans']);
+  },
+
+  /**
+   * Deploy via a helper container — required for the Oblihub self-stack because `docker compose up`
+   * would otherwise kill its own process when it stops the old server container.
+   *
+   * Writes the compose content to the host's compose workdir (overwriting), then spawns a short-lived
+   * `docker:cli` helper that runs `docker compose up -d --remove-orphans` and exits.
+   * Returns immediately with exit 0 — the server will be recreated and the new instance takes over.
+   */
+  async deployViaHelper(projectName: string, composeContent: string, envContent: string | null, pullFirst: boolean): Promise<ComposeResult> {
+    const selfId = dockerService.getSelfContainerId();
+    if (!selfId) throw new Error('Self-stack deploy requires running inside Docker');
+
+    const docker = new Docker({ socketPath: config.dockerSocket });
+    const self = docker.getContainer(selfId);
+    const info = await self.inspect();
+    const labels = info.Config.Labels || {};
+    const hostWorkdir = labels['com.docker.compose.project.working_dir'];
+    if (!hostWorkdir) throw new Error('Self-stack deploy requires com.docker.compose.project.working_dir label');
+
+    // Find the host path of our stacks_data mount so the helper can read the content we wrote.
+    const stacksMount = (info.Mounts || []).find((m) => m.Destination === '/data/stacks');
+    if (!stacksMount?.Source) throw new Error('stacks_data mount not found');
+    const hostStacksDir = stacksMount.Source;
+
+    // Write new compose content to /data/stacks/<project>/ (accessible via the volume host path).
+    this.writeStackFiles(projectName, composeContent, envContent);
+
+    // Ensure docker:cli is available before we hand off.
+    try { await docker.getImage('docker:cli').inspect(); }
+    catch {
+      logger.info('Self-stack deploy: pulling docker:cli...');
+      await dockerService.pullImage('docker', 'cli');
+    }
+
+    const pullCmd = pullFirst ? `docker compose -p "${projectName}" pull && ` : '';
+    const script = `
+set -e
+cp /stack-src/docker-compose.yml "${hostWorkdir}/docker-compose.yml"
+if [ -f /stack-src/.env ]; then cp /stack-src/.env "${hostWorkdir}/.env"; fi
+sleep 2
+${pullCmd}docker compose -p "${projectName}" up -d --remove-orphans
+`;
+
+    const helper = await docker.createContainer({
+      Image: 'docker:cli',
+      Cmd: ['sh', '-c', script],
+      HostConfig: {
+        Binds: [
+          '/var/run/docker.sock:/var/run/docker.sock',
+          `${hostWorkdir}:${hostWorkdir}`,
+          `${hostStacksDir}/${projectName}:/stack-src:ro`,
+        ],
+        AutoRemove: true,
+      } as Docker.HostConfig,
+      WorkingDir: hostWorkdir,
+    });
+
+    await helper.start();
+    logger.info({ projectName, hostWorkdir, helperId: helper.id }, 'Self-stack deploy: helper container started');
+
+    // We're about to be recreated. Return a synthetic success; the new server instance will take over.
+    return { exitCode: 0, stdout: 'Self-stack deploy initiated via helper container', stderr: '' };
   },
 };

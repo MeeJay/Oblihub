@@ -36,6 +36,13 @@ export interface Stack {
   updatedAt: string;
 }
 
+export interface ContainerPort {
+  hostPort: number | null;
+  containerPort: number;
+  protocol: string;
+  hostIp?: string | null;
+}
+
 export interface Container {
   id: number;
   stackId: number | null;
@@ -50,6 +57,7 @@ export interface Container {
   excluded: boolean;
   lastCheckedAt: string | null;
   lastUpdatedAt: string | null;
+  ports: ContainerPort[];
   createdAt: string;
   updatedAt: string;
 }

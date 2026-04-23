@@ -1,12 +1,19 @@
 import { useMemo } from 'react';
 import yaml from 'js-yaml';
-import { Box, Network, HardDrive, Database, Globe, Plug } from 'lucide-react';
+import { Box, Network, HardDrive, Database, Globe, Plug, X } from 'lucide-react';
+
+interface ParsedPort {
+  /** Original string as written in compose (may contain ${VAR} refs) */
+  raw: string;
+  /** Env-substituted display form */
+  resolved: string;
+}
 
 interface ParsedService {
   name: string;
   image: string | null;
   build: string | null;
-  ports: string[];
+  ports: ParsedPort[];
   volumes: string[];
   networks: string[];
   depends_on: string[];
@@ -21,7 +28,34 @@ interface ParsedCompose {
   error: string | null;
 }
 
-function parseCompose(content: string): ParsedCompose {
+// Docker-compose style env substitution: ${VAR}, ${VAR:-default}, ${VAR-default}, $VAR
+function substituteEnv(str: string, env: Record<string, string>): string {
+  return str
+    .replace(/\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}/gi, (_, name, dflt) => {
+      const v = env[name];
+      return v !== undefined && v !== '' ? v : dflt;
+    })
+    .replace(/\$\{([A-Z_][A-Z0-9_]*)-([^}]*)\}/gi, (_, name, dflt) => {
+      const v = env[name];
+      return v !== undefined ? v : dflt;
+    })
+    .replace(/\$\{([A-Z_][A-Z0-9_]*)\}/gi, (_, name) => env[name] ?? '')
+    .replace(/\$([A-Z_][A-Z0-9_]*)/gi, (_, name) => env[name] ?? '');
+}
+
+function portToString(p: unknown): string {
+  if (typeof p === 'string' || typeof p === 'number') return String(p);
+  if (p && typeof p === 'object') {
+    const o = p as { published?: unknown; target?: unknown; protocol?: string };
+    if (o.published != null && o.target != null) {
+      return o.protocol ? `${o.published}:${o.target}/${o.protocol}` : `${o.published}:${o.target}`;
+    }
+    if (o.target != null) return String(o.target);
+  }
+  return String(p);
+}
+
+function parseCompose(content: string, env: Record<string, string>): ParsedCompose {
   const result: ParsedCompose = { services: [], networks: [], volumes: [], error: null };
   if (!content.trim()) return result;
 
@@ -36,8 +70,11 @@ function parseCompose(content: string): ParsedCompose {
     for (const [name, svc] of Object.entries(services)) {
       if (!svc || typeof svc !== 'object') continue;
 
-      const ports = Array.isArray(svc.ports)
-        ? svc.ports.map((p: unknown) => String(p))
+      const ports: ParsedPort[] = Array.isArray(svc.ports)
+        ? svc.ports.map((p: unknown) => {
+            const raw = portToString(p);
+            return { raw, resolved: substituteEnv(raw, env) };
+          })
         : [];
 
       const volumes = Array.isArray(svc.volumes)
@@ -105,10 +142,12 @@ function Tag({ children, className = '' }: { children: React.ReactNode; classNam
 
 interface Props {
   composeContent: string;
+  envVars?: Record<string, string>;
+  onDeletePort?: (serviceName: string, rawPort: string) => void;
 }
 
-export function ComposePreview({ composeContent }: Props) {
-  const parsed = useMemo(() => parseCompose(composeContent), [composeContent]);
+export function ComposePreview({ composeContent, envVars, onDeletePort }: Props) {
+  const parsed = useMemo(() => parseCompose(composeContent, envVars || {}), [composeContent, envVars]);
 
   if (parsed.error) {
     return (
@@ -150,7 +189,23 @@ export function ComposePreview({ composeContent }: Props) {
                 <div className="flex items-start gap-1.5 text-[10px] text-text-muted mb-1.5">
                   <Globe size={9} className="shrink-0 mt-0.5" />
                   <div className="flex flex-wrap gap-1">
-                    {svc.ports.map((p, i) => <Tag key={i}>{p}</Tag>)}
+                    {svc.ports.map((p, i) => (
+                      <span key={i} className="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded bg-bg-secondary group">
+                        <span className="text-text-secondary">{p.resolved}</span>
+                        {p.raw !== p.resolved && (
+                          <span className="text-text-muted opacity-60" title={`Template: ${p.raw}`}>*</span>
+                        )}
+                        {onDeletePort && (
+                          <button
+                            onClick={() => onDeletePort(svc.name, p.raw)}
+                            className="ml-0.5 opacity-0 group-hover:opacity-100 text-text-muted hover:text-status-down transition-opacity"
+                            title="Remove this port"
+                          >
+                            <X size={10} />
+                          </button>
+                        )}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}

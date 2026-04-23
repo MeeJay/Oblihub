@@ -40,6 +40,27 @@ async function main() {
   // Clean up old containers left from self-updates
   await dockerService.cleanupOldSelfContainers();
 
+  // If we were restarted mid-self-deploy, reset the self-stack's status from 'deploying' to 'deployed'.
+  // We just booted, so the deploy clearly completed — we're the new instance it spawned.
+  try {
+    const selfId = dockerService.getSelfContainerId();
+    if (selfId) {
+      const info = await dockerService.inspectContainer(selfId);
+      const selfProject = info.Config?.Labels?.['com.docker.compose.project'];
+      if (selfProject) {
+        const { managedStackService } = await import('./services/managed-stack.service');
+        const stacks = await managedStackService.getAll();
+        const selfStack = stacks.find(s => s.composeProject === selfProject && s.status === 'deploying');
+        if (selfStack) {
+          await managedStackService.setStatus(selfStack.id, 'deployed', 'Self-deploy completed (new instance booted)');
+          logger.info({ projectName: selfProject }, 'Reset self-stack status from deploying → deployed on boot');
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Self-stack status reset on boot failed (non-fatal)');
+  }
+
   const app = createApp();
   const server = http.createServer(app);
   const io = createSocketServer(server);

@@ -138,6 +138,22 @@ export const managedStackController = {
       }
 
       await managedStackService.setStatus(id, 'deploying');
+
+      const selfStack = await isSelfStack(stack.composeProject);
+      if (selfStack) {
+        // Self-deploy: hand off to helper container, return immediately — we're about to be recreated.
+        res.json({ success: true, message: 'Self-stack deploy handed off to helper' });
+        try {
+          await composeService.deployViaHelper(stack.composeProject, stack.composeContent, stack.envContent, false);
+          logger.info({ projectName: stack.composeProject }, 'Self-stack deploy helper launched');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Unknown error';
+          await managedStackService.setStatus(id, 'error', `Self-deploy helper failed: ${msg}`);
+          logger.error({ projectName: stack.composeProject, err }, 'Self-stack deploy helper error');
+        }
+        return;
+      }
+
       res.json({ success: true, message: 'Deploy started' });
 
       // Run in background
@@ -149,7 +165,6 @@ export const managedStackController = {
             await managedStackService.setStatus(id, 'error', output || 'Deploy failed');
             logger.error({ projectName: stack.composeProject, stderr: result.stderr }, 'Compose deploy failed');
           } else {
-            // Store output as success message (visible in UI)
             await managedStackService.setStatus(id, 'deployed', output || null);
             logger.info({ projectName: stack.composeProject }, 'Stack deployed');
           }
@@ -246,6 +261,21 @@ export const managedStackController = {
       }
 
       await managedStackService.setStatus(id, 'deploying');
+
+      const selfStack = await isSelfStack(stack.composeProject);
+      if (selfStack) {
+        res.json({ success: true, message: 'Self-stack redeploy handed off to helper' });
+        try {
+          await composeService.deployViaHelper(stack.composeProject, stack.composeContent, stack.envContent, true);
+          logger.info({ projectName: stack.composeProject }, 'Self-stack redeploy helper launched');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Unknown error';
+          await managedStackService.setStatus(id, 'error', `Self-redeploy helper failed: ${msg}`);
+          logger.error({ projectName: stack.composeProject, err }, 'Self-stack redeploy helper error');
+        }
+        return;
+      }
+
       res.json({ success: true, message: 'Redeploy started' });
 
       (async () => {

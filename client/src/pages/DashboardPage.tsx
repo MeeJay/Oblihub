@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield, Cpu, MemoryStick } from 'lucide-react';
+import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield, Cpu, MemoryStick, Globe } from 'lucide-react';
 import { stacksApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { proxyApi } from '@/api/proxy.api';
@@ -117,10 +117,54 @@ export function DashboardPage() {
     }).catch(() => {});
   }, []);
 
-  // Poll container stats via API (respects permissions)
+  // Pre-populate sparklines from server-side history on stack load, then poll for fresh samples.
   useEffect(() => {
     if (stacks.length === 0) return;
-    const fetchStats = async () => {
+
+    const loadHistory = async () => {
+      try {
+        const { statsApi } = await import('@/api/stats.api');
+        const history = await statsApi.getBulkRecent(15);
+        setStackStats(prev => {
+          const next = { ...prev };
+          for (const s of stacks) {
+            const containerIds = new Set(s.containers.map(c => c.dockerId));
+            const stackRows = history
+              .filter(r => containerIds.has(r.dockerId))
+              .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            if (stackRows.length === 0) continue;
+            // Bucket rows by second-precision timestamp, average across containers per bucket.
+            const buckets = new Map<string, { cpu: number[]; mem: number[] }>();
+            for (const r of stackRows) {
+              const key = new Date(r.timestamp).toISOString().slice(0, 19);
+              const b = buckets.get(key) || { cpu: [], mem: [] };
+              b.cpu.push(r.cpuPercent);
+              b.mem.push(r.memoryPercent);
+              buckets.set(key, b);
+            }
+            const sortedKeys = [...buckets.keys()].sort();
+            const cpu: number[] = [];
+            const mem: number[] = [];
+            for (const k of sortedKeys) {
+              const b = buckets.get(k)!;
+              cpu.push(b.cpu.reduce((a, v) => a + v, 0) / b.cpu.length);
+              mem.push(b.mem.reduce((a, v) => a + v, 0) / b.mem.length);
+            }
+            const lastCpu = cpu[cpu.length - 1] || 0;
+            const lastMem = mem[mem.length - 1] || 0;
+            next[s.id] = {
+              cpu: cpu.slice(-20),
+              mem: mem.slice(-20),
+              cpuNow: Math.round(lastCpu * 10) / 10,
+              memNow: Math.round(lastMem * 10) / 10,
+            };
+          }
+          return next;
+        });
+      } catch { /* ignore */ }
+    };
+
+    const fetchLatest = async () => {
       try {
         const { statsApi } = await import('@/api/stats.api');
         const data = await statsApi.getLatest();
@@ -144,8 +188,9 @@ export function DashboardPage() {
         });
       } catch { /* ignore */ }
     };
-    fetchStats();
-    const interval = setInterval(fetchStats, 15000);
+
+    loadHistory();
+    const interval = setInterval(fetchLatest, 15000);
     return () => clearInterval(interval);
   }, [stacks]);
 
@@ -249,6 +294,30 @@ export function DashboardPage() {
                     <span className="truncate">{stack.url.replace(/^https?:\/\//, '')}</span>
                   </a>
                 )}
+                {(() => {
+                  const publishedPorts = new Map<string, { hostPort: number; containerPort: number; protocol: string }>();
+                  for (const c of stack.containers) {
+                    for (const p of c.ports || []) {
+                      if (p.hostPort != null) {
+                        const key = `${p.hostPort}:${p.containerPort}/${p.protocol}`;
+                        if (!publishedPorts.has(key)) publishedPorts.set(key, { hostPort: p.hostPort, containerPort: p.containerPort, protocol: p.protocol });
+                      }
+                    }
+                  }
+                  if (publishedPorts.size === 0) return null;
+                  return (
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {[...publishedPorts.values()].sort((a, b) => a.hostPort - b.hostPort).map(p => (
+                        <span key={`${p.hostPort}:${p.containerPort}/${p.protocol}`}
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-bg-tertiary text-text-secondary text-[10px] font-mono"
+                          title={`Host :${p.hostPort} → container :${p.containerPort}/${p.protocol}`}>
+                          <Globe size={8} className="opacity-60" />
+                          {p.hostPort}<span className="opacity-50">→{p.containerPort}{p.protocol !== 'tcp' && `/${p.protocol}`}</span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
                 <div className="flex flex-wrap gap-1">
                   {stack.containers.map((c) => (
                     <div key={c.id} className={`h-2 w-2 rounded-full ${

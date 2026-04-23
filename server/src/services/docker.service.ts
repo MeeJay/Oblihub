@@ -21,6 +21,7 @@ export interface DiscoveredContainer {
   composeService: string | null;
   state: string;
   labels: Record<string, string>;
+  ports: { hostPort: number | null; containerPort: number; protocol: string; hostIp?: string | null }[];
 }
 
 export const dockerService = {
@@ -41,6 +42,20 @@ export const dockerService = {
         imageTag = fullImage.substring(lastColon + 1);
       }
 
+      // Deduplicate ports (Docker may list the same mapping multiple times for IPv4+IPv6)
+      const portMap = new Map<string, { hostPort: number | null; containerPort: number; protocol: string; hostIp?: string | null }>();
+      for (const p of c.Ports || []) {
+        const key = `${p.PublicPort ?? 'none'}:${p.PrivatePort}/${p.Type || 'tcp'}`;
+        if (!portMap.has(key)) {
+          portMap.set(key, {
+            hostPort: p.PublicPort ?? null,
+            containerPort: p.PrivatePort,
+            protocol: p.Type || 'tcp',
+            hostIp: p.IP || null,
+          });
+        }
+      }
+
       return {
         dockerId: c.Id.substring(0, 12),
         containerName: (c.Names?.[0] || '').replace(/^\//, ''),
@@ -50,6 +65,7 @@ export const dockerService = {
         composeService: labels['com.docker.compose.service'] || null,
         state: c.State || 'unknown',
         labels,
+        ports: [...portMap.values()],
       };
     });
   },

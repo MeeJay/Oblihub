@@ -10,4 +10,8 @@ export const statsApi = {
     const res = await apiClient.get<ApiResponse<ContainerStats[]>>(`/stats/${dockerId}?range=${range}`);
     return res.data.data!;
   },
+  async getBulkRecent(minutes = 15): Promise<ContainerStats[]> {
+    const res = await apiClient.get<ApiResponse<ContainerStats[]>>(`/stats/bulk/recent?minutes=${minutes}`);
+    return res.data.data!;
+  },
 };

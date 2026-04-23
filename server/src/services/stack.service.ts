@@ -33,6 +33,7 @@ interface ContainerRow {
   error_message: string | null;
   excluded: boolean;
   container_config: unknown;
+  ports: unknown;
   last_checked_at: Date | null;
   last_updated_at: Date | null;
   created_at: Date;
@@ -40,6 +41,13 @@ interface ContainerRow {
 }
 
 function rowToContainer(row: ContainerRow): Container {
+  let ports: Container['ports'] = [];
+  if (row.ports) {
+    try {
+      ports = typeof row.ports === 'string' ? JSON.parse(row.ports) : (row.ports as Container['ports']);
+      if (!Array.isArray(ports)) ports = [];
+    } catch { ports = []; }
+  }
   return {
     id: row.id,
     stackId: row.stack_id,
@@ -54,6 +62,7 @@ function rowToContainer(row: ContainerRow): Container {
     excluded: row.excluded,
     lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
     lastUpdatedAt: row.last_updated_at?.toISOString() ?? null,
+    ports,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -124,19 +133,20 @@ export const stackService = {
       for (const c of containers) {
         const isStopped = c.state !== 'running';
         const existing = await db<ContainerRow>('containers').where({ docker_id: c.dockerId }).first();
+        const portsJson = JSON.stringify(c.ports || []);
         if (existing) {
           const update: Record<string, unknown> = {
             stack_id: stackId,
             container_name: c.containerName,
             image: c.image,
             image_tag: c.imageTag,
+            ports: portsJson,
             updated_at: new Date(),
           };
-          // Track stopped/running state transitions
           if (isStopped && existing.status !== 'excluded') {
             update.status = 'stopped';
           } else if (!isStopped && existing.status === 'stopped') {
-            update.status = 'unknown'; // back to running, will be checked next cycle
+            update.status = 'unknown';
           }
           await db('containers').where({ id: existing.id }).update(update);
         } else {
@@ -147,6 +157,7 @@ export const stackService = {
             image: c.image,
             image_tag: c.imageTag,
             status: isStopped ? 'stopped' : 'unknown',
+            ports: portsJson,
           });
           logger.info({ containerName: c.containerName, stackId }, 'New container discovered');
         }
