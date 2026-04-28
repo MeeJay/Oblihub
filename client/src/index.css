@@ -2,28 +2,113 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --c-bg-primary: 13 17 23;
-  --c-bg-secondary: 22 27 34;
-  --c-bg-tertiary: 28 35 51;
-  --c-bg-hover: 33 38 45;
-  --c-border: 48 54 61;
-  --c-text-primary: 230 237 243;
-  --c-text-secondary: 139 148 158;
-  --c-text-muted: 110 118 129;
-  --c-status-up: 46 160 67;
-  --c-status-up-bg: 13 40 24;
-  --c-status-down: 248 81 73;
-  --c-status-down-bg: 61 20 24;
-  --c-status-pending: 210 153 34;
-  --c-status-pending-bg: 46 33 17;
-  --c-accent: 88 166 255;
-  --c-accent-hover: 121 192 255;
+/* ─────────────────────────────────────────────────────────────────────────────
+   Theme CSS custom properties
+   Values are space-separated RGB triplets so Tailwind's opacity modifier syntax
+   (e.g. bg-accent/30) works: Tailwind emits  rgb(var(--c-X) / 0.3)
+
+   Obli Operator (default) — Obli Design System v1, fond bleu nuit + accent
+   bleu profond pour Oblihub. Tokens forwarded by Obligate
+   (shared/src/themes.ts → OBLI_OPERATOR_THEME). Spec: D:\Mockup\obli-design-system.md.
+   ───────────────────────────────────────────────────────────────────────────── */
+:root,
+[data-theme="obli-operator"] {
+  --c-bg-primary:            11 13 26;
+  --c-bg-secondary:          19 23 40;
+  --c-bg-tertiary:           24 28 48;
+  --c-bg-hover:              29 34 56;
+  --c-bg-active:             34 39 64;
+
+  /* Borders subtle on dark base — `border-border` resolves without auto alpha,
+     so this MUST be near-bg shade. */
+  --c-border:                42 48 72;
+  --c-border-light:          62 70 100;
+
+  --c-text-primary:          240 244 252;
+  --c-text-secondary:        180 188 215;
+  --c-text-muted:            130 140 175;
+
+  --c-status-up:             30 221 138;
+  --c-status-up-bg:          12 40 26;
+  --c-status-down:           107 115 153;
+  --c-status-down-bg:        24 28 48;
+  --c-status-pending:        79 123 255;
+  --c-status-pending-bg:     16 24 56;
+  --c-status-warning:        245 166 35;
+  --c-status-warning-bg:     46 33 17;
+  --c-status-critical:       224 58 58;
+  --c-status-critical-bg:    44 14 18;
+
+  /* Per-app accent — Oblihub = bleu profond #2d4ec9 / hover #5a78e8 / dark #1e389e */
+  --c-accent:                45 78 201;
+  --c-accent-hover:          90 120 232;
+  --c-accent-dark:           30 56 158;
+  --c-primary:               45 78 201;
+}
+
+/* ── Modern UI (legacy) — fond très sombre, teinte rouge ultra-subtile ───── */
+[data-theme="modern"] {
+  --c-bg-primary:            13 17 23;
+  --c-bg-secondary:          22 27 34;
+  --c-bg-tertiary:           28 35 51;
+  --c-bg-hover:              33 38 45;
+  --c-bg-active:             40 46 56;
+  --c-border:                48 54 61;
+  --c-border-light:          62 70 80;
+  --c-text-primary:          230 237 243;
+  --c-text-secondary:        139 148 158;
+  --c-text-muted:            110 118 129;
+  --c-status-up:             46 160 67;
+  --c-status-up-bg:          13 40 24;
+  --c-status-down:           248 81 73;
+  --c-status-down-bg:        61 20 24;
+  --c-status-pending:        210 153 34;
+  --c-status-pending-bg:     46 33 17;
+  --c-status-warning:        210 153 34;
+  --c-status-warning-bg:     46 33 17;
+  --c-status-critical:       248 81 73;
+  --c-status-critical-bg:    61 20 24;
+  --c-accent:                88 166 255;
+  --c-accent-hover:          121 192 255;
+  --c-accent-dark:           58 130 220;
+  --c-primary:               88 166 255;
 }
 
 @layer base {
   body {
     @apply bg-bg-primary text-text-primary antialiased;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-primary;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-border-light;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Shared shadow utilities — depth via shadow + bg delta, never via borders.
+   Spec §2 / §14: cards have no border, only shadow-card; featured KPIs add
+   shadow-glow with the accent.
+   ───────────────────────────────────────────────────────────────────────────── */
+@layer utilities {
+  .shadow-card {
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.03),
+      0 6px 24px -8px rgba(0, 0, 0, 0.45);
+  }
+  .shadow-glow {
+    box-shadow:
+      0 0 0 1px rgb(var(--c-accent) / 0.18) inset,
+      0 6px 28px -10px rgb(var(--c-accent) / 0.25);
   }
 }

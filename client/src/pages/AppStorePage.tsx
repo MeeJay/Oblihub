@@ -27,9 +27,11 @@ export function AppStorePage() {
 
   useEffect(() => { load(); }, []);
 
+  const sanitizeStackName = (v: string) => v.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+
   const startDeploy = (t: AppTemplate) => {
     setDeploying(t);
-    setStackName(t.slug);
+    setStackName(sanitizeStackName(t.slug));
     const defaults: Record<string, string> = {};
     t.envSchema.forEach(f => { defaults[f.key] = f.default || ''; });
     setEnvValues(defaults);
@@ -81,8 +83,9 @@ export function AppStorePage() {
             <div className="p-6 space-y-4">
               <div>
                 <label className="text-xs font-medium text-text-secondary block mb-1.5">Stack Name</label>
-                <input value={stackName} onChange={e => setStackName(e.target.value)}
+                <input value={stackName} onChange={e => setStackName(sanitizeStackName(e.target.value))}
                   className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                <p className="text-[10px] text-text-muted mt-1">Lowercase letters, digits, <code className="bg-bg-tertiary px-1 rounded">-</code> and <code className="bg-bg-tertiary px-1 rounded">_</code> only (Docker project naming rules)</p>
               </div>
               {deploying.envSchema.map((field: EnvSchemaField) => (
                 <div key={field.key}>

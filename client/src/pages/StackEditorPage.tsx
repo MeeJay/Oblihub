@@ -302,8 +302,9 @@ export function StackEditorPage() {
         <div className="flex items-center gap-3">
           <input
             value={name}
-            onChange={e => { setName(e.target.value); setDirty(true); }}
-            placeholder="Stack name"
+            onChange={e => { setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-')); setDirty(true); }}
+            placeholder="stack-name"
+            title="Lowercase letters, digits, - and _ only (Docker project naming rules)"
             className="text-xl font-semibold text-text-primary bg-transparent border-b border-transparent hover:border-border focus:border-accent focus:outline-none pb-0.5 transition-colors"
           />
           {stack && (

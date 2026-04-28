@@ -202,14 +202,22 @@ export function DashboardPage() {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-text-primary">Docker Stacks</h1>
+    <div className="px-6 pt-5 pb-8">
+      {/* Page header — spec §4.3: title · meta on the left, actions on the right. */}
+      <div className="flex items-end justify-between gap-4 mb-5">
+        <div>
+          <h1 className="font-display text-[24px] font-semibold tracking-wide text-text-primary leading-tight">
+            Docker Stacks
+          </h1>
+          <div className="mt-1 text-[11px] font-mono uppercase tracking-[0.14em] text-text-muted">
+            {stacks.length} stack{stacks.length !== 1 ? 's' : ''} discovered
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           {allowStack && (
             <button
               onClick={() => navigate('/stack-editor/new')}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors">
+              className="flex items-center gap-2 px-3.5 py-2 text-[13px] rounded-md bg-accent text-white hover:bg-accent-hover transition-colors font-medium">
               <Plus size={14} /> New Stack
             </button>
           )}
@@ -222,10 +230,10 @@ export function DashboardPage() {
                 setTimeout(load, 3000);
               } catch { toast.error('Check failed', { id: 'check-all' }); }
             }}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors">
+            className="flex items-center gap-2 px-3.5 py-2 text-[13px] rounded-md bg-accent/[0.12] text-accent hover:bg-accent/20 transition-colors font-medium">
             <Search size={14} /> Check All
           </button>
-          <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover transition-colors">
+          <button onClick={load} className="flex items-center gap-2 px-3.5 py-2 text-[13px] rounded-md bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors font-medium">
             <RefreshCw size={14} /> Refresh
           </button>
         </div>
@@ -248,7 +256,7 @@ export function DashboardPage() {
             const origin = getOrigin(stack);
             return (
               <div key={stack.id} onClick={() => navigate(`/stack/${stack.id}`)}
-                className="rounded-xl border border-border bg-bg-secondary p-4 hover:border-accent/30 cursor-pointer transition-colors">
+                className="rounded-xl bg-bg-secondary p-4 shadow-card hover:bg-bg-hover cursor-pointer transition-colors">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2 min-w-0">
                     <h3 className="text-sm font-semibold text-text-primary truncate">{stack.name}</h3>
