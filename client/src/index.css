@@ -6,11 +6,10 @@
    Theme CSS custom properties
    Values are space-separated RGB triplets so Tailwind's opacity modifier syntax
    (e.g. bg-accent/30) works: Tailwind emits  rgb(var(--c-X) / 0.3)
-
-   Obli Operator (default) — Obli Design System v1, fond bleu nuit + accent
-   bleu profond pour Oblihub. Tokens forwarded by Obligate
-   (shared/src/themes.ts → OBLI_OPERATOR_THEME). Spec: D:\Mockup\obli-design-system.md.
    ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Obli Operator (default) — fond bleu nuit, accent bleu Oblihub qui ressort.
+       Spec: D:\Mockup\obli-design-system.md §2 + §10. ────────────────────────── */
 :root,
 [data-theme="obli-operator"] {
   --c-bg-primary:            11 13 26;
@@ -19,8 +18,6 @@
   --c-bg-hover:              29 34 56;
   --c-bg-active:             34 39 64;
 
-  /* Borders subtle on dark base — `border-border` resolves without auto alpha,
-     so this MUST be near-bg shade. */
   --c-border:                42 48 72;
   --c-border-light:          62 70 100;
 
@@ -39,41 +36,157 @@
   --c-status-critical:       224 58 58;
   --c-status-critical-bg:    44 14 18;
 
-  /* Per-app accent — Oblihub = bleu profond #2d4ec9 / hover #5a78e8 / dark #1e389e */
+  /* Oblihub brand — bleu profond #2d4ec9 / hover #5a78e8 / dark #1e389e */
   --c-accent:                45 78 201;
   --c-accent-hover:          90 120 232;
   --c-accent-dark:           30 56 158;
   --c-primary:               45 78 201;
 }
 
-/* ── Modern UI (legacy) — fond très sombre, teinte rouge ultra-subtile ───── */
+/* ── Modern UI — fond très sombre, teinte bleue ultra-subtile (couleur app) ── */
 [data-theme="modern"] {
-  --c-bg-primary:            13 17 23;
-  --c-bg-secondary:          22 27 34;
-  --c-bg-tertiary:           28 35 51;
-  --c-bg-hover:              33 38 45;
-  --c-bg-active:             40 46 56;
-  --c-border:                48 54 61;
-  --c-border-light:          62 70 80;
-  --c-text-primary:          230 237 243;
-  --c-text-secondary:        139 148 158;
-  --c-text-muted:            110 118 129;
+  --c-bg-primary:            11 12 18;
+  --c-bg-secondary:          17 19 28;
+  --c-bg-tertiary:           23 26 38;
+  --c-bg-hover:              31 35 50;
+  --c-bg-active:             40 46 64;
+
+  --c-border:                48 56 78;
+  --c-border-light:          64 74 100;
+
+  --c-text-primary:          230 235 245;
+  --c-text-secondary:        152 162 188;
+  --c-text-muted:            108 118 140;
+
   --c-status-up:             46 160 67;
-  --c-status-up-bg:          13 40 24;
+  --c-status-up-bg:          10 36 20;
   --c-status-down:           248 81 73;
-  --c-status-down-bg:        61 20 24;
+  --c-status-down-bg:        58 18 22;
   --c-status-pending:        210 153 34;
-  --c-status-pending-bg:     46 33 17;
+  --c-status-pending-bg:     42 30 14;
   --c-status-warning:        210 153 34;
-  --c-status-warning-bg:     46 33 17;
+  --c-status-warning-bg:     42 30 14;
   --c-status-critical:       248 81 73;
-  --c-status-critical-bg:    61 20 24;
-  --c-accent:                88 166 255;
-  --c-accent-hover:          121 192 255;
-  --c-accent-dark:           58 130 220;
-  --c-primary:               88 166 255;
+  --c-status-critical-bg:    58 18 22;
+
+  --c-accent:                30 56 158;
+  --c-accent-hover:          60 90 200;
+  --c-accent-dark:           20 40 120;
+  --c-primary:               30 56 158;
 }
 
+/* ── Neon UI — fonds neutres très sombres + accent bleu électrique avec glow ──── */
+[data-theme="neon"] {
+  --c-bg-primary:            7 8 10;
+  --c-bg-secondary:          13 14 17;
+  --c-bg-tertiary:           19 20 24;
+  --c-bg-hover:              27 27 32;
+  --c-bg-active:             36 36 42;
+
+  --c-border:                50 51 57;
+  --c-border-light:          65 66 73;
+
+  --c-text-primary:          235 240 250;
+  --c-text-secondary:        145 152 175;
+  --c-text-muted:            100 108 130;
+
+  --c-status-up:             0 220 110;
+  --c-status-up-bg:          0 24 14;
+  --c-status-down:           255 56 96;
+  --c-status-down-bg:        40 0 14;
+  --c-status-pending:        255 190 0;
+  --c-status-pending-bg:     30 20 0;
+  --c-status-warning:        255 190 0;
+  --c-status-warning-bg:     30 20 0;
+  --c-status-critical:       255 56 96;
+  --c-status-critical-bg:    40 0 14;
+
+  --c-accent:                64 130 255;
+  --c-accent-hover:          110 165 255;
+  --c-accent-dark:           30 90 220;
+  --c-primary:               64 130 255;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Neon UI — glow effects
+   All selectors are flat (not nested) for PostCSS compatibility.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+[data-theme="neon"] header {
+  position: relative;
+  border-bottom-color: transparent;
+}
+[data-theme="neon"] header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: radial-gradient(
+    ellipse 70% 100% at 50% 100%,
+    rgb(64 130 255 / 0.9) 0%,
+    rgb(64 130 255 / 0.4) 40%,
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+/* Active nav item — barre + fond teinté + glow icône */
+[data-theme="neon"] .bg-bg-active {
+  background-color: rgb(64 130 255 / 0.12) !important;
+  box-shadow: inset 3px 0 0 rgb(64 130 255 / 1), inset 0 0 12px rgb(64 130 255 / 0.08);
+}
+[data-theme="neon"] .bg-bg-active .text-text-primary {
+  color: rgb(64 130 255 / 1) !important;
+}
+[data-theme="neon"] .bg-bg-active svg {
+  color: rgb(64 130 255 / 1) !important;
+}
+
+/* Status dot glows */
+[data-theme="neon"] .bg-status-up {
+  box-shadow: 0 0 8px rgb(var(--c-status-up) / 0.7), 0 0 4px rgb(var(--c-status-up) / 0.5);
+}
+[data-theme="neon"] .bg-status-down {
+  box-shadow: 0 0 8px rgb(var(--c-status-down) / 0.65), 0 0 4px rgb(var(--c-status-down) / 0.45);
+}
+[data-theme="neon"] .bg-status-pending {
+  box-shadow: 0 0 8px rgb(var(--c-status-pending) / 0.7), 0 0 4px rgb(var(--c-status-pending) / 0.45);
+}
+
+/* Accent border / ring glow */
+[data-theme="neon"] .border-accent {
+  box-shadow: 0 0 0 1px rgb(var(--c-accent) / 0.45), 0 0 14px rgb(var(--c-accent) / 0.2);
+}
+[data-theme="neon"] .ring-accent {
+  box-shadow: 0 0 0 1px rgb(var(--c-accent) / 0.45), 0 0 14px rgb(var(--c-accent) / 0.2);
+}
+[data-theme="neon"] .focus\:ring-accent:focus {
+  box-shadow: 0 0 0 2px rgb(var(--c-accent) / 0.5), 0 0 16px rgb(var(--c-accent) / 0.2);
+}
+
+/* Primary button glow */
+[data-theme="neon"] button.bg-accent {
+  box-shadow: 0 0 16px rgb(var(--c-accent) / 0.45), 0 2px 8px rgb(0 0 0 / 0.4);
+}
+[data-theme="neon"] a.bg-accent {
+  box-shadow: 0 0 16px rgb(var(--c-accent) / 0.45), 0 2px 8px rgb(0 0 0 / 0.4);
+}
+
+/* ThemePicker selected border glow */
+[data-theme="neon"] .border-primary {
+  box-shadow: 0 0 0 1px rgb(var(--c-primary) / 0.35), 0 0 14px rgb(var(--c-primary) / 0.2);
+}
+
+/* Card secondary bg */
+[data-theme="neon"] .bg-bg-secondary {
+  border-color: rgb(var(--c-border) / 1);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Base styles
+   ───────────────────────────────────────────────────────────────────────────── */
 @layer base {
   body {
     @apply bg-bg-primary text-text-primary antialiased;
@@ -97,8 +210,7 @@
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Shared shadow utilities — depth via shadow + bg delta, never via borders.
-   Spec §2 / §14: cards have no border, only shadow-card; featured KPIs add
-   shadow-glow with the accent.
+   Spec §2 / §14.
    ───────────────────────────────────────────────────────────────────────────── */
 @layer utilities {
   .shadow-card {

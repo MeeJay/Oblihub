@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { hashPassword, comparePassword } from '../utils/crypto';
-import type { User } from '@oblihub/shared';
+import type { User, UserPreferences } from '@oblihub/shared';
 
 interface UserRow {
   id: number;
@@ -13,8 +13,18 @@ interface UserRow {
   preferred_language: string;
   foreign_source: string | null;
   foreign_id: number | null;
+  avatar: string | null;
+  preferences: unknown;
   created_at: Date;
   updated_at: Date;
+}
+
+function parsePrefs(raw: unknown): UserPreferences {
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) as UserPreferences; } catch { return {}; }
+  }
+  return raw as UserPreferences;
 }
 
 function rowToUser(row: UserRow): User {
@@ -28,6 +38,8 @@ function rowToUser(row: UserRow): User {
     preferredLanguage: row.preferred_language ?? 'en',
     foreignSource: row.foreign_source,
     foreignId: row.foreign_id,
+    avatar: row.avatar ?? null,
+    preferences: parsePrefs(row.preferences),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };

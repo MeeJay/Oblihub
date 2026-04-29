@@ -63,6 +63,21 @@ router.get('/callback', async (req, res) => {
       });
     }
 
+    // Sync avatar (profile photo) and theme preference from Obligate assertion
+    if (assertion.preferences) {
+      const prefs = assertion.preferences as { profilePhotoUrl?: string | null; preferredTheme?: string };
+      const colUpdate: Record<string, unknown> = {};
+      if (prefs.profilePhotoUrl !== undefined) colUpdate.avatar = prefs.profilePhotoUrl;
+      if (prefs.preferredTheme && ['obli-operator', 'modern', 'neon'].includes(prefs.preferredTheme)) {
+        const existing = await db('users').where({ id: localUserId }).select('preferences').first() as { preferences: unknown } | undefined;
+        const existingPrefs = (typeof existing?.preferences === 'string' ? JSON.parse(existing.preferences) : existing?.preferences) ?? {};
+        colUpdate.preferences = JSON.stringify({ ...existingPrefs, preferredTheme: prefs.preferredTheme });
+      }
+      if (Object.keys(colUpdate).length > 0) {
+        await db('users').where({ id: localUserId }).update(colUpdate);
+      }
+    }
+
     // Sync team memberships from Obligate assertion
     if (assertion.teams && assertion.teams.length > 0) {
       const { teamService } = await import('../services/team.service');

@@ -159,7 +159,11 @@ export function Sidebar({ allowStack, allowNginx }: SidebarProps) {
                 : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',
             )}
           >
-            <UserCircle size={18} />
+            {user?.avatar ? (
+              <img src={user.avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
+            ) : (
+              <UserCircle size={18} />
+            )}
           </Link>
           <button
             onClick={handleLogout}
@@ -239,7 +243,11 @@ export function Sidebar({ allowStack, allowNginx }: SidebarProps) {
               : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',
           )}
         >
-          <UserCircle size={18} />
+          {user?.avatar ? (
+            <img src={user.avatar} alt="" className="w-[18px] h-[18px] rounded-full object-cover shrink-0" />
+          ) : (
+            <UserCircle size={18} />
+          )}
           <span className="truncate flex-1">{cleanName}</span>
           {user?.role && (
             <span className="text-[10px] font-mono uppercase tracking-wider text-text-muted">

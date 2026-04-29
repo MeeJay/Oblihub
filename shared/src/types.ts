@@ -1,6 +1,12 @@
 // ── User types ──
 export type UserRole = 'admin' | 'user';
 
+export type AppTheme = 'obli-operator' | 'modern' | 'neon';
+
+export interface UserPreferences {
+  preferredTheme?: AppTheme;
+}
+
 export interface User {
   id: number;
   username: string;
@@ -11,6 +17,8 @@ export interface User {
   preferredLanguage: string;
   foreignSource: string | null;
   foreignId: number | null;
+  avatar: string | null;
+  preferences: UserPreferences;
   createdAt: string;
   updatedAt: string;
 }

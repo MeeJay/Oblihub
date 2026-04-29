@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { db } from '../db';
 import { hashPassword, comparePassword } from '../utils/crypto';
 import { AppError } from '../middleware/errorHandler';
-import type { User } from '@oblihub/shared';
+import type { User, UserPreferences } from '@oblihub/shared';
 
 interface UserRow {
   id: number;
@@ -15,8 +15,18 @@ interface UserRow {
   preferred_language: string;
   foreign_source: string | null;
   foreign_id: number | null;
+  avatar: string | null;
+  preferences: unknown;
   created_at: Date;
   updated_at: Date;
+}
+
+function parsePrefs(raw: unknown): UserPreferences {
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) as UserPreferences; } catch { return {}; }
+  }
+  return raw as UserPreferences;
 }
 
 function rowToUser(row: UserRow): User {
@@ -30,6 +40,8 @@ function rowToUser(row: UserRow): User {
     preferredLanguage: row.preferred_language ?? 'en',
     foreignSource: row.foreign_source,
     foreignId: row.foreign_id,
+    avatar: row.avatar ?? null,
+    preferences: parsePrefs(row.preferences),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -46,10 +58,17 @@ export const profileController = {
 
   async updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { displayName, email } = req.body as { displayName?: string; email?: string };
+      const { displayName, email, preferences } = req.body as { displayName?: string; email?: string; preferences?: Partial<UserPreferences> };
       const update: Record<string, unknown> = { updated_at: new Date() };
       if (displayName !== undefined) update.display_name = displayName || null;
       if (email !== undefined) update.email = email || null;
+
+      // Deep-merge preferences instead of replacing — caller sends only the keys they want to update.
+      if (preferences && typeof preferences === 'object') {
+        const existing = await db<UserRow>('users').where({ id: req.session.userId }).select('preferences').first();
+        const merged: UserPreferences = { ...parsePrefs(existing?.preferences), ...preferences };
+        update.preferences = JSON.stringify(merged);
+      }
 
       const [row] = await db<UserRow>('users')
         .where({ id: req.session.userId })

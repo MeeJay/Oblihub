@@ -4,7 +4,9 @@ import { settingsApi } from '@/api/settings.api';
 import { useAuthStore } from '@/store/authStore';
 import type { User } from '@oblihub/shared';
 import toast from 'react-hot-toast';
-import { Save, Lock, ExternalLink } from 'lucide-react';
+import { Save, Lock, ExternalLink, Palette } from 'lucide-react';
+import { ThemePicker } from '@/components/ThemePicker';
+import { applyTheme, loadSavedTheme, type AppTheme } from '@/utils/theme';
 
 export function ProfilePage() {
   const { user: sessionUser, checkSession } = useAuthStore();
@@ -23,14 +25,33 @@ export function ProfilePage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
 
+  // Theme
+  const [preferredTheme, setPreferredTheme] = useState<AppTheme>(loadSavedTheme);
+
   useEffect(() => {
     profileApi.getProfile().then((u) => {
       setUser(u);
       setDisplayName(u.displayName || '');
       setEmail(u.email || '');
+      // If the server has a stored preference (e.g. synced from Obligate), prefer it over localStorage.
+      if (u.preferences?.preferredTheme) {
+        setPreferredTheme(u.preferences.preferredTheme);
+        applyTheme(u.preferences.preferredTheme);
+      }
     }).catch(() => toast.error('Failed to load profile'))
       .finally(() => setLoading(false));
   }, []);
+
+  const handleThemeChange = async (theme: AppTheme) => {
+    setPreferredTheme(theme);
+    applyTheme(theme); // live preview
+    try {
+      await profileApi.updateProfile({ preferences: { preferredTheme: theme } });
+      toast.success('Theme saved');
+    } catch {
+      toast.error('Failed to save theme');
+    }
+  };
 
   // Fetch Obligate URL for SSO users
   useEffect(() => {
@@ -91,16 +112,17 @@ export function ProfilePage() {
 
   const isSSO = sessionUser?.foreignSource === 'obligate';
 
-  // SSO users: redirect to Obligate account page
+  // SSO users: profile is managed by Obligate, but appearance is a local UI preference.
   if (isSSO && obligateUrl) {
     return (
-      <div className="p-6 max-w-2xl mx-auto">
-        <h1 className="text-xl font-semibold text-text-primary mb-6">Profile</h1>
+      <div className="p-6 max-w-2xl mx-auto space-y-6">
+        <h1 className="text-xl font-semibold text-text-primary">Profile</h1>
+
         <div className="rounded-xl border border-border bg-bg-secondary p-6 text-center">
           <Lock size={32} className="mx-auto mb-3 text-accent" />
           <h2 className="text-lg font-medium text-text-primary mb-2">Managed by Obligate</h2>
           <p className="text-sm text-text-secondary mb-4">
-            Your profile is managed through Obligate SSO. Use the Obligate account page to update your profile, password, and preferences.
+            Your profile is managed through Obligate SSO. Use the Obligate account page to update your name, email, password and avatar.
           </p>
           <a
             href={`${obligateUrl}/account`}
@@ -110,6 +132,14 @@ export function ProfilePage() {
           >
             <ExternalLink size={14} /> Open Obligate Profile
           </a>
+        </div>
+
+        <div className="rounded-xl border border-border bg-bg-secondary p-5">
+          <h2 className="text-sm font-semibold text-text-primary mb-1 flex items-center gap-2">
+            <Palette size={14} /> Appearance
+          </h2>
+          <p className="text-xs text-text-muted mb-4">Theme is also synced from Obligate on login. Pick another to override locally.</p>
+          <ThemePicker value={preferredTheme} onChange={handleThemeChange} />
         </div>
       </div>
     );
@@ -154,6 +184,15 @@ export function ProfilePage() {
           <Save size={14} /> {savingProfile ? 'Saving...' : 'Save Profile'}
         </button>
       </form>
+
+      {/* Appearance */}
+      <div className="rounded-xl border border-border bg-bg-secondary p-5 mb-6">
+        <h2 className="text-sm font-semibold text-text-primary mb-1 flex items-center gap-2">
+          <Palette size={14} /> Appearance
+        </h2>
+        <p className="text-xs text-text-muted mb-4">Pick a theme — applies immediately and is saved to your profile.</p>
+        <ThemePicker value={preferredTheme} onChange={handleThemeChange} />
+      </div>
 
       {/* Change password — local users only */}
       <form onSubmit={handlePasswordChange} className="rounded-xl border border-border bg-bg-secondary p-5">
