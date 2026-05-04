@@ -233,34 +233,36 @@ export function Sidebar({ allowStack, allowNginx }: SidebarProps) {
       </div>
 
       {/* Footer — user + logout */}
-      <div className="border-t border-border p-2">
+      <div className="border-t border-border p-2.5">
         <Link
           to="/profile"
           className={cn(
-            'flex items-center gap-3 rounded-md px-3 py-2 text-[13px] transition-colors',
+            'flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors',
             location.pathname === '/profile'
-              ? 'bg-bg-active text-text-primary'
-              : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',
+              ? 'bg-accent/10'
+              : 'hover:bg-bg-hover',
           )}
         >
           {user?.avatar ? (
-            <img src={user.avatar} alt="" className="w-[18px] h-[18px] rounded-full object-cover shrink-0" />
+            <img src={user.avatar} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" />
           ) : (
-            <UserCircle size={18} />
+            <UserCircle size={20} className="shrink-0 text-text-secondary" />
           )}
-          <span className="truncate flex-1">{cleanName}</span>
-          {user?.role && (
-            <span className="text-[10px] font-mono uppercase tracking-wider text-text-muted">
-              {user.role}
-            </span>
-          )}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-medium text-text-primary">
+              {cleanName}
+            </div>
+            <div className="truncate font-mono text-[10px] text-text-muted">
+              {(user?.username?.startsWith('og_') ? user.username.slice(3) : user?.username) ?? ''} · {user?.role ?? ''}
+            </div>
+          </div>
         </Link>
         <button
           onClick={handleLogout}
-          className="mt-0.5 flex w-full items-center gap-3 rounded-md px-3 py-2 text-[13px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+          className="mt-1 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
         >
-          <LogOut size={18} />
-          Sign out
+          <LogOut size={14} />
+          <span>Sign out</span>
         </button>
       </div>
     </aside>
