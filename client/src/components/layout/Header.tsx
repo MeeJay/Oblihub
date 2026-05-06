@@ -70,29 +70,25 @@ export function Header() {
         </span>
       </Link>
 
-      {/* App switcher pills (§4.1) — Oblihub pill glowing in deep blue */}
+      {/* App switcher pills (§4.1) — only show apps the user can access (current + connected). */}
       <nav className="flex items-center gap-1 ml-2">
-        {APP_ORDER.map(app => {
+        {APP_ORDER.filter(app => reachable.has(app.type)).map(app => {
           const isCurrent = app.type === CURRENT_APP;
-          const isReachable = reachable.has(app.type);
-          const dimmed = !isReachable && !isCurrent;
           return (
             <button
               key={app.type}
               type="button"
               onClick={() => goApp(app)}
-              disabled={dimmed}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors',
                 isCurrent
                   ? 'text-[color:var(--app-current)]'
                   : 'text-text-muted hover:bg-bg-hover hover:text-text-primary',
-                dimmed && 'opacity-40 cursor-not-allowed hover:bg-transparent hover:text-text-muted',
               )}
               style={isCurrent
                 ? ({ '--app-current': app.color, backgroundColor: hexA(app.color, 0.12) } as React.CSSProperties)
                 : undefined}
-              title={!isReachable && !isCurrent ? `${app.label} — not connected` : app.label}
+              title={app.label}
             >
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0"
