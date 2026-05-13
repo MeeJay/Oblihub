@@ -87,52 +87,120 @@ export const composeService = {
       if (!row?.ssh_private_key_enc) { cleanup(); throw new Error(`Engine ${engineId} (ssh) missing private key`); }
       const { decryptSecret } = await import('../utils/crypto');
       const privateKey = decryptSecret(row.ssh_private_key_enc);
+      const { execFileSync, execSync } = await import('node:child_process');
+      const os = await import('node:os');
 
-      // The docker CLI shells out to /usr/bin/ssh and does NOT honor any custom env var for
-      // extra ssh options (DOCKER_SSH_OPTS is a myth). The only reliable way to inject options
-      // is via ~/.ssh/config, which ssh reads natively. We build a sandboxed home directory per
-      // invocation, drop the key + config files in it, and point HOME at it for the subprocess.
-      const sshDir = path.join(tmp, '.ssh');
-      fs2.mkdirSync(sshDir, { mode: 0o700 });
-      const keyFile = path.join(sshDir, 'id_engine');
+      // Approach: the docker CLI shells out to /usr/bin/ssh and passes a fixed set of options
+      // (-T, -l, -p, -o ConnectTimeout=30) — there's no env var hook to inject extra options,
+      // and HOME override doesn't take effect either (alpine's openssh resolves the user's home
+      // via getpwuid, ignoring $HOME). The only reliable surface is the real user's ssh dotfiles.
+      //
+      // We therefore:
+      //   1. Write the per-engine private key to a tmp file (perms 0600).
+      //   2. Ensure $REAL_HOME/.ssh exists with 0700.
+      //   3. Pre-populate $REAL_HOME/.ssh/known_hosts via ssh-keyscan so strict host-key checking
+      //      passes naturally. If the engine has a pinned sshKnownHost we use that instead.
+      //   4. Append a Host-specific block to $REAL_HOME/.ssh/config that points IdentityFile at
+      //      our tmp key. The block is delimited by markers (`# oblihub:engine-<id> begin/end`)
+      //      so cleanup is idempotent and concurrent deploys to *different* engines don't step
+      //      on each other.
+      //   5. On cleanup, remove the block and tmp key.
+      //
+      // Concurrent deploys to the SAME engine on the same Oblihub instance would race on the
+      // marker block; that's acceptable since deploys for one engine are serialized upstream
+      // (activeProcesses Map in runCompose).
+      const REAL_HOME = os.homedir(); // honors /etc/passwd, not $HOME
+      const sshDir = path.join(REAL_HOME, '.ssh');
+      if (!fs2.existsSync(sshDir)) fs2.mkdirSync(sshDir, { mode: 0o700, recursive: true });
+      try { fs2.chmodSync(sshDir, 0o700); } catch { /* not fatal */ }
+
+      const keyFile = path.join(tmp, 'id_engine');
       fs2.writeFileSync(keyFile, privateKey, { mode: 0o600 });
 
-      // Host-key handling: if the engine has a pinned known_host, write it and enforce
-      // StrictHostKeyChecking. Otherwise disable host-key checking entirely (TOFU off) — the
-      // operator already trusts the engine, and the alternative is a hard failure on first use.
+      // ── Known hosts ──
       const knownHostsFile = path.join(sshDir, 'known_hosts');
-      let strictHostKey = 'no';
-      let userKnownHosts = '/dev/null';
       if (engine.sshKnownHost) {
-        fs2.writeFileSync(knownHostsFile, engine.sshKnownHost.trim() + '\n', { mode: 0o600 });
-        strictHostKey = 'yes';
-        userKnownHosts = knownHostsFile;
+        // Pinned key — append if not already present
+        const existing = fs2.existsSync(knownHostsFile) ? fs2.readFileSync(knownHostsFile, 'utf8') : '';
+        const pinned = engine.sshKnownHost.trim();
+        if (!existing.includes(pinned)) {
+          fs2.appendFileSync(knownHostsFile, pinned + '\n', { mode: 0o600 });
+        }
+      } else {
+        // No pinned key — fetch via ssh-keyscan (TOFU). If a key for this host already exists,
+        // we keep it; ssh-keyscan failure is non-fatal — ssh will produce its own error if the
+        // connection fails for another reason, which is more useful than aborting here.
+        try {
+          const scan = execFileSync(
+            'ssh-keyscan',
+            ['-T', '5', '-p', String(engine.port ?? 22), engine.host],
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+          );
+          const existing = fs2.existsSync(knownHostsFile) ? fs2.readFileSync(knownHostsFile, 'utf8') : '';
+          // Append only lines not already present (cheap dedup — ssh handles dupes anyway).
+          const fresh = scan.split('\n').filter((l) => l.trim() && !existing.includes(l.trim())).join('\n');
+          if (fresh) fs2.appendFileSync(knownHostsFile, fresh + '\n', { mode: 0o600 });
+        } catch (err) {
+          logger.warn({ engineId, host: engine.host, err: err instanceof Error ? err.message : String(err) }, 'ssh-keyscan failed — continuing anyway');
+        }
       }
+      try { fs2.chmodSync(knownHostsFile, 0o600); } catch { /* not fatal */ }
+
+      // ── Host-specific config block ──
       const configFile = path.join(sshDir, 'config');
-      fs2.writeFileSync(
-        configFile,
-        [
-          'Host *',
-          `  IdentityFile ${keyFile}`,
-          '  IdentitiesOnly yes',
-          `  UserKnownHostsFile ${userKnownHosts}`,
-          `  StrictHostKeyChecking ${strictHostKey}`,
-          '  LogLevel ERROR',
-          '  ServerAliveInterval 30',
-          '',
-        ].join('\n'),
-        { mode: 0o600 },
-      );
+      const beginMarker = `# oblihub:engine-${engineId} begin`;
+      const endMarker = `# oblihub:engine-${engineId} end`;
+      const block = [
+        beginMarker,
+        `Host ${engine.host}`,
+        `  IdentityFile ${keyFile}`,
+        '  IdentitiesOnly yes',
+        '  LogLevel ERROR',
+        '  ServerAliveInterval 30',
+        endMarker,
+        '',
+      ].join('\n');
+
+      // Atomically rewrite the config: strip any prior block for this engine, append the new one.
+      const stripOldBlock = (content: string): string => {
+        const lines = content.split('\n');
+        const out: string[] = [];
+        let inBlock = false;
+        for (const line of lines) {
+          if (line === beginMarker) { inBlock = true; continue; }
+          if (line === endMarker) { inBlock = false; continue; }
+          if (!inBlock) out.push(line);
+        }
+        return out.join('\n').replace(/\n{3,}/g, '\n\n');
+      };
+      const prior = fs2.existsSync(configFile) ? fs2.readFileSync(configFile, 'utf8') : '';
+      fs2.writeFileSync(configFile, stripOldBlock(prior) + block, { mode: 0o600 });
+
+      // Augment cleanup to also remove our block from the persistent config + the key.
+      const sshCleanup = () => {
+        try {
+          const c = fs2.existsSync(configFile) ? fs2.readFileSync(configFile, 'utf8') : '';
+          fs2.writeFileSync(configFile, stripOldBlock(c), { mode: 0o600 });
+        } catch { /* ignore */ }
+        cleanup();
+      };
+
+      // Diagnostic: ensure ssh-keyscan / ssh binaries exist before declaring success. Helps
+      // surface a clear error when openssh-client is missing from the server image rather than
+      // a vague connect failure deep in docker compose.
+      try {
+        execSync('which ssh', { stdio: 'ignore' });
+      } catch {
+        sshCleanup();
+        throw new Error('openssh-client (ssh) is not installed in the server image — cannot deploy via SSH engine.');
+      }
 
       const dockerHost = `ssh://${engine.sshUser}@${engine.host}:${engine.port ?? 22}`;
       return {
         env: {
           DOCKER_HOST: dockerHost,
-          // ssh reads ~/.ssh/config from $HOME — redirect it to our tmp sandbox so the docker
-          // CLI's ssh subprocess picks up our IdentityFile + host-key policy automatically.
-          HOME: tmp,
         },
-        cleanup,
+        cleanup: sshCleanup,
       };
     }
 
