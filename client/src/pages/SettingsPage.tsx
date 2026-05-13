@@ -10,7 +10,7 @@ import type { CustomPage, TailscaleStatus, DockerEngine } from '@oblihub/shared'
 import { useAuthStore } from '@/store/authStore';
 import type { NotificationChannel } from '@oblihub/shared';
 import toast from 'react-hot-toast';
-import { Save, Plus, Trash2, Send, ChevronDown, ChevronRight, Power, PowerOff, X, Globe, RefreshCw, Shield, CheckCircle, Copy, Eye, EyeOff, Network } from 'lucide-react';
+import { Save, Plus, Trash2, Send, ChevronDown, ChevronRight, Power, PowerOff, X, Globe, RefreshCw, Shield, CheckCircle, Copy, Eye, EyeOff, Network, Server } from 'lucide-react';
 
 // ── Obligate SSO Section ──
 function SsoSection({ config, setConfig, onSave, saving }: {
@@ -354,22 +354,65 @@ function NotificationChannelsSection() {
   );
 }
 
-// ── System Info Section ──
+// ── System Info / About Section ──
+interface SystemInfo {
+  dockerConnected: boolean;
+  dockerVersion: { Version?: string; ApiVersion?: string; version?: string } | null;
+  stackCount: number;
+  containerCount: number;
+  versions: {
+    server: string | null;
+    serverImage: string | null;
+    clientImage: string | null;
+    proxyImage: string | null;
+    node: string;
+  };
+  instance: {
+    uptimeSeconds: number;
+    platform: string;
+    arch: string;
+  };
+  memory: {
+    processRssMb: number;
+    processHeapMb: number;
+  };
+}
+
+function formatUptime(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const parts: string[] = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return parts.join(' ');
+}
+
+function AboutRow({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs text-text-muted">{label}</span>
+      <span className={`text-xs text-text-primary truncate ${mono ? 'font-mono' : ''}`}>{value}</span>
+    </div>
+  );
+}
+
 function SystemInfoSection() {
-  const [info, setInfo] = useState<{ dockerConnected: boolean; dockerVersion: any; stackCount: number; containerCount: number } | null>(null);
+  const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     settingsApi.getSystemInfo()
-      .then(setInfo)
+      .then((d) => setInfo(d as unknown as SystemInfo))
       .catch(() => toast.error('Failed to load system info'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-border bg-bg-secondary p-5">
-        <h2 className="text-sm font-semibold text-text-primary mb-4">System Info</h2>
+      <div className="rounded-xl border border-border bg-bg-secondary p-5 mb-6">
+        <h2 className="text-sm font-semibold text-text-primary mb-4">About</h2>
         <div className="flex items-center justify-center py-8">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
         </div>
@@ -377,30 +420,59 @@ function SystemInfoSection() {
     );
   }
 
+  if (!info) {
+    return null;
+  }
+
+  const dockerVer = info.dockerVersion?.Version || info.dockerVersion?.version || 'N/A';
+  const apiVer = info.dockerVersion?.ApiVersion;
+
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary p-5">
-      <h2 className="text-sm font-semibold text-text-primary mb-4">System Info</h2>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <span className="text-xs text-text-muted">Docker Connection</span>
-          <div className="flex items-center gap-2 mt-1">
-            <span className={`h-2.5 w-2.5 rounded-full ${info?.dockerConnected ? 'bg-status-up' : 'bg-status-down'}`} />
-            <span className="text-sm text-text-primary">{info?.dockerConnected ? 'Connected' : 'Disconnected'}</span>
-          </div>
-        </div>
-        <div>
-          <span className="text-xs text-text-muted">Docker Version</span>
-          <p className="text-sm text-text-primary mt-1">
-            {info?.dockerVersion?.version || info?.dockerVersion?.Version || 'N/A'}
+    <div className="rounded-xl border border-border bg-bg-secondary p-5 mb-6">
+      <h2 className="text-sm font-semibold text-text-primary mb-4">About</h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-6">
+        <div className="space-y-2">
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-3">
+            <Server size={12} /> Versions
           </p>
+          <AboutRow label="Server" value={info.versions.server ? `v${info.versions.server}` : '—'} mono />
+          <AboutRow label="Client" value={`v${__APP_VERSION__}`} mono />
+          {info.versions.proxyImage && (
+            <AboutRow label="Proxy" value={info.versions.proxyImage} mono />
+          )}
+          <AboutRow label="Node.js" value={info.versions.node} mono />
+          <AboutRow label="Docker" value={apiVer ? `${dockerVer} (API ${apiVer})` : dockerVer} mono />
         </div>
-        <div>
-          <span className="text-xs text-text-muted">Stacks</span>
-          <p className="text-sm text-text-primary mt-1">{info?.stackCount ?? 0}</p>
+        <div className="space-y-2">
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-3">
+            <Network size={12} /> Instance
+          </p>
+          <AboutRow label="Uptime" value={formatUptime(info.instance.uptimeSeconds)} mono />
+          <AboutRow label="Platform" value={`${info.instance.platform}/${info.instance.arch}`} mono />
+          <AboutRow
+            label="Docker"
+            value={
+              <span className={`inline-flex items-center gap-1.5 ${info.dockerConnected ? 'text-status-up' : 'text-status-down'}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${info.dockerConnected ? 'bg-status-up' : 'bg-status-down'}`} />
+                {info.dockerConnected ? 'Connected' : 'Disconnected'}
+              </span>
+            }
+          />
+          <AboutRow label="Stacks" value={String(info.stackCount)} mono />
+          <AboutRow label="Containers" value={String(info.containerCount)} mono />
         </div>
-        <div>
-          <span className="text-xs text-text-muted">Containers</span>
-          <p className="text-sm text-text-primary mt-1">{info?.containerCount ?? 0}</p>
+        <div className="space-y-2">
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-3">
+            <Shield size={12} /> Memory
+          </p>
+          <AboutRow label="RSS" value={`${info.memory.processRssMb} MB`} mono />
+          <AboutRow label="Heap" value={`${info.memory.processHeapMb} MB`} mono />
+          {info.versions.serverImage && (
+            <AboutRow label="Server image" value={info.versions.serverImage} mono />
+          )}
+          {info.versions.clientImage && (
+            <AboutRow label="Client image" value={info.versions.clientImage} mono />
+          )}
         </div>
       </div>
     </div>

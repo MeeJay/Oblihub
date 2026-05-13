@@ -29,6 +29,17 @@ export const managedStackService = {
 
   async create(data: { name: string; composeContent: string; envContent?: string | null; engineId?: number | null }): Promise<ManagedStack> {
     const projectName = data.name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    // Pre-check to surface a clean "already exists on this engine" error rather than letting the
+    // DB raise a raw constraint violation that bubbles up as a 500. Uniqueness is enforced on
+    // (engine_id, name) — same name on a different engine is allowed.
+    const existing = await db('managed_stacks')
+      .where({ name: data.name, engine_id: data.engineId ?? null })
+      .first();
+    if (existing) {
+      const err = new Error(`A managed stack named "${data.name}" already exists on this engine.`) as Error & { status?: number };
+      err.status = 409;
+      throw err;
+    }
     const [row] = await db('managed_stacks').insert({
       name: data.name,
       compose_content: data.composeContent,
@@ -49,6 +60,23 @@ export const managedStackService = {
     if (data.composeContent !== undefined) updates.compose_content = data.composeContent;
     if (data.envContent !== undefined) updates.env_content = data.envContent;
     if (data.engineId !== undefined) updates.engine_id = data.engineId;
+    // Same uniqueness check on update — only when name or engine actually changed.
+    if (data.name !== undefined || data.engineId !== undefined) {
+      const current = await db('managed_stacks').where({ id }).first();
+      if (current) {
+        const newName = data.name ?? current.name;
+        const newEngine = data.engineId !== undefined ? data.engineId : current.engine_id;
+        const conflict = await db('managed_stacks')
+          .where({ name: newName, engine_id: newEngine ?? null })
+          .whereNot({ id })
+          .first();
+        if (conflict) {
+          const err = new Error(`A managed stack named "${newName}" already exists on this engine.`) as Error & { status?: number };
+          err.status = 409;
+          throw err;
+        }
+      }
+    }
     const [row] = await db('managed_stacks').where({ id }).update(updates).returning('*');
     return row ? toCamelCase(row) : null;
   },

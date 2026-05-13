@@ -275,6 +275,67 @@ export const stackController = {
         stackService.getAll(),
       ]);
       const totalContainers = stacks.reduce((sum, s) => sum + s.containers.length, 0);
+
+      // Server version — read from the bundled package.json. This is the source of truth for
+      // "what version of the server code is running right now" since the image is built from it.
+      let serverVersion: string | null = null;
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        // Walk up from __dirname looking for a package.json that has our server name. Handles
+        // both compiled (`dist/src/controllers`) and tsx-dev (`src/controllers`) layouts.
+        let dir = __dirname;
+        for (let i = 0; i < 5; i++) {
+          const candidate = path.join(dir, 'package.json');
+          if (fs.existsSync(candidate)) {
+            const pkg = JSON.parse(fs.readFileSync(candidate, 'utf8')) as { name?: string; version?: string };
+            if (pkg.name === '@oblihub/server') {
+              serverVersion = pkg.version ?? null;
+              break;
+            }
+          }
+          dir = path.dirname(dir);
+        }
+      } catch { /* leave null */ }
+
+      // Proxy image tag — best-effort. We find the proxy container (label oblihub.proxy=true on
+      // the local engine), report its image. The "version" of nginx:alpine is the tag itself;
+      // for end-users that's the most useful identifier.
+      let proxyImage: string | null = null;
+      try {
+        const local = await dockerService.forEngine(null);
+        const containers = await local.listContainers({ all: true, filters: { label: ['oblihub.proxy=true'] } });
+        if (containers[0]) {
+          proxyImage = containers[0].Image || null;
+        }
+      } catch { /* leave null */ }
+
+      // Find our own server container — used to surface the image tag we're actually running
+      // (in case the package.json read above doesn't match what was deployed).
+      let serverImage: string | null = null;
+      let clientImage: string | null = null;
+      try {
+        const selfId = dockerService.getSelfContainerId();
+        if (selfId) {
+          const selfInfo = await dockerService.inspectContainer(selfId);
+          serverImage = selfInfo.Config?.Image || null;
+          const composeProject = selfInfo.Config?.Labels?.['com.docker.compose.project'];
+          if (composeProject) {
+            const local = await dockerService.forEngine(null);
+            const siblings = await local.listContainers({
+              all: true,
+              filters: { label: [`com.docker.compose.project=${composeProject}`] },
+            });
+            const clientSibling = siblings.find((c) => {
+              const svc = c.Labels?.['com.docker.compose.service'];
+              return svc === 'client';
+            });
+            if (clientSibling) clientImage = clientSibling.Image || null;
+          }
+        }
+      } catch { /* leave nulls */ }
+
+      const mem = process.memoryUsage();
       res.json({
         success: true,
         data: {
@@ -285,6 +346,22 @@ export const stackController = {
           allowConsole: config.allowConsole,
           allowStack: config.allowStack,
           allowNginx: config.allowNginx,
+          versions: {
+            server: serverVersion,
+            serverImage,
+            clientImage,
+            proxyImage,
+            node: process.version,
+          },
+          instance: {
+            uptimeSeconds: Math.round(process.uptime()),
+            platform: process.platform,
+            arch: process.arch,
+          },
+          memory: {
+            processRssMb: Math.round(mem.rss / 1024 / 1024),
+            processHeapMb: Math.round(mem.heapUsed / 1024 / 1024),
+          },
         },
       });
     } catch (err) { next(err); }
