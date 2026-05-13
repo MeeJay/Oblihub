@@ -76,6 +76,8 @@ export function StackEditorPage() {
   const [isSelf, setIsSelf] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
+  const [engines, setEngines] = useState<{ id: number; name: string; type: string; isDefault: boolean; enabled: boolean }[]>([]);
+  const [selectedEngineId, setSelectedEngineId] = useState<number | null>(null);
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
 
@@ -89,6 +91,7 @@ export function StackEditorPage() {
       const entries = parseEnvContent(s.envContent);
       setEnvEntries(entries);
       setEnvRaw(s.envContent || '');
+      setSelectedEngineId(s.engineId ?? null);
       setDirty(false);
     } catch { toast.error('Failed to load stack'); }
     finally { setLoading(false); }
@@ -103,6 +106,21 @@ export function StackEditorPage() {
       if (t.length > 0 && !selectedTeamId) setSelectedTeamId(t[0].id);
     }).catch(() => {});
   }, []);
+
+  // Load engines for the target-engine picker (admin only)
+  useEffect(() => {
+    if (!isAdmin) return;
+    import('@/api/engines.api').then(({ enginesApi }) => {
+      enginesApi.list().then(list => {
+        setEngines(list);
+        // Default to the default engine on new stacks
+        if (isNew && selectedEngineId == null) {
+          const def = list.find(e => e.isDefault) || list[0];
+          if (def) setSelectedEngineId(def.id);
+        }
+      }).catch(() => {});
+    });
+  }, [isAdmin, isNew, selectedEngineId]);
 
   // Detect self stack
   useEffect(() => {
@@ -177,11 +195,11 @@ export function StackEditorPage() {
     try {
       const envContent = getEnvContent();
       if (isNew) {
-        const created = await managedStacksApi.create({ name, composeContent, envContent, teamId: isAdmin ? selectedTeamId : selectedTeamId! });
+        const created = await managedStacksApi.create({ name, composeContent, envContent, teamId: isAdmin ? selectedTeamId : selectedTeamId!, engineId: selectedEngineId });
         toast.success('Stack created');
         navigate(`/stack-editor/${created.id}`, { replace: true });
       } else {
-        const updated = await managedStacksApi.update(Number(id), { name, composeContent, envContent });
+        const updated = await managedStacksApi.update(Number(id), { name, composeContent, envContent, engineId: selectedEngineId });
         setStack(updated);
         toast.success('Stack saved');
       }
@@ -318,6 +336,17 @@ export function StackEditorPage() {
               className="rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
               {isAdmin && <option value="">No team</option>}
               {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          )}
+          {isAdmin && engines.length > 1 && (
+            <select value={selectedEngineId || ''} onChange={e => { setSelectedEngineId(parseInt(e.target.value) || null); setDirty(true); }}
+              title="Docker engine where this stack will be deployed"
+              className="rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+              {engines.filter(e => e.enabled).map(e => (
+                <option key={e.id} value={e.id} disabled={e.type === 'https-apikey'}>
+                  ⚙ {e.name}{e.type === 'https-apikey' ? ' (API key — deploy not supported)' : ''}{e.isDefault ? ' (default)' : ''}
+                </option>
+              ))}
             </select>
           )}
         </div>

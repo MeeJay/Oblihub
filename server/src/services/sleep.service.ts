@@ -81,12 +81,12 @@ export const sleepService = {
     const mode: SleepMode = container.sleepMode || 'stop';
     try {
       if (mode === 'pause') {
-        await dockerService.pauseContainer(container.dockerId);
+        await dockerService.pauseContainer(container.dockerId, container.engineId);
       } else {
-        await dockerService.stopContainer(container.dockerId);
+        await dockerService.stopContainer(container.dockerId, container.engineId);
       }
       await setState(containerId, 'sleeping');
-      logger.info({ containerId, containerName: container.containerName, mode }, 'Container put to sleep');
+      logger.info({ containerId, containerName: container.containerName, mode, engineId: container.engineId }, 'Container put to sleep');
       return { ok: true };
     } catch (err) {
       logger.error({ containerId, err }, 'Failed to sleep container');
@@ -123,9 +123,9 @@ export const sleepService = {
 
     try {
       if (mode === 'pause') {
-        await dockerService.unpauseContainer(container.dockerId);
+        await dockerService.unpauseContainer(container.dockerId, container.engineId);
       } else {
-        await dockerService.startContainer(container.dockerId);
+        await dockerService.startContainer(container.dockerId, container.engineId);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'start failed';
@@ -139,7 +139,7 @@ export const sleepService = {
     const start = Date.now();
     while (Date.now() - start < WAKE_TIMEOUT_MS) {
       try {
-        const info = await dockerService.inspectContainer(container.dockerId);
+        const info = await dockerService.inspectContainer(container.dockerId, container.engineId);
         const netSettings = info.NetworkSettings?.Networks || {};
         const firstNet = Object.values(netSettings)[0] as { IPAddress?: string } | undefined;
         const ip = firstNet?.IPAddress;

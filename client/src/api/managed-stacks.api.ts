@@ -10,11 +10,11 @@ export const managedStacksApi = {
     const res = await apiClient.get<ApiResponse<ManagedStack>>(`/managed-stacks/${id}`);
     return res.data.data!;
   },
-  async create(data: { name: string; composeContent: string; envContent?: string | null; teamId?: number | null }): Promise<ManagedStack> {
+  async create(data: { name: string; composeContent: string; envContent?: string | null; teamId?: number | null; engineId?: number | null }): Promise<ManagedStack> {
     const res = await apiClient.post<ApiResponse<ManagedStack>>('/managed-stacks', data);
     return res.data.data!;
   },
-  async update(id: number, data: { name?: string; composeContent?: string; envContent?: string | null }): Promise<ManagedStack> {
+  async update(id: number, data: { name?: string; composeContent?: string; envContent?: string | null; engineId?: number | null }): Promise<ManagedStack> {
     const res = await apiClient.put<ApiResponse<ManagedStack>>(`/managed-stacks/${id}`, data);
     return res.data.data!;
   },

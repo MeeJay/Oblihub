@@ -19,6 +19,7 @@ import {
   FileText,
   Activity,
   Package,
+  Server,
   ChevronsLeft,
   ChevronsRight,
 } from 'lucide-react';
@@ -101,6 +102,7 @@ export function Sidebar({ allowStack, allowNginx }: SidebarProps) {
         { label: 'Users', path: '/users', icon: <Users size={18} /> },
         { label: 'Roles', path: '/roles', icon: <Shield size={18} /> },
         { label: 'Teams', path: '/teams', icon: <Users size={18} /> },
+        { label: 'Docker Engines', path: '/engines', icon: <Server size={18} /> },
         { label: 'Settings', path: '/settings', icon: <Settings size={18} /> },
       ]
     : [];

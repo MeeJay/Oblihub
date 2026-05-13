@@ -9,6 +9,7 @@ function toCamelCase(row: Record<string, unknown>): ManagedStack {
     envContent: (row.env_content as string) || null,
     status: row.status as ManagedStackStatus,
     composeProject: row.compose_project as string,
+    engineId: (row.engine_id as number) ?? null,
     errorMessage: (row.error_message as string) || null,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
@@ -26,7 +27,7 @@ export const managedStackService = {
     return row ? toCamelCase(row) : null;
   },
 
-  async create(data: { name: string; composeContent: string; envContent?: string | null }): Promise<ManagedStack> {
+  async create(data: { name: string; composeContent: string; envContent?: string | null; engineId?: number | null }): Promise<ManagedStack> {
     const projectName = data.name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
     const [row] = await db('managed_stacks').insert({
       name: data.name,
@@ -34,11 +35,12 @@ export const managedStackService = {
       env_content: data.envContent || null,
       status: 'draft',
       compose_project: projectName,
+      engine_id: data.engineId ?? null,
     }).returning('*');
     return toCamelCase(row);
   },
 
-  async update(id: number, data: { name?: string; composeContent?: string; envContent?: string | null }): Promise<ManagedStack | null> {
+  async update(id: number, data: { name?: string; composeContent?: string; envContent?: string | null; engineId?: number | null }): Promise<ManagedStack | null> {
     const updates: Record<string, unknown> = { updated_at: new Date() };
     if (data.name !== undefined) {
       updates.name = data.name;
@@ -46,6 +48,7 @@ export const managedStackService = {
     }
     if (data.composeContent !== undefined) updates.compose_content = data.composeContent;
     if (data.envContent !== undefined) updates.env_content = data.envContent;
+    if (data.engineId !== undefined) updates.engine_id = data.engineId;
     const [row] = await db('managed_stacks').where({ id }).update(updates).returning('*');
     return row ? toCamelCase(row) : null;
   },

@@ -7,6 +7,7 @@ interface StackRow {
   id: number;
   name: string;
   compose_project: string | null;
+  engine_id: number | null;
   check_interval: number;
   auto_update: boolean;
   enabled: boolean;
@@ -23,6 +24,7 @@ interface StackRow {
 interface ContainerRow {
   id: number;
   stack_id: number | null;
+  engine_id: number | null;
   docker_id: string;
   container_name: string;
   image: string;
@@ -58,6 +60,7 @@ function rowToContainer(row: ContainerRow): Container {
   return {
     id: row.id,
     stackId: row.stack_id,
+    engineId: row.engine_id,
     dockerId: row.docker_id,
     containerName: row.container_name,
     image: row.image,
@@ -87,6 +90,7 @@ function rowToStack(row: StackRow, containers: Container[] = []): Stack {
     id: row.id,
     name: row.name,
     composeProject: row.compose_project,
+    engineId: row.engine_id,
     checkInterval: row.check_interval,
     autoUpdate: row.auto_update,
     enabled: row.enabled,
@@ -104,10 +108,12 @@ function rowToStack(row: StackRow, containers: Container[] = []): Stack {
 
 export const stackService = {
   /**
-   * Synchronize database with live Docker state.
-   * Creates stacks for new compose projects, creates/updates container records.
+   * Synchronize database with live Docker state for ONE engine.
+   * Stacks and containers are scoped by `engineId` — a sync of engine A never touches engine B's rows.
+   * Docker IDs are 12-char prefixes and can theoretically collide across engines, so the (engine_id, docker_id)
+   * pair is used for lookups.
    */
-  async syncWithDocker(discovered: DiscoveredContainer[]): Promise<void> {
+  async syncWithDocker(discovered: DiscoveredContainer[], engineId: number): Promise<void> {
     // Group by compose project
     const projectGroups = new Map<string | null, DiscoveredContainer[]>();
     for (const c of discovered) {
@@ -116,37 +122,36 @@ export const stackService = {
       projectGroups.get(key)!.push(c);
     }
 
-    // Ensure stacks exist for each compose project
+    // Ensure stacks exist for each compose project (scoped to this engine)
     for (const [project, containers] of projectGroups) {
       let stackId: number;
 
       if (project) {
-        // Named compose project
-        let stack = await db<StackRow>('stacks').where({ compose_project: project }).first();
+        let stack = await db<StackRow>('stacks').where({ compose_project: project, engine_id: engineId }).first();
         if (!stack) {
           const [newStack] = await db<StackRow>('stacks')
-            .insert({ name: project, compose_project: project })
+            .insert({ name: project, compose_project: project, engine_id: engineId })
             .returning('*');
           stack = newStack;
-          logger.info({ project, stackId: stack.id }, 'New stack discovered');
+          logger.info({ project, stackId: stack.id, engineId }, 'New stack discovered');
         }
         stackId = stack.id;
       } else {
-        // Standalone containers — use a synthetic "Standalone" stack
-        let stack = await db<StackRow>('stacks').whereNull('compose_project').first();
+        // Per-engine synthetic "Standalone" stack
+        let stack = await db<StackRow>('stacks').whereNull('compose_project').where({ engine_id: engineId }).first();
         if (!stack) {
           const [newStack] = await db<StackRow>('stacks')
-            .insert({ name: 'Standalone', compose_project: null })
+            .insert({ name: 'Standalone', compose_project: null, engine_id: engineId })
             .returning('*');
           stack = newStack;
         }
         stackId = stack.id;
       }
 
-      // Upsert containers
+      // Upsert containers — match on (docker_id, engine_id)
       for (const c of containers) {
         const isStopped = c.state !== 'running';
-        const existing = await db<ContainerRow>('containers').where({ docker_id: c.dockerId }).first();
+        const existing = await db<ContainerRow>('containers').where({ docker_id: c.dockerId, engine_id: engineId }).first();
         const portsJson = JSON.stringify(c.ports || []);
         if (existing) {
           const update: Record<string, unknown> = {
@@ -157,7 +162,9 @@ export const stackService = {
             ports: portsJson,
             updated_at: new Date(),
           };
-          if (isStopped && existing.status !== 'excluded') {
+          // If the container is sleeping (we stopped it on purpose), don't overwrite the sleep state.
+          // Discovery sees it as 'stopped' but the sleep_state row tells the real story.
+          if (isStopped && existing.status !== 'excluded' && existing.sleep_state !== 'sleeping') {
             update.status = 'stopped';
           } else if (!isStopped && existing.status === 'stopped') {
             update.status = 'unknown';
@@ -166,6 +173,7 @@ export const stackService = {
         } else {
           await db('containers').insert({
             stack_id: stackId,
+            engine_id: engineId,
             docker_id: c.dockerId,
             container_name: c.containerName,
             image: c.image,
@@ -173,27 +181,28 @@ export const stackService = {
             status: isStopped ? 'stopped' : 'unknown',
             ports: portsJson,
           });
-          logger.info({ containerName: c.containerName, stackId }, 'New container discovered');
+          logger.info({ containerName: c.containerName, stackId, engineId }, 'New container discovered');
         }
       }
     }
 
-    // Remove containers that no longer exist in Docker at all
+    // Remove containers that no longer exist on this engine
     const liveDockerIds = discovered.map(c => c.dockerId);
     if (liveDockerIds.length > 0) {
       await db('containers')
+        .where({ engine_id: engineId })
         .whereNotIn('docker_id', liveDockerIds)
         .whereNot('status', 'excluded')
         .delete();
     }
 
-    // Clean up empty stacks (no containers left) except Standalone
-    const allStacks = await db<StackRow>('stacks').select('id', 'compose_project');
-    for (const s of allStacks) {
+    // Clean up empty stacks for this engine
+    const engineStacks = await db<StackRow>('stacks').where({ engine_id: engineId }).select('id', 'compose_project');
+    for (const s of engineStacks) {
       const count = await db('containers').where({ stack_id: s.id }).count('* as cnt').first();
       if (Number(count?.cnt) === 0) {
         await db('stacks').where({ id: s.id }).delete();
-        logger.info({ stackId: s.id, project: s.compose_project }, 'Cleaned up empty stack');
+        logger.info({ stackId: s.id, project: s.compose_project, engineId }, 'Cleaned up empty stack');
       }
     }
   },

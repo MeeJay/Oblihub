@@ -74,7 +74,7 @@ export const updateService = {
       try {
         // Get ALL local digests for this image (Docker may accumulate several for the same
         // image when a registry re-manifests a tag — any of them is a valid "up-to-date" match).
-        const localDigests = await dockerService.getLocalDigests(`${container.image}:${container.imageTag}`);
+        const localDigests = await dockerService.getLocalDigests(`${container.image}:${container.imageTag}`, container.engineId);
         const primaryLocalDigest = localDigests[0] ?? null;
 
         // Check remote against full local digest set
@@ -215,7 +215,7 @@ export const updateService = {
       }
 
       // 1. Pull new image
-      await dockerService.pullImage(container.image, container.imageTag);
+      await dockerService.pullImage(container.image, container.imageTag, container.engineId);
 
       // Update history
       await db('update_history').where({ id: historyId }).update({ status: 'recreating' });
@@ -231,10 +231,11 @@ export const updateService = {
         container.dockerId,
         container.image,
         container.imageTag,
+        container.engineId,
       );
 
       // 3. Get new digest
-      const newDigest = await dockerService.getLocalDigest(`${container.image}:${container.imageTag}`);
+      const newDigest = await dockerService.getLocalDigest(`${container.image}:${container.imageTag}`, container.engineId);
 
       // 4. Update DB
       await stackService.updateContainerDockerId(containerId, newDockerId);

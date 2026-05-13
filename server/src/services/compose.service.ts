@@ -51,16 +51,108 @@ export const composeService = {
     }
   },
 
-  /** Run a docker compose command */
-  async runCompose(projectName: string, args: string[], timeoutMs = 120000): Promise<ComposeResult> {
+  /**
+   * Resolve the env vars the `docker compose` CLI needs to target a remote engine.
+   * - local → no env (default behavior, talks to /var/run/docker.sock)
+   * - ssh → DOCKER_HOST=ssh://user@host:port (the CLI uses ssh2-like behavior — needs SSH agent
+   *         OR known key. We write the private key to a temp file for the duration of the command.)
+   * - tls → DOCKER_HOST=tcp://host:port + DOCKER_TLS_VERIFY=1 + DOCKER_CERT_PATH (temp dir with ca/cert/key)
+   * - https-apikey → NOT SUPPORTED — the docker CLI cannot inject custom HTTP headers.
+   *                   Deploy via compose CLI is impossible. Throw a clear error.
+   *
+   * Returns the env vars to merge into the child process AND a cleanup function for temp files.
+   */
+  async _resolveEngineEnv(engineId: number | null): Promise<{ env: Record<string, string>; cleanup: () => void }> {
+    if (engineId == null) return { env: {}, cleanup: () => {} };
+    const { engineService } = await import('./engine.service');
+    const engine = await engineService.getById(engineId);
+    if (!engine) throw new Error(`Engine ${engineId} not found`);
+    if (engine.type === 'local') return { env: {}, cleanup: () => {} };
+    if (engine.type === 'https-apikey') {
+      throw new Error(
+        `Engine "${engine.name}" uses HTTP + API key (socket-proxy). The docker compose CLI does not support custom HTTP headers, so managed stack deployment is not possible on this engine. Use SSH or TLS for engines you intend to deploy stacks on.`
+      );
+    }
+
+    // For SSH and TLS we need to write secret material to a temp dir, set env, return cleanup.
+    const fs2 = await import('fs');
+    const os = await import('os');
+    const tmp = fs2.mkdtempSync(path.join(os.tmpdir(), `oblihub-engine-${engineId}-`));
+    const cleanup = () => { try { fs2.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ } };
+
+    if (engine.type === 'ssh') {
+      if (!engine.host || !engine.sshUser) { cleanup(); throw new Error(`Engine ${engineId} (ssh) missing host/user`); }
+      // Need the private key. Fetch decrypted version via engine.service (which does the AES decrypt).
+      const { db } = await import('../db');
+      const row = await db('docker_engines').where({ id: engineId }).first() as { ssh_private_key_enc: string | null } | undefined;
+      if (!row?.ssh_private_key_enc) { cleanup(); throw new Error(`Engine ${engineId} (ssh) missing private key`); }
+      const { decryptSecret } = await import('../utils/crypto');
+      const privateKey = decryptSecret(row.ssh_private_key_enc);
+      const keyFile = path.join(tmp, 'id_engine');
+      fs2.writeFileSync(keyFile, privateKey, { mode: 0o600 });
+      // We need IdentityFile + StrictHostKeyChecking off (could pin via known_hosts later)
+      const sshArgs = `-i ${keyFile} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`;
+      const dockerHost = `ssh://${engine.sshUser}@${engine.host}:${engine.port ?? 22}`;
+      return {
+        env: {
+          DOCKER_HOST: dockerHost,
+          // Forwarded to the docker CLI's ssh helper
+          GIT_SSH_COMMAND: `ssh ${sshArgs}`,
+          DOCKER_SSH_OPTS: sshArgs,
+        },
+        cleanup,
+      };
+    }
+
+    if (engine.type === 'tls') {
+      if (!engine.host || !engine.tlsCa || !engine.tlsCert) { cleanup(); throw new Error(`Engine ${engineId} (tls) missing host/ca/cert`); }
+      const { db } = await import('../db');
+      const row = await db('docker_engines').where({ id: engineId }).first() as { tls_key_enc: string | null } | undefined;
+      if (!row?.tls_key_enc) { cleanup(); throw new Error(`Engine ${engineId} (tls) missing key`); }
+      const { decryptSecret } = await import('../utils/crypto');
+      const tlsKey = decryptSecret(row.tls_key_enc);
+      fs2.writeFileSync(path.join(tmp, 'ca.pem'), engine.tlsCa);
+      fs2.writeFileSync(path.join(tmp, 'cert.pem'), engine.tlsCert);
+      fs2.writeFileSync(path.join(tmp, 'key.pem'), tlsKey, { mode: 0o600 });
+      return {
+        env: {
+          DOCKER_HOST: `tcp://${engine.host}:${engine.port ?? 2376}`,
+          DOCKER_TLS_VERIFY: '1',
+          DOCKER_CERT_PATH: tmp,
+        },
+        cleanup,
+      };
+    }
+
+    cleanup();
+    throw new Error(`Unsupported engine type for compose CLI: ${engine.type}`);
+  },
+
+  /** Run a docker compose command — optionally targeting a remote engine. */
+  async runCompose(projectName: string, args: string[], timeoutMs = 120000, engineId: number | null = null): Promise<ComposeResult> {
     const stackDir = getStackDir(projectName);
     const cmd = `docker compose -p "${projectName}" -f docker-compose.yml ${args.join(' ')}`;
 
-    logger.info({ projectName, cmd }, 'Running compose command');
+    let envInjection: { env: Record<string, string>; cleanup: () => void };
+    try {
+      envInjection = await this._resolveEngineEnv(engineId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn({ projectName, engineId, err: message }, 'Compose engine env resolution failed');
+      return { exitCode: 1, stdout: '', stderr: message };
+    }
+
+    logger.info({ projectName, engineId, cmd }, 'Running compose command');
 
     return new Promise((resolve) => {
-      const child = exec(cmd, { cwd: stackDir, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const child = exec(cmd, {
+        cwd: stackDir,
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, ...envInjection.env },
+      }, (error, stdout, stderr) => {
         activeProcesses.delete(projectName);
+        envInjection.cleanup();
         const killedByCancel = (child as ChildProcess & { _cancelled?: boolean })._cancelled === true;
         const result = {
           exitCode: killedByCancel ? 130 : error ? (error as NodeJS.ErrnoException).code ? 1 : (error as { code?: number }).code ?? 1 : 0,
@@ -102,39 +194,39 @@ export const composeService = {
   },
 
   /** Deploy a stack (up -d) */
-  async deploy(projectName: string, composeContent: string, envContent: string | null): Promise<ComposeResult> {
+  async deploy(projectName: string, composeContent: string, envContent: string | null, engineId: number | null = null): Promise<ComposeResult> {
     this.writeStackFiles(projectName, composeContent, envContent);
-    return this.runCompose(projectName, ['up', '-d', '--remove-orphans']);
+    return this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 120000, engineId);
   },
 
   /** Stop a stack */
-  async stop(projectName: string): Promise<ComposeResult> {
-    return this.runCompose(projectName, ['stop']);
+  async stop(projectName: string, engineId: number | null = null): Promise<ComposeResult> {
+    return this.runCompose(projectName, ['stop'], 120000, engineId);
   },
 
   /** Down a stack (stop + remove containers + networks) */
-  async down(projectName: string, removeVolumes = false): Promise<ComposeResult> {
+  async down(projectName: string, removeVolumes = false, engineId: number | null = null): Promise<ComposeResult> {
     const args = ['down', '--remove-orphans'];
     if (removeVolumes) args.push('-v');
-    return this.runCompose(projectName, args);
+    return this.runCompose(projectName, args, 120000, engineId);
   },
 
   /** Pull images for a stack */
-  async pull(projectName: string): Promise<ComposeResult> {
-    return this.runCompose(projectName, ['pull']);
+  async pull(projectName: string, engineId: number | null = null): Promise<ComposeResult> {
+    return this.runCompose(projectName, ['pull'], 120000, engineId);
   },
 
   /** Get compose ps */
-  async ps(projectName: string): Promise<ComposeResult> {
-    return this.runCompose(projectName, ['ps', '--format', 'json']);
+  async ps(projectName: string, engineId: number | null = null): Promise<ComposeResult> {
+    return this.runCompose(projectName, ['ps', '--format', 'json'], 120000, engineId);
   },
 
   /** Redeploy: pull + up */
-  async redeploy(projectName: string, composeContent: string, envContent: string | null): Promise<ComposeResult> {
+  async redeploy(projectName: string, composeContent: string, envContent: string | null, engineId: number | null = null): Promise<ComposeResult> {
     this.writeStackFiles(projectName, composeContent, envContent);
-    const pullResult = await this.runCompose(projectName, ['pull']);
+    const pullResult = await this.runCompose(projectName, ['pull'], 120000, engineId);
     if (pullResult.exitCode !== 0) return pullResult;
-    return this.runCompose(projectName, ['up', '-d', '--remove-orphans']);
+    return this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 120000, engineId);
   },
 
   /**

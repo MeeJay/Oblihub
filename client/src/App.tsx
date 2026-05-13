@@ -26,6 +26,7 @@ import { CustomPagesPage } from '@/pages/CustomPagesPage';
 import { UptimeMonitorsPage } from '@/pages/UptimeMonitorsPage';
 import { AppStorePage } from '@/pages/AppStorePage';
 import { UsersPage } from '@/pages/UsersPage';
+import { EnginesPage } from '@/pages/EnginesPage';
 import { RolesPage } from '@/pages/RolesPage';
 import { TeamsPage } from '@/pages/TeamsPage';
 
@@ -105,6 +106,7 @@ export default function App() {
         <Route path="/users" element={<ProtectedRoute><AppLayout><UsersPage /></AppLayout></ProtectedRoute>} />
         <Route path="/roles" element={<ProtectedRoute><AppLayout><RolesPage /></AppLayout></ProtectedRoute>} />
         <Route path="/teams" element={<ProtectedRoute><AppLayout><TeamsPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/engines" element={<ProtectedRoute><AppLayout><EnginesPage /></AppLayout></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><AppLayout><SettingsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><AppLayout><ProfilePage /></AppLayout></ProtectedRoute>} />
         <Route path="*" element={<NotFoundPage />} />

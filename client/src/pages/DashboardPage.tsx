@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield, Cpu, MemoryStick, Globe } from 'lucide-react';
+import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield, Cpu, MemoryStick, Globe, Server } from 'lucide-react';
 import { stacksApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { proxyApi } from '@/api/proxy.api';
 import { teamsApi } from '@/api/teams.api';
+import { enginesApi } from '@/api/engines.api';
+import type { DockerEngine } from '@oblihub/shared';
 import { useSocket } from '@/hooks/useSocket';
 import { Sparkline } from '@/components/Sparkline';
 import { SOCKET_EVENTS } from '@oblihub/shared';
@@ -74,6 +76,7 @@ export function DashboardPage() {
   const [stackStats, setStackStats] = useState<Record<number, { cpu: number[]; mem: number[]; cpuNow: number; memNow: number }>>({});
   const [stackTeamNames, setStackTeamNames] = useState<Record<number, string[]>>({});
   const [globalTeams, setGlobalTeams] = useState<string[]>([]);
+  const [engines, setEngines] = useState<DockerEngine[]>([]);
   const socket = useSocket();
 
   const load = async () => {
@@ -115,7 +118,13 @@ export function DashboardPage() {
       setStackTeamNames(data.stackTeams);
       setGlobalTeams(data.globalTeams);
     }).catch(() => {});
+    // Load engines (admin-only API — failure is silent for non-admins)
+    enginesApi.list().then(setEngines).catch(() => {});
   }, []);
+
+  // Map engine_id → engine for fast lookup in card rendering
+  const enginesById = new Map(engines.map(e => [e.id, e]));
+  const defaultEngineId = engines.find(e => e.isDefault)?.id ?? null;
 
   // Pre-populate sparklines from server-side history on stack load, then poll for fresh samples.
   useEffect(() => {
@@ -261,6 +270,11 @@ export function DashboardPage() {
                   <div className="flex items-center gap-2 min-w-0">
                     <h3 className="text-sm font-semibold text-text-primary truncate">{stack.name}</h3>
                     <OriginBadge origin={origin} />
+                    {stack.engineId != null && stack.engineId !== defaultEngineId && enginesById.has(stack.engineId) && (
+                      <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-bg-tertiary text-text-secondary border border-border" title={`Running on ${enginesById.get(stack.engineId)!.name}`}>
+                        <Server size={9} /> {enginesById.get(stack.engineId)!.name}
+                      </span>
+                    )}
                   </div>
                   <StatusBadge status={status} />
                 </div>

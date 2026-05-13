@@ -250,8 +250,17 @@ export const stackController = {
   async refreshDiscovery(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { dockerService } = await import('../services/docker.service');
-      const containers = await dockerService.listContainers();
-      await stackService.syncWithDocker(containers);
+      const { engineService } = await import('../services/engine.service');
+      const engines = await engineService.getAll();
+      for (const e of engines) {
+        if (!e.enabled) continue;
+        try {
+          const containers = await dockerService.listContainers(e.id);
+          await stackService.syncWithDocker(containers, e.id);
+        } catch (err) {
+          logger.warn({ engineId: e.id, err }, 'Manual refresh failed for engine');
+        }
+      }
       const stacks = await stackService.getAll();
       res.json({ success: true, data: stacks });
     } catch (err) { next(err); }

@@ -12,6 +12,17 @@ function getDocker(): Docker {
   return dockerInstance;
 }
 
+/**
+ * Get a dockerode client for a specific engine.
+ * Phase 2 will migrate workers/services to use this instead of the local-only `getDocker()`.
+ * For now most code paths still call getDocker() — they implicitly target the Local engine.
+ */
+async function getDockerForEngine(engineId: number | null): Promise<Docker> {
+  if (engineId == null) return getDocker();
+  const { engineService } = await import('./engine.service');
+  return engineService.getClient(engineId);
+}
+
 export interface DiscoveredContainer {
   dockerId: string;
   containerName: string;
@@ -25,9 +36,17 @@ export interface DiscoveredContainer {
 }
 
 export const dockerService = {
+  /**
+   * Get a dockerode client for an engine. `null` or omitted = the local engine.
+   * Phase 2 workers iterate engines and call `dockerService.forEngine(id)` to retrieve the right client.
+   */
+  async forEngine(engineId: number | null = null): Promise<Docker> {
+    return getDockerForEngine(engineId);
+  },
+
   /** List all running containers, extracting compose project info */
-  async listContainers(): Promise<DiscoveredContainer[]> {
-    const docker = getDocker();
+  async listContainers(engineId: number | null = null): Promise<DiscoveredContainer[]> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const containers = await docker.listContainers({ all: true });
     return containers.map((c) => {
       const labels = c.Labels || {};
@@ -76,9 +95,9 @@ export const dockerService = {
    * re-manifests a tag (same image content, new manifest wrapping) — all of
    * them represent valid locally-known states of the image.
    */
-  async getLocalDigests(imageName: string): Promise<string[]> {
+  async getLocalDigests(imageName: string, engineId: number | null = null): Promise<string[]> {
     try {
-      const docker = getDocker();
+      const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
       const imageInfo = await docker.getImage(imageName).inspect();
       const digests = imageInfo.RepoDigests || [];
       const out: string[] = [];
@@ -94,14 +113,14 @@ export const dockerService = {
   },
 
   /** Get the first local image digest (for display/storage). Returns null if none. */
-  async getLocalDigest(imageName: string): Promise<string | null> {
-    const all = await this.getLocalDigests(imageName);
+  async getLocalDigest(imageName: string, engineId: number | null = null): Promise<string | null> {
+    const all = await this.getLocalDigests(imageName, engineId);
     return all[0] ?? null;
   },
 
   /** Pull a new image */
-  async pullImage(imageName: string, tag: string = 'latest'): Promise<void> {
-    const docker = getDocker();
+  async pullImage(imageName: string, tag: string = 'latest', engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const fullRef = `${imageName}:${tag}`;
     logger.info({ fullRef }, 'Pulling image...');
 
@@ -119,8 +138,8 @@ export const dockerService = {
   },
 
   /** Inspect a container to capture its full config for recreation */
-  async inspectContainer(dockerId: string): Promise<Docker.ContainerInspectInfo> {
-    const docker = getDocker();
+  async inspectContainer(dockerId: string, engineId: number | null = null): Promise<Docker.ContainerInspectInfo> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
     return container.inspect();
   },
@@ -130,8 +149,8 @@ export const dockerService = {
    * Steps: inspect → stop → remove → create (same config, new image) → start
    * Returns the new container ID.
    */
-  async recreateContainer(dockerId: string, newImage: string, newTag: string): Promise<string> {
-    const docker = getDocker();
+  async recreateContainer(dockerId: string, newImage: string, newTag: string, engineId: number | null = null): Promise<string> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
 
     // 1. Capture full config
@@ -228,19 +247,19 @@ export const dockerService = {
   },
 
   /** Restart a container (stop + start) */
-  async restartContainer(dockerId: string): Promise<void> {
-    const docker = getDocker();
+  async restartContainer(dockerId: string, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
-    logger.info({ dockerId }, 'Restarting container...');
+    logger.info({ dockerId, engineId }, 'Restarting container...');
     await container.restart();
     logger.info({ dockerId }, 'Container restarted');
   },
 
   /** Remove a container (stop + remove, optionally remove volumes) */
-  async removeContainer(dockerId: string, removeVolumes = false): Promise<void> {
-    const docker = getDocker();
+  async removeContainer(dockerId: string, removeVolumes = false, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
-    logger.info({ dockerId, removeVolumes }, 'Removing container...');
+    logger.info({ dockerId, removeVolumes, engineId }, 'Removing container...');
     try {
       await container.stop({ t: 5 });
     } catch { /* already stopped */ }
@@ -249,44 +268,44 @@ export const dockerService = {
   },
 
   /** Stop a container */
-  async stopContainer(dockerId: string): Promise<void> {
-    const docker = getDocker();
+  async stopContainer(dockerId: string, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
-    logger.info({ dockerId }, 'Stopping container...');
+    logger.info({ dockerId, engineId }, 'Stopping container...');
     await container.stop({ t: 10 });
     logger.info({ dockerId }, 'Container stopped');
   },
 
   /** Start a stopped container */
-  async startContainer(dockerId: string): Promise<void> {
-    const docker = getDocker();
+  async startContainer(dockerId: string, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
-    logger.info({ dockerId }, 'Starting container...');
+    logger.info({ dockerId, engineId }, 'Starting container...');
     await container.start();
     logger.info({ dockerId }, 'Container started');
   },
 
   /** Pause a running container (cgroup freezer — does NOT free GPU VRAM). */
-  async pauseContainer(dockerId: string): Promise<void> {
-    const docker = getDocker();
+  async pauseContainer(dockerId: string, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
-    logger.info({ dockerId }, 'Pausing container...');
+    logger.info({ dockerId, engineId }, 'Pausing container...');
     await container.pause();
     logger.info({ dockerId }, 'Container paused');
   },
 
   /** Unpause a paused container. */
-  async unpauseContainer(dockerId: string): Promise<void> {
-    const docker = getDocker();
+  async unpauseContainer(dockerId: string, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
-    logger.info({ dockerId }, 'Unpausing container...');
+    logger.info({ dockerId, engineId }, 'Unpausing container...');
     await container.unpause();
     logger.info({ dockerId }, 'Container unpaused');
   },
 
   /** Stream container logs. Returns the stream so the caller can destroy it. */
-  async getContainerLogs(dockerId: string, tail: number = 100): Promise<Readable> {
-    const docker = getDocker();
+  async getContainerLogs(dockerId: string, tail: number = 100, engineId: number | null = null): Promise<Readable> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
     const stream = await container.logs({
       follow: true,

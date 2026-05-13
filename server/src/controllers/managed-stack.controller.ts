@@ -58,7 +58,7 @@ export const managedStackController = {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled. Set ALLOW_STACK=true to enable.');
       const session = req.session as { userId?: number; role?: string };
-      const { name, composeContent, envContent, teamId } = req.body;
+      const { name, composeContent, envContent, teamId, engineId } = req.body;
       if (!name || !composeContent) throw new AppError(400, 'Name and compose content are required');
 
       // Non-admin must have a team to create a stack
@@ -72,7 +72,7 @@ export const managedStackController = {
         const isInTeam = userTeams.some(t => t.id === targetTeamId);
         if (!isInTeam) throw new AppError(403, 'You are not a member of this team');
 
-        const stack = await managedStackService.create({ name, composeContent, envContent });
+        const stack = await managedStackService.create({ name, composeContent, envContent, engineId });
 
         // Ensure the stack exists in the stacks table and assign to team
         const { db } = await import('../db');
@@ -91,7 +91,7 @@ export const managedStackController = {
         return;
       }
 
-      const stack = await managedStackService.create({ name, composeContent, envContent });
+      const stack = await managedStackService.create({ name, composeContent, envContent, engineId });
       res.json({ success: true, data: stack });
     } catch (err) { next(err); }
   },
@@ -100,8 +100,8 @@ export const managedStackController = {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const id = parseInt(req.params.id, 10);
-      const { name, composeContent, envContent } = req.body;
-      const stack = await managedStackService.update(id, { name, composeContent, envContent });
+      const { name, composeContent, envContent, engineId } = req.body;
+      const stack = await managedStackService.update(id, { name, composeContent, envContent, engineId });
       if (!stack) throw new AppError(404, 'Managed stack not found');
       res.json({ success: true, data: stack });
     } catch (err) { next(err); }
@@ -116,7 +116,7 @@ export const managedStackController = {
       if (await isSelfStack(stack.composeProject)) throw new AppError(403, 'Cannot delete Oblihub\'s own stack');
       // Down the stack if deployed
       if (stack.status === 'deployed') {
-        await composeService.down(stack.composeProject);
+        await composeService.down(stack.composeProject, false, stack.engineId);
       }
       composeService.removeStackFiles(stack.composeProject);
       await managedStackService.delete(id);
@@ -159,7 +159,7 @@ export const managedStackController = {
       // Run in background
       (async () => {
         try {
-          const result = await composeService.deploy(stack.composeProject, stack.composeContent, stack.envContent);
+          const result = await composeService.deploy(stack.composeProject, stack.composeContent, stack.envContent, stack.engineId);
           const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
           if (result.exitCode !== 0) {
             await managedStackService.setStatus(id, 'error', output || 'Deploy failed');
@@ -185,7 +185,7 @@ export const managedStackController = {
       if (!stack) throw new AppError(404, 'Managed stack not found');
       if (await isSelfStack(stack.composeProject)) throw new AppError(403, 'Cannot stop Oblihub\'s own stack');
 
-      const result = await composeService.stop(stack.composeProject);
+      const result = await composeService.stop(stack.composeProject, stack.engineId);
       if (result.exitCode !== 0) {
         await managedStackService.setStatus(id, 'error', result.stderr);
         throw new AppError(500, result.stderr || 'Stop failed');
@@ -204,7 +204,7 @@ export const managedStackController = {
       if (await isSelfStack(stack.composeProject)) throw new AppError(403, 'Cannot down Oblihub\'s own stack');
 
       const removeVolumes = req.query.volumes === 'true';
-      const result = await composeService.down(stack.composeProject, removeVolumes);
+      const result = await composeService.down(stack.composeProject, removeVolumes, stack.engineId);
       if (result.exitCode !== 0) {
         await managedStackService.setStatus(id, 'error', result.stderr);
         throw new AppError(500, result.stderr || 'Down failed');
@@ -223,7 +223,7 @@ export const managedStackController = {
 
       // Ensure files exist on disk
       composeService.writeStackFiles(stack.composeProject, stack.composeContent, stack.envContent);
-      const result = await composeService.pull(stack.composeProject);
+      const result = await composeService.pull(stack.composeProject, stack.engineId);
       res.json({ success: true, data: { exitCode: result.exitCode, output: result.stdout + result.stderr } });
     } catch (err) { next(err); }
   },
@@ -280,7 +280,7 @@ export const managedStackController = {
 
       (async () => {
         try {
-          const result = await composeService.redeploy(stack.composeProject, stack.composeContent, stack.envContent);
+          const result = await composeService.redeploy(stack.composeProject, stack.composeContent, stack.envContent, stack.engineId);
           const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
           if (result.exitCode !== 0) {
             await managedStackService.setStatus(id, 'error', output || 'Redeploy failed');

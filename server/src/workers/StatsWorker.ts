@@ -1,9 +1,9 @@
 import Docker from 'dockerode';
 import { db } from '../db';
-import { config } from '../config';
 import { logger } from '../utils/logger';
+import { engineService } from '../services/engine.service';
+import { dockerService } from '../services/docker.service';
 import type { Server as SocketIOServer } from 'socket.io';
-import { SOCKET_EVENTS } from '@oblihub/shared';
 import type { ContainerStats } from '@oblihub/shared';
 
 let statsTimer: ReturnType<typeof setInterval> | null = null;
@@ -18,68 +18,54 @@ function calculateCpuPercent(stats: Docker.ContainerStats): number {
   return 0;
 }
 
-export function startStatsWorker(io: SocketIOServer): void {
-  const docker = new Docker({ socketPath: config.dockerSocket });
-
+export function startStatsWorker(_io: SocketIOServer): void {
   const run = async () => {
-    try {
-      const containers = await docker.listContainers({ all: false });
-      const statsData: ContainerStats[] = [];
-      const now = new Date();
+    const engines = await engineService.getAll();
+    for (const engine of engines) {
+      if (!engine.enabled) continue;
+      try {
+        const docker = await dockerService.forEngine(engine.id);
+        const containers = await docker.listContainers({ all: false });
+        const now = new Date();
 
-      for (const c of containers) {
-        try {
-          const container = docker.getContainer(c.Id);
-          const stats = await container.stats({ stream: false }) as Docker.ContainerStats;
+        for (const c of containers) {
+          try {
+            const container = docker.getContainer(c.Id);
+            const stats = await container.stats({ stream: false }) as Docker.ContainerStats;
 
-          const cpuPercent = calculateCpuPercent(stats);
-          const memoryUsage = stats.memory_stats?.usage || 0;
-          const memoryLimit = stats.memory_stats?.limit || 1;
+            const cpuPercent = calculateCpuPercent(stats);
+            const memoryUsage = stats.memory_stats?.usage || 0;
+            const memoryLimit = stats.memory_stats?.limit || 1;
 
-          let networkRx = 0;
-          let networkTx = 0;
-          if (stats.networks) {
-            for (const net of Object.values(stats.networks)) {
-              networkRx += (net as { rx_bytes: number }).rx_bytes || 0;
-              networkTx += (net as { tx_bytes: number }).tx_bytes || 0;
+            let networkRx = 0;
+            let networkTx = 0;
+            if (stats.networks) {
+              for (const net of Object.values(stats.networks)) {
+                networkRx += (net as { rx_bytes: number }).rx_bytes || 0;
+                networkTx += (net as { tx_bytes: number }).tx_bytes || 0;
+              }
             }
+
+            const dockerId = c.Id.substring(0, 12);
+            const containerName = (c.Names?.[0] || '').replace(/^\//, '');
+
+            await db('container_stats').insert({
+              container_docker_id: dockerId,
+              container_name: containerName,
+              cpu_percent: Math.round(cpuPercent * 100) / 100,
+              memory_usage: memoryUsage,
+              memory_limit: memoryLimit,
+              network_rx: networkRx,
+              network_tx: networkTx,
+              timestamp: now,
+            });
+          } catch {
+            // Container might have stopped between listing and stats
           }
-
-          const dockerId = c.Id.substring(0, 12);
-          const containerName = (c.Names?.[0] || '').replace(/^\//, '');
-
-          statsData.push({
-            dockerId,
-            containerName,
-            cpuPercent: Math.round(cpuPercent * 100) / 100,
-            memoryUsage,
-            memoryLimit,
-            memoryPercent: Math.round((memoryUsage / memoryLimit) * 10000) / 100,
-            networkRx,
-            networkTx,
-            timestamp: now.toISOString(),
-          });
-
-          // Store in DB (batch insert later)
-          await db('container_stats').insert({
-            container_docker_id: dockerId,
-            container_name: containerName,
-            cpu_percent: Math.round(cpuPercent * 100) / 100,
-            memory_usage: memoryUsage,
-            memory_limit: memoryLimit,
-            network_rx: networkRx,
-            network_tx: networkTx,
-            timestamp: now,
-          });
-        } catch {
-          // Container might have stopped between listing and stats
         }
+      } catch (err) {
+        logger.warn({ engineId: engine.id, engineName: engine.name, err: err instanceof Error ? err.message : err }, 'Stats worker failed for engine');
       }
-
-      // Stats are available via REST API (filtered by permissions)
-      // DO NOT broadcast via socket - it bypasses team/permission checks
-    } catch (err) {
-      logger.error(err, 'Stats worker failed');
     }
   };
 
@@ -88,7 +74,7 @@ export function startStatsWorker(io: SocketIOServer): void {
   // First run after 5s (let other workers start first)
   setTimeout(run, 5000);
 
-  logger.info('Stats worker started (10s interval)');
+  logger.info('Stats worker started (10s interval, multi-engine)');
 }
 
 export function stopStatsWorker(): void {

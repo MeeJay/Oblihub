@@ -23,6 +23,33 @@ export interface User {
   updatedAt: string;
 }
 
+// ── Docker engines (multi-host) ──
+export type DockerEngineType = 'local' | 'ssh' | 'https-apikey' | 'tls';
+
+export interface DockerEngine {
+  id: number;
+  name: string;
+  type: DockerEngineType;
+  host: string | null;
+  port: number | null;
+  // Auth fields — secret values are NEVER returned by the API; only the presence flag is.
+  sshUser: string | null;
+  hasSshPrivateKey: boolean;
+  sshKnownHost: string | null;
+  hasApiKey: boolean;
+  apiKeyHeader: string | null;
+  tlsCa: string | null;
+  tlsCert: string | null;
+  hasTlsKey: boolean;
+  isDefault: boolean;
+  enabled: boolean;
+  lastPingAt: string | null;
+  lastPingStatus: 'ok' | 'error' | null;
+  lastPingMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ── Stack types ──
 export type ContainerStatus = 'up_to_date' | 'update_available' | 'updating' | 'error' | 'unknown' | 'checking' | 'excluded' | 'stopped';
 
@@ -33,6 +60,7 @@ export interface Stack {
   id: number;
   name: string;
   composeProject: string | null;
+  engineId: number | null;
   checkInterval: number;
   autoUpdate: boolean;
   enabled: boolean;
@@ -57,6 +85,7 @@ export interface ContainerPort {
 export interface Container {
   id: number;
   stackId: number | null;
+  engineId: number | null;
   dockerId: string;
   containerName: string;
   image: string;
@@ -132,6 +161,7 @@ export interface ManagedStack {
   envContent: string | null;
   status: ManagedStackStatus;
   composeProject: string;
+  engineId: number | null;
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
