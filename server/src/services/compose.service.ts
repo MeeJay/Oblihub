@@ -82,23 +82,55 @@ export const composeService = {
 
     if (engine.type === 'ssh') {
       if (!engine.host || !engine.sshUser) { cleanup(); throw new Error(`Engine ${engineId} (ssh) missing host/user`); }
-      // Need the private key. Fetch decrypted version via engine.service (which does the AES decrypt).
       const { db } = await import('../db');
       const row = await db('docker_engines').where({ id: engineId }).first() as { ssh_private_key_enc: string | null } | undefined;
       if (!row?.ssh_private_key_enc) { cleanup(); throw new Error(`Engine ${engineId} (ssh) missing private key`); }
       const { decryptSecret } = await import('../utils/crypto');
       const privateKey = decryptSecret(row.ssh_private_key_enc);
-      const keyFile = path.join(tmp, 'id_engine');
+
+      // The docker CLI shells out to /usr/bin/ssh and does NOT honor any custom env var for
+      // extra ssh options (DOCKER_SSH_OPTS is a myth). The only reliable way to inject options
+      // is via ~/.ssh/config, which ssh reads natively. We build a sandboxed home directory per
+      // invocation, drop the key + config files in it, and point HOME at it for the subprocess.
+      const sshDir = path.join(tmp, '.ssh');
+      fs2.mkdirSync(sshDir, { mode: 0o700 });
+      const keyFile = path.join(sshDir, 'id_engine');
       fs2.writeFileSync(keyFile, privateKey, { mode: 0o600 });
-      // We need IdentityFile + StrictHostKeyChecking off (could pin via known_hosts later)
-      const sshArgs = `-i ${keyFile} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`;
+
+      // Host-key handling: if the engine has a pinned known_host, write it and enforce
+      // StrictHostKeyChecking. Otherwise disable host-key checking entirely (TOFU off) — the
+      // operator already trusts the engine, and the alternative is a hard failure on first use.
+      const knownHostsFile = path.join(sshDir, 'known_hosts');
+      let strictHostKey = 'no';
+      let userKnownHosts = '/dev/null';
+      if (engine.sshKnownHost) {
+        fs2.writeFileSync(knownHostsFile, engine.sshKnownHost.trim() + '\n', { mode: 0o600 });
+        strictHostKey = 'yes';
+        userKnownHosts = knownHostsFile;
+      }
+      const configFile = path.join(sshDir, 'config');
+      fs2.writeFileSync(
+        configFile,
+        [
+          'Host *',
+          `  IdentityFile ${keyFile}`,
+          '  IdentitiesOnly yes',
+          `  UserKnownHostsFile ${userKnownHosts}`,
+          `  StrictHostKeyChecking ${strictHostKey}`,
+          '  LogLevel ERROR',
+          '  ServerAliveInterval 30',
+          '',
+        ].join('\n'),
+        { mode: 0o600 },
+      );
+
       const dockerHost = `ssh://${engine.sshUser}@${engine.host}:${engine.port ?? 22}`;
       return {
         env: {
           DOCKER_HOST: dockerHost,
-          // Forwarded to the docker CLI's ssh helper
-          GIT_SSH_COMMAND: `ssh ${sshArgs}`,
-          DOCKER_SSH_OPTS: sshArgs,
+          // ssh reads ~/.ssh/config from $HOME — redirect it to our tmp sandbox so the docker
+          // CLI's ssh subprocess picks up our IdentityFile + host-key policy automatically.
+          HOME: tmp,
         },
         cleanup,
       };
