@@ -43,11 +43,39 @@ export interface DockerEngine {
   hasTlsKey: boolean;
   isDefault: boolean;
   enabled: boolean;
+  // Tailscale identity (optional). When set, proxy hosts targeting containers on this engine
+  // resolve their upstream via this hostname instead of the public `host` field.
+  tailscaleHostname: string | null;
+  // CIDR list this engine's Tailscale node advertises (typically Docker bridge subnets).
+  // When non-empty, the proxy can hit container bridge IPs directly — no published port needed.
+  tailscaleAdvertisedRoutes: string | null;
   lastPingAt: string | null;
   lastPingStatus: 'ok' | 'error' | null;
   lastPingMessage: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ── Tailscale ──
+export interface TailscalePeer {
+  id: string;            // stable Tailscale node ID
+  hostname: string;      // short name (e.g. "unraid")
+  dnsName: string;       // MagicDNS name (e.g. "unraid.tail-abcd12.ts.net.")
+  ipv4: string | null;   // 100.x.y.z address
+  online: boolean;
+  os: string | null;
+  advertisedRoutes: string[];
+  primaryRoutes: string[]; // routes this peer is actively serving as subnet router
+}
+
+export interface TailscaleStatus {
+  enabled: boolean;        // is the local tailscaled reachable
+  selfHostname: string | null;
+  selfDnsName: string | null;
+  selfIpv4: string | null;
+  tailnet: string | null;  // e.g. "tail-abcd12.ts.net"
+  peers: TailscalePeer[];
+  message?: string;        // populated when enabled=false to explain why
 }
 
 // ── Stack types ──

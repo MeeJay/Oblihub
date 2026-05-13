@@ -15,6 +15,8 @@ export interface EngineWriteData {
   tlsCert?: string | null;
   tlsKey?: string; // omit on edit to keep existing
   enabled?: boolean;
+  tailscaleHostname?: string | null;
+  tailscaleAdvertisedRoutes?: string | null;
 }
 
 export interface TestResult {
@@ -52,6 +54,10 @@ export const enginesApi = {
   },
   async testTransient(data: EngineWriteData): Promise<TestResult> {
     const res = await apiClient.post<ApiResponse<TestResult>>('/engines/test', data);
+    return res.data.data!;
+  },
+  async generateSshKey(): Promise<{ privateKey: string; publicKey: string; comment: string }> {
+    const res = await apiClient.post<ApiResponse<{ privateKey: string; publicKey: string; comment: string }>>('/engines/generate-ssh-key');
     return res.data.data!;
   },
 };

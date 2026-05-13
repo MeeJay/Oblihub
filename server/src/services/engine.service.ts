@@ -35,6 +35,8 @@ interface EngineRow {
   tls_key_enc: string | null;
   is_default: boolean;
   enabled: boolean;
+  tailscale_hostname: string | null;
+  tailscale_advertised_routes: string | null;
   last_ping_at: Date | null;
   last_ping_status: string | null;
   last_ping_message: string | null;
@@ -59,6 +61,8 @@ function rowToEngine(row: EngineRow): DockerEngine {
     hasTlsKey: !!row.tls_key_enc,
     isDefault: row.is_default,
     enabled: row.enabled,
+    tailscaleHostname: row.tailscale_hostname,
+    tailscaleAdvertisedRoutes: row.tailscale_advertised_routes,
     lastPingAt: row.last_ping_at?.toISOString() ?? null,
     lastPingStatus: (row.last_ping_status as 'ok' | 'error' | null) ?? null,
     lastPingMessage: row.last_ping_message,
@@ -143,6 +147,8 @@ interface EngineCreateInput {
   tlsCert?: string;
   tlsKey?: string;
   enabled?: boolean;
+  tailscaleHostname?: string | null;
+  tailscaleAdvertisedRoutes?: string | null;
 }
 
 async function fetchRow(id: number): Promise<EngineRow | null> {
@@ -182,6 +188,8 @@ export const engineService = {
       tls_key_enc: data.tlsKey ? encryptSecret(data.tlsKey) : null,
       is_default: false,
       enabled: data.enabled !== false,
+      tailscale_hostname: data.tailscaleHostname || null,
+      tailscale_advertised_routes: data.tailscaleAdvertisedRoutes || null,
     };
     const [row] = await db<EngineRow>('docker_engines').insert(insert).returning('*');
     return rowToEngine(row);
@@ -200,6 +208,8 @@ export const engineService = {
     tlsCert: string | null;
     tlsKey: string;
     enabled: boolean;
+    tailscaleHostname: string | null;
+    tailscaleAdvertisedRoutes: string | null;
   }>): Promise<DockerEngine | null> {
     const update: Record<string, unknown> = { updated_at: new Date() };
     if (data.name !== undefined) update.name = data.name;
@@ -214,6 +224,8 @@ export const engineService = {
     if (data.tlsCert !== undefined) update.tls_cert = data.tlsCert;
     if (data.tlsKey !== undefined && data.tlsKey !== '') update.tls_key_enc = encryptSecret(data.tlsKey);
     if (data.enabled !== undefined) update.enabled = data.enabled;
+    if (data.tailscaleHostname !== undefined) update.tailscale_hostname = data.tailscaleHostname;
+    if (data.tailscaleAdvertisedRoutes !== undefined) update.tailscale_advertised_routes = data.tailscaleAdvertisedRoutes;
 
     await db('docker_engines').where({ id }).update(update);
     clientCache.delete(id);
@@ -301,6 +313,8 @@ export const engineService = {
       tls_key_enc: data.tlsKey ? encryptSecret(data.tlsKey) : null,
       is_default: false,
       enabled: true,
+      tailscale_hostname: data.tailscaleHostname || null,
+      tailscale_advertised_routes: data.tailscaleAdvertisedRoutes || null,
       last_ping_at: null,
       last_ping_status: null,
       last_ping_message: null,

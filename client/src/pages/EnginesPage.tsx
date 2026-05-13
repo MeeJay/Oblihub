@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Plus, Server, RefreshCw, Trash2, Edit2, CheckCircle2, XCircle, Star, Copy, Terminal } from 'lucide-react';
+import { Plus, Server, RefreshCw, Trash2, Edit2, CheckCircle2, XCircle, Star, Copy, Terminal, KeyRound, Eye, EyeOff, Network } from 'lucide-react';
 import { enginesApi, type EngineWriteData, type TestResult } from '@/api/engines.api';
+import { tailscaleApi, type PeerSuggestion } from '@/api/tailscale.api';
 import type { DockerEngine, DockerEngineType } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
@@ -277,8 +278,17 @@ function EngineEditor({
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
                 <label className="text-xs font-medium text-text-secondary block mb-1.5">Host</label>
-                <input value={editing.host || ''} onChange={e => update({ host: e.target.value })} placeholder="100.64.10.5 or unraid.tailnet.ts.net"
-                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                <TailnetHostInput
+                  value={editing.host || ''}
+                  onChange={(host, tailscaleHostname) => {
+                    update({
+                      host,
+                      // When user picks a Tailnet peer, also record the Tailnet hostname on the engine
+                      // — used downstream for proxy upstream resolution and engine identity.
+                      tailscaleHostname: tailscaleHostname ?? editing.tailscaleHostname ?? null,
+                    });
+                  }}
+                />
               </div>
               <div>
                 <label className="text-xs font-medium text-text-secondary block mb-1.5">Port</label>
@@ -296,15 +306,7 @@ function EngineEditor({
                 <input value={editing.sshUser || ''} onChange={e => update({ sshUser: e.target.value })} placeholder="root or oblihub-remote"
                   className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
               </div>
-              <div>
-                <label className="text-xs font-medium text-text-secondary block mb-1.5">
-                  Private key (OpenSSH or PEM) {editId && <span className="text-text-muted">— leave blank to keep existing</span>}
-                </label>
-                <textarea value={editing.sshPrivateKey || ''} onChange={e => update({ sshPrivateKey: e.target.value })}
-                  rows={6} spellCheck={false}
-                  placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'}
-                  className="w-full rounded-lg border border-border bg-[#0d1117] px-3 py-2 text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent resize-none" />
-              </div>
+              <SshKeySection editing={editing} editId={editId} update={update} />
               <div>
                 <label className="text-xs font-medium text-text-secondary block mb-1.5">Known host (optional)</label>
                 <input value={editing.sshKnownHost || ''} onChange={e => update({ sshKnownHost: e.target.value })} placeholder="ssh-ed25519 AAAA... (paste from server)"
@@ -381,6 +383,89 @@ function EngineEditor({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── SSH key section — paste-or-generate ────────────────────────────────────
+function SshKeySection({ editing, editId, update }: {
+  editing: EngineWriteData;
+  editId: number | null;
+  update: (patch: Partial<EngineWriteData>) => void;
+}) {
+  const [generated, setGenerated] = useState<{ publicKey: string; comment: string } | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [showPrivate, setShowPrivate] = useState(false);
+
+  const handleGenerate = async () => {
+    if (editing.sshPrivateKey && !confirm('Replace the current private key with a freshly generated one? The old key will be lost.')) return;
+    setGenerating(true);
+    try {
+      const keys = await enginesApi.generateSshKey();
+      update({ sshPrivateKey: keys.privateKey });
+      setGenerated({ publicKey: keys.publicKey, comment: keys.comment });
+      setShowPrivate(false);
+      toast.success('Key pair generated');
+    } catch { toast.error('Key generation failed'); }
+    finally { setGenerating(false); }
+  };
+
+  const copy = (text: string, label: string) => { navigator.clipboard.writeText(text); toast.success(`${label} copied`); };
+  const installSnippet = generated ? `mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo "${generated.publicKey}" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys` : '';
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-text-secondary">
+          Private key (OpenSSH ed25519) {editId && <span className="text-text-muted">— leave blank to keep existing</span>}
+        </label>
+        <button type="button" onClick={handleGenerate} disabled={generating}
+          className="flex items-center gap-1 px-2 py-1 text-[11px] rounded border border-accent/40 text-accent hover:bg-accent/10 disabled:opacity-50">
+          <KeyRound size={11} /> {generating ? 'Generating…' : 'Generate new key pair'}
+        </button>
+      </div>
+
+      <div className="relative">
+        <textarea value={editing.sshPrivateKey || ''} onChange={e => update({ sshPrivateKey: e.target.value })}
+          rows={6} spellCheck={false}
+          placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----\n\nOr click "Generate new key pair" above'}
+          style={{ filter: showPrivate || !editing.sshPrivateKey ? 'none' : 'blur(4px)' }}
+          className="w-full rounded-lg border border-border bg-[#0d1117] px-3 py-2 text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent resize-none transition-all" />
+        {editing.sshPrivateKey && (
+          <button type="button" onClick={() => setShowPrivate(!showPrivate)}
+            className="absolute top-2 right-2 p-1 rounded bg-bg-tertiary/80 hover:bg-bg-hover text-text-muted backdrop-blur"
+            title={showPrivate ? 'Hide' : 'Show'}>
+            {showPrivate ? <EyeOff size={12} /> : <Eye size={12} />}
+          </button>
+        )}
+      </div>
+
+      {generated && (
+        <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-accent flex items-center gap-1"><KeyRound size={11} /> Authorize this public key on the remote host</span>
+            <button type="button" onClick={() => copy(generated.publicKey, 'Public key')} className="p-1 rounded hover:bg-bg-hover text-text-muted" title="Copy public key">
+              <Copy size={11} />
+            </button>
+          </div>
+          <pre className="bg-[#0d1117] rounded p-2 text-[10px] font-mono text-text-primary overflow-x-auto whitespace-pre-wrap break-all">{generated.publicKey}</pre>
+
+          <div className="flex items-center justify-between mt-2">
+            <span className="text-[11px] text-text-secondary">Run this on the target host (Unraid web UI terminal, SSH, etc.):</span>
+            <button type="button" onClick={() => copy(installSnippet, 'Install snippet')} className="p-1 rounded hover:bg-bg-hover text-text-muted" title="Copy snippet">
+              <Copy size={11} />
+            </button>
+          </div>
+          <pre className="bg-[#0d1117] rounded p-2 text-[10px] font-mono text-text-primary overflow-x-auto whitespace-pre">{installSnippet}</pre>
+
+          <p className="text-[10px] text-text-muted">
+            The private key is stored encrypted in Oblihub's database and never shown again after you save.
+            Make sure to back it up if you need to revoke access later — or just generate a new one.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -485,6 +570,83 @@ function QuickSetupModal({ onClose, onCreated }: { onClose: () => void; onCreate
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Host input enriched with Tailnet peer autocomplete. Fetches peers once on mount; if the local
+// tailscaled isn't running the API returns an empty list and the input behaves as a plain text
+// field. The second arg of onChange carries the Tailnet hostname so the parent can persist it
+// onto the engine — used later for proxy upstream resolution.
+function TailnetHostInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (host: string, tailscaleHostname: string | null) => void;
+}) {
+  const [peers, setPeers] = useState<PeerSuggestion[]>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    tailscaleApi.peers().then((p) => {
+      if (!cancelled) setPeers(p);
+    }).catch(() => {
+      // Tailscale sidecar not running — silently degrade to plain input.
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const filtered = peers
+    .filter((p) => {
+      if (!value) return true;
+      const q = value.toLowerCase();
+      return p.hostname.toLowerCase().includes(q) || p.dnsName.toLowerCase().includes(q) || (p.ipv4 || '').includes(q);
+    })
+    .slice(0, 8);
+
+  return (
+    <div className="relative">
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value, null)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder="100.64.10.5 or unraid.tailnet.ts.net"
+        className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-10 left-0 right-0 top-full mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-bg-secondary shadow-lg">
+          <div className="px-3 py-1.5 text-[10px] text-text-muted uppercase tracking-wider border-b border-border flex items-center gap-1">
+            <Network size={10} /> Tailnet peers
+          </div>
+          {filtered.map((p) => (
+            <button
+              key={p.dnsName || p.hostname}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(p.dnsName || p.ipv4 || p.hostname, p.dnsName || null);
+                setOpen(false);
+              }}
+              className="w-full text-left px-3 py-2 hover:bg-bg-tertiary border-b border-border last:border-b-0"
+            >
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-mono text-text-primary">{p.hostname}</span>
+                <span className="flex items-center gap-2">
+                  <span className={`h-1.5 w-1.5 rounded-full ${p.online ? 'bg-status-up' : 'bg-text-muted'}`} />
+                  <span className="font-mono text-text-muted">{p.ipv4 || '—'}</span>
+                </span>
+              </div>
+              <div className="text-[10px] text-text-muted font-mono mt-0.5 truncate flex items-center justify-between">
+                <span>{p.dnsName}</span>
+                {p.alreadyAttached && <span className="text-status-warning">already attached</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

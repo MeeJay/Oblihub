@@ -326,8 +326,13 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += '\n';
   }
 
-  // Resolver for dynamic upstream DNS (Docker internal DNS)
-  conf += `    resolver 127.0.0.11 valid=10s ipv6=off;\n`;
+  // Resolver for dynamic upstream DNS:
+  //  - 127.0.0.11 is Docker's embedded resolver (resolves Docker service names)
+  //  - 100.100.100.100 is Tailscale's MagicDNS (resolves *.ts.net Tailnet names).
+  //    Only useful when the proxy container shares the tailscale netns
+  //    (PROXY_NETWORK_MODE=service:tailscale). When that's not the case the line
+  //    is harmless — nginx just tries both for any upstream lookup.
+  conf += `    resolver 127.0.0.11${process.env.PROXY_TAILSCALE_DNS === 'true' ? ' 100.100.100.100' : ''} valid=10s ipv6=off;\n`;
   conf += `    set $upstream ${upstream};\n\n`;
 
   // Main location

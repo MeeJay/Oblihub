@@ -16,6 +16,7 @@ import uptimeRoutes from './uptime.routes';
 import templatesRoutes from './templates.routes';
 import teamsRoutes from './teams.routes';
 import enginesRoutes from './engines.routes';
+import tailscaleRoutes from './tailscale.routes';
 
 const router = Router();
 
@@ -36,5 +37,6 @@ router.use('/uptime', uptimeRoutes);
 router.use('/templates', templatesRoutes);
 router.use('/teams', teamsRoutes);
 router.use('/engines', enginesRoutes);
+router.use('/tailscale', tailscaleRoutes);
 
 export { router as routes };

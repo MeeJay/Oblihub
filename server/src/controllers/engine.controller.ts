@@ -17,6 +17,8 @@ interface EngineWriteBody {
   tlsCert?: string;
   tlsKey?: string;
   enabled?: boolean;
+  tailscaleHostname?: string | null;
+  tailscaleAdvertisedRoutes?: string | null;
 }
 
 export const engineController = {
@@ -52,6 +54,8 @@ export const engineController = {
         tlsCert: body.tlsCert,
         tlsKey: body.tlsKey,
         enabled: body.enabled,
+        tailscaleHostname: body.tailscaleHostname,
+        tailscaleAdvertisedRoutes: body.tailscaleAdvertisedRoutes,
       });
       res.json({ success: true, data: engine });
     } catch (err) { next(err); }
@@ -109,8 +113,27 @@ export const engineController = {
         tlsCert: body.tlsCert,
         tlsKey: body.tlsKey,
         enabled: body.enabled,
+        tailscaleHostname: body.tailscaleHostname,
+        tailscaleAdvertisedRoutes: body.tailscaleAdvertisedRoutes,
       });
       res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * Generate a fresh ed25519 keypair on the server. The client uses this in the SSH form
+   * to populate the private key field and display the public key + install snippet for the user.
+   * Returns the keys ONCE — they are never persisted on the server until the user clicks Save.
+   */
+  async generateSshKey(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      // ssh2 is a dependency of dockerode (SSH transport); we add it explicitly to lock the API.
+      const ssh2 = await import('ssh2');
+      const comment = `oblihub-engine@${new Date().toISOString().slice(0, 10)}`;
+      // utils.generateKeyPairSync returns { private, public } in OpenSSH format.
+      const keys = (ssh2 as unknown as { utils: { generateKeyPairSync: (kt: string, opts?: { comment?: string }) => { private: string; public: string } } })
+        .utils.generateKeyPairSync('ed25519', { comment });
+      res.json({ success: true, data: { privateKey: keys.private, publicKey: keys.public, comment } });
     } catch (err) { next(err); }
   },
 };

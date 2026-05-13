@@ -4,11 +4,13 @@ import { settingsApi } from '@/api/settings.api';
 import { notificationsApi, type PluginMeta } from '@/api/notifications.api';
 import { systemApi } from '@/api/stacks.api';
 import { proxyApi } from '@/api/proxy.api';
-import type { CustomPage } from '@oblihub/shared';
+import { tailscaleApi } from '@/api/tailscale.api';
+import { enginesApi } from '@/api/engines.api';
+import type { CustomPage, TailscaleStatus, DockerEngine } from '@oblihub/shared';
 import { useAuthStore } from '@/store/authStore';
 import type { NotificationChannel } from '@oblihub/shared';
 import toast from 'react-hot-toast';
-import { Save, Plus, Trash2, Send, ChevronDown, ChevronRight, Power, PowerOff, X, Globe, RefreshCw, Shield, CheckCircle } from 'lucide-react';
+import { Save, Plus, Trash2, Send, ChevronDown, ChevronRight, Power, PowerOff, X, Globe, RefreshCw, Shield, CheckCircle, Copy, Eye, EyeOff, Network } from 'lucide-react';
 
 // ── Obligate SSO Section ──
 function SsoSection({ config, setConfig, onSave, saving }: {
@@ -455,7 +457,337 @@ export function SettingsPage() {
       <NotificationChannelsSection />
       <NotificationGlobalSection config={config} setConfig={setConfig} onSave={handleSave} saving={saving} />
       <ProxyStatusSection />
+      <TailscaleSection />
       <SystemInfoSection />
+    </div>
+  );
+}
+
+// ── Tailscale Section ──
+// Shows status of the local tailscaled sidecar + lets the admin generate copy-pasteable
+// install commands for remote hosts (engines). When the sidecar isn't running the section
+// degrades gracefully with instructions on how to enable it.
+function TailscaleSection() {
+  const [status, setStatus] = useState<TailscaleStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [engines, setEngines] = useState<DockerEngine[]>([]);
+
+  const reload = async () => {
+    setRefreshing(true);
+    try {
+      const [s, eng] = await Promise.all([
+        tailscaleApi.status(),
+        enginesApi.list().catch(() => [] as DockerEngine[]),
+      ]);
+      setStatus(s);
+      setEngines(eng);
+    } finally {
+      setRefreshing(false);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void reload(); }, []);
+
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-border bg-bg-secondary p-5 mb-6">
+        <h2 className="text-sm font-semibold text-text-primary mb-4">Tailscale</h2>
+        <div className="flex items-center justify-center py-6">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary p-5 mb-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Network size={16} className="text-text-muted" />
+          <h2 className="text-sm font-semibold text-text-primary">Tailscale</h2>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full ${
+              status?.enabled ? 'bg-status-up/15 text-status-up' : 'bg-text-muted/15 text-text-muted'
+            }`}
+          >
+            {status?.enabled ? 'Connected' : 'Disabled'}
+          </span>
+        </div>
+        <button
+          onClick={() => void reload()}
+          disabled={refreshing}
+          className="text-xs text-text-muted hover:text-text-primary flex items-center gap-1"
+        >
+          <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+          Refresh
+        </button>
+      </div>
+
+      {!status?.enabled ? (
+        <div className="text-xs text-text-muted space-y-2">
+          <p>{status?.message || 'Tailscale sidecar is not running.'}</p>
+          <p>
+            To enable: add <code className="bg-bg-primary px-1 rounded">TAILSCALE_AUTHKEY=tskey-…</code>
+            {' '}and <code className="bg-bg-primary px-1 rounded">TAILSCALE_HOSTNAME=oblihub</code> to
+            your <code className="bg-bg-primary px-1 rounded">.env</code>, then start with{' '}
+            <code className="bg-bg-primary px-1 rounded">docker compose --profile tailscale up -d</code>.
+          </p>
+          <p>
+            Get an auth key from{' '}
+            <a
+              href="https://login.tailscale.com/admin/settings/keys"
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent hover:underline"
+            >
+              login.tailscale.com/admin/settings/keys
+            </a>
+            .
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-4 mb-4 text-xs">
+            <div>
+              <span className="text-text-muted">Hostname</span>
+              <div className="text-text-primary font-mono mt-1">{status.selfHostname || '—'}</div>
+            </div>
+            <div>
+              <span className="text-text-muted">Tailnet IP</span>
+              <div className="text-text-primary font-mono mt-1">{status.selfIpv4 || '—'}</div>
+            </div>
+            <div>
+              <span className="text-text-muted">MagicDNS</span>
+              <div className="text-text-primary font-mono mt-1 truncate">{status.selfDnsName || '—'}</div>
+            </div>
+          </div>
+
+          <div className="border-t border-border pt-4 mb-4">
+            <div className="text-xs text-text-muted mb-2">Peers ({status.peers.length})</div>
+            {status.peers.length === 0 ? (
+              <div className="text-xs text-text-muted italic">
+                No peers yet — install Tailscale on at least one other host to populate this list.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {status.peers.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between text-xs py-1.5 px-2 rounded hover:bg-bg-primary"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`h-2 w-2 rounded-full flex-shrink-0 ${
+                          p.online ? 'bg-status-up' : 'bg-text-muted'
+                        }`}
+                      />
+                      <span className="text-text-primary font-mono truncate">{p.hostname}</span>
+                      <span className="text-text-muted font-mono truncate">{p.ipv4 || ''}</span>
+                    </div>
+                    {p.primaryRoutes.length > 0 && (
+                      <span className="text-status-up text-[10px] font-mono ml-2 truncate" title={p.primaryRoutes.join(', ')}>
+                        routes: {p.primaryRoutes.join(', ')}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <InstallCommandGenerator engines={engines} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function InstallCommandGenerator({ engines }: { engines: DockerEngine[] }) {
+  const [hostname, setHostname] = useState('');
+  const [authKey, setAuthKey] = useState('');
+  const [showAuthKey, setShowAuthKey] = useState(false);
+  const [routes, setRoutes] = useState('');
+  const [bridgeMode, setBridgeMode] = useState(false);
+  const [discoverFromEngineId, setDiscoverFromEngineId] = useState<number | ''>('');
+  const [command, setCommand] = useState('');
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+
+  const generate = async () => {
+    if (!hostname.trim()) {
+      toast.error('Hostname is required');
+      return;
+    }
+    setGenerating(true);
+    setDiscoveryError(null);
+    try {
+      const subnetRoutes = routes
+        .split(',')
+        .map((r) => r.trim())
+        .filter(Boolean);
+      const result = await tailscaleApi.installCommand({
+        hostname: hostname.trim(),
+        authKey: authKey.trim() || undefined,
+        subnetRoutes,
+        acceptRoutes: true,
+        discoverFromEngineId: bridgeMode && discoverFromEngineId ? Number(discoverFromEngineId) : undefined,
+      });
+      setCommand(result.command);
+      if (result.discoveryError) setDiscoveryError(result.discoveryError);
+      if (result.subnetRoutes.length && bridgeMode) {
+        setRoutes(result.subnetRoutes.join(', '));
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to generate command');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      toast.success('Copied to clipboard');
+    } catch {
+      toast.error('Copy failed');
+    }
+  };
+
+  return (
+    <div className="border-t border-border pt-4">
+      <h3 className="text-xs font-semibold text-text-primary mb-2">Install on a remote host</h3>
+      <p className="text-xs text-text-muted mb-3">
+        Generate a one-liner to install Tailscale and join this Tailnet on any Linux host (Unraid, VPS, etc.). The auth key never
+        leaves your browser unless you paste it here — the server only relays it into the snippet.
+      </p>
+
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs text-text-muted block mb-1">Target hostname</label>
+          <input
+            type="text"
+            value={hostname}
+            onChange={(e) => setHostname(e.target.value)}
+            placeholder="unraid"
+            className="w-full bg-bg-primary border border-border rounded px-3 py-1.5 text-xs text-text-primary"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs text-text-muted block mb-1">
+            Auth key{' '}
+            <span className="text-text-muted">
+              (optional —{' '}
+              <a
+                href="https://login.tailscale.com/admin/settings/keys"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                generate
+              </a>
+              )
+            </span>
+          </label>
+          <div className="relative">
+            <input
+              type={showAuthKey ? 'text' : 'password'}
+              value={authKey}
+              onChange={(e) => setAuthKey(e.target.value)}
+              placeholder="tskey-auth-…"
+              className="w-full bg-bg-primary border border-border rounded px-3 py-1.5 text-xs text-text-primary font-mono pr-8"
+            />
+            <button
+              type="button"
+              onClick={() => setShowAuthKey((s) => !s)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+            >
+              {showAuthKey ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            checked={bridgeMode}
+            onChange={(e) => setBridgeMode(e.target.checked)}
+            className="mt-0.5"
+            id="bridge-mode"
+          />
+          <div className="flex-1">
+            <label htmlFor="bridge-mode" className="text-xs text-text-primary cursor-pointer">
+              Bridge routing — advertise the host's Docker bridge subnets
+            </label>
+            <p className="text-xs text-text-muted mt-0.5">
+              Lets Oblihub's proxy reach container bridge IPs directly, without published ports. Requires approval in the Tailscale
+              admin console after install.
+            </p>
+            {bridgeMode && (
+              <div className="mt-2 space-y-2">
+                <div>
+                  <label className="text-xs text-text-muted block mb-1">Auto-discover from engine (optional)</label>
+                  <select
+                    value={discoverFromEngineId}
+                    onChange={(e) => setDiscoverFromEngineId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-bg-primary border border-border rounded px-2 py-1 text-xs text-text-primary"
+                  >
+                    <option value="">— manual entry below —</option>
+                    {engines.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name} ({e.type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-text-muted block mb-1">Subnets (CIDR, comma-separated)</label>
+                  <input
+                    type="text"
+                    value={routes}
+                    onChange={(e) => setRoutes(e.target.value)}
+                    placeholder="172.17.0.0/16, 172.18.0.0/16"
+                    className="w-full bg-bg-primary border border-border rounded px-3 py-1.5 text-xs text-text-primary font-mono"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <button
+          onClick={() => void generate()}
+          disabled={generating}
+          className="w-full px-3 py-2 bg-accent text-white text-xs font-semibold rounded hover:bg-accent/90 disabled:opacity-50"
+        >
+          {generating ? 'Generating…' : 'Generate command'}
+        </button>
+      </div>
+
+      {discoveryError && (
+        <div className="mt-3 text-xs text-status-down bg-status-down/10 border border-status-down/30 rounded p-2">
+          Could not auto-discover subnets: {discoveryError}
+        </div>
+      )}
+
+      {command && (
+        <div className="mt-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs text-text-muted">Run this on the target host (as root):</span>
+            <button
+              onClick={() => void copy()}
+              className="text-xs text-accent hover:underline flex items-center gap-1"
+            >
+              <Copy size={11} /> Copy
+            </button>
+          </div>
+          <pre className="bg-bg-primary border border-border rounded p-3 text-xs text-text-primary font-mono whitespace-pre-wrap overflow-x-auto">
+            {command}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }

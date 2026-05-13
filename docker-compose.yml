@@ -15,6 +15,39 @@ services:
       retries: 10
       start_period: 60s
 
+  # Tailscale sidecar. Opt-in via the "tailscale" compose profile:
+  #   docker compose --profile tailscale up -d
+  # Provide TAILSCALE_AUTHKEY (one-shot or reusable) and TAILSCALE_HOSTNAME in .env.
+  # When enabled, the server + proxy join your private Tailnet and can reach remote
+  # Docker engines / advertised subnets directly. When the profile is omitted the
+  # sidecar is never started and everything keeps working with public IPs / SSH.
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: ${TAILSCALE_HOSTNAME:-oblihub}
+    restart: unless-stopped
+    profiles: [tailscale]
+    environment:
+      TS_AUTHKEY: ${TAILSCALE_AUTHKEY:-}
+      TS_HOSTNAME: ${TAILSCALE_HOSTNAME:-oblihub}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: ${TAILSCALE_EXTRA_ARGS:-}
+      TS_ACCEPT_DNS: "true"
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+      - tailscale_run:/var/run/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   server:
     image: meejay/oblihub-server:${OBLIHUB_VERSION:-latest}
     restart: unless-stopped
@@ -41,6 +74,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - stacks_data:/data/stacks
       - proxy_data:/data/stacks/_proxy
+      # Tailscale LocalAPI socket — read-only is enough for status queries.
+      # The volume is always declared but only populated when the tailscale
+      # profile is active. Server gracefully degrades when the socket is absent.
+      - tailscale_run:/var/run/tailscale:ro
 
   client:
     image: meejay/oblihub-client:${OBLIHUB_VERSION:-latest}
@@ -62,6 +99,11 @@ services:
     ports:
       - "${PROXY_HTTP_PORT:-80}:80"
       - "${PROXY_HTTPS_PORT:-443}:443"
+    # When PROXY_USE_TAILSCALE=service:tailscale is set in .env, the proxy joins
+    # the Tailscale network namespace and can reach Tailnet subnet routes directly
+    # (lets you target container bridge IPs on remote engines without published
+    # ports). Default is "bridge" — standard Docker networking, no Tailscale.
+    network_mode: ${PROXY_NETWORK_MODE:-bridge}
     volumes:
       - proxy_data:/etc/nginx
     entrypoint: ["/bin/sh", "-c", "mkdir -p /etc/nginx/conf.d /etc/nginx/stream.d /etc/nginx/certs /etc/nginx/acme-challenge /etc/nginx/htpasswd && [ -f /etc/nginx/nginx.conf ] || echo 'events { worker_connections 1024; } http { server { listen 80 default_server; location / { return 444; } } }' > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"]
@@ -76,3 +118,5 @@ volumes:
   stacks_data:
   proxy_data:
   client_ssl:
+  tailscale_state:
+  tailscale_run:

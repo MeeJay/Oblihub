@@ -1,6 +1,6 @@
 {
   "name": "@oblihub/server",
-  "version": "1.0.35",
+  "version": "1.0.36",
   "private": true,
   "main": "dist/src/index.js",
   "scripts": {
@@ -28,6 +28,7 @@
     "pino": "^8.19.0",
     "pino-pretty": "^11.0.0",
     "socket.io": "^4.7.4",
+    "ssh2": "^1.16.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {

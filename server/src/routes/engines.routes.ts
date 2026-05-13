@@ -9,6 +9,7 @@ router.use(requireRole('admin'));
 router.get('/', engineController.list);
 router.post('/', engineController.create);
 router.post('/test', engineController.testTransient);
+router.post('/generate-ssh-key', engineController.generateSshKey);
 router.get('/:id', engineController.getById);
 router.patch('/:id', engineController.update);
 router.delete('/:id', engineController.delete);
