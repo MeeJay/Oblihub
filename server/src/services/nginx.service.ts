@@ -320,8 +320,8 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += `        proxy_set_header Host $host;\n`;
     conf += `        proxy_http_version 1.1;\n`;
     conf += `    }\n`;
-    // Activity log — one line per request, parsed by ActivityTracker
-    conf += `    set $proxy_host_id ${host.id};\n`;
+    // Activity log — one line per request, parsed by ActivityTracker. $proxy_host_id is set
+    // via the http-level `map $host …` in nginx.conf, keyed on this host's domain names.
     conf += `    access_log /etc/nginx/sleep_activity.log sleep_activity;\n`;
     conf += '\n';
   }
@@ -415,8 +415,24 @@ function generateDeadHostConfig(host: DeadHost): string {
 
 // ── Main nginx.conf ──
 
-function generateMainConfig(rateLimitedHosts: { id: number; rps: number }[] = []): string {
+function generateMainConfig(
+  rateLimitedHosts: { id: number; rps: number }[] = [],
+  wakeHostMap: { hostId: number; domains: string[] }[] = [],
+): string {
   const rateLimitZones = rateLimitedHosts.map(h => `    limit_req_zone $binary_remote_addr zone=rl_${h.id}:10m rate=${h.rps}r/s;`).join('\n');
+
+  // Static map from request Host header → proxy_host_id. Built from all wake-enabled hosts so
+  // that the `sleep_activity` log_format can reference $proxy_host_id at the http context (where
+  // log_format is declared) without depending on a server-level `set` directive. nginx's
+  // log_format is parsed BEFORE any server block runs, which is why a `set $proxy_host_id …`
+  // inside a server block doesn't satisfy the parser — the variable must be declared at http
+  // level too. Using `map` here covers both needs in one place.
+  const wakeMapEntries = wakeHostMap.flatMap(h =>
+    h.domains.map(d => `        "${sanitizeForNginx(d)}" "${h.hostId}";`)
+  ).join('\n');
+  const wakeMapBlock = wakeMapEntries
+    ? `    map $host $proxy_host_id {\n        default "0";\n${wakeMapEntries}\n    }`
+    : `    map $host $proxy_host_id { default "0"; }`;
 
   return `user nginx;
 worker_processes auto;
@@ -436,9 +452,10 @@ http {
                     '"$http_user_agent" "$http_x_forwarded_for"';
 
     # Sleep activity log — pipe-separated, parsed by Oblihub's ActivityTracker.
-    # Default $proxy_host_id to "0" so non-sleep-enabled hosts never accidentally update last_active_at.
-    map $proxy_host_id $proxy_host_id_or_zero { default $proxy_host_id; "" "0"; }
-    log_format sleep_activity '$proxy_host_id_or_zero|$msec|$status|$http_user_agent|$request_uri';
+    # $proxy_host_id is mapped from the request Host header for wake-enabled hosts; defaults
+    # to "0" for everything else.
+${wakeMapBlock}
+    log_format sleep_activity '$proxy_host_id|$msec|$status|$http_user_agent|$request_uri';
 
     access_log /var/log/nginx/access.log main;
 
@@ -519,9 +536,13 @@ export const nginxService = {
     // Get enabled proxy hosts for rate limit zones
     const enabledHosts = await proxyHostService.getEnabled();
     const rateLimitedHosts = enabledHosts.filter(h => h.rateLimitRps).map(h => ({ id: h.id, rps: h.rateLimitRps! }));
+    // Wake-enabled hosts feed the http-level $proxy_host_id map used by sleep_activity log_format.
+    const wakeHostMap = enabledHosts
+      .filter(h => h.wakeContainerId)
+      .map(h => ({ hostId: h.id, domains: h.domainNames || [] }));
 
-    // Write main config (with rate limit zones)
-    fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig(rateLimitedHosts));
+    // Write main config (with rate limit zones + wake host map)
+    fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig(rateLimitedHosts, wakeHostMap));
 
     // Write custom error pages to disk (one file per error code with dynamic replacement).
     // Always write files for ALL 8 codes referenced in generateProxyHostConfig — codes that
