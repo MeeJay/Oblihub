@@ -103,9 +103,12 @@ export function StackEditorPage() {
   useEffect(() => {
     teamsApi.list().then(t => {
       setTeams(t);
-      if (t.length > 0 && !selectedTeamId) setSelectedTeamId(t[0].id);
+      // Admins default to "No team" (null) — they can opt-in to a team via the dropdown.
+      // Non-admins must own a team; pre-select the first one as a convenience since the form
+      // refuses to submit without a team for them anyway.
+      if (!isAdmin && t.length > 0 && !selectedTeamId) setSelectedTeamId(t[0].id);
     }).catch(() => {});
-  }, []);
+  }, [isAdmin]);
 
   // Load engines for the target-engine picker (admin only)
   useEffect(() => {
@@ -332,11 +335,22 @@ export function StackEditorPage() {
           )}
           {dirty && <span className="text-[10px] text-status-pending">unsaved</span>}
           {isNew && teams.length > 0 && (
-            <select value={selectedTeamId || ''} onChange={e => setSelectedTeamId(parseInt(e.target.value) || null)}
-              className="rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
-              {isAdmin && <option value="">No team</option>}
-              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            !isAdmin && teams.length === 1 ? (
+              // Non-admin with a single team — team is locked. Show as a readonly badge so the
+              // user knows where the stack lands; an admin can reassign later if needed.
+              <span
+                className="rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-muted"
+                title="Team is fixed — only an admin can reassign this stack."
+              >
+                Team: <span className="text-text-primary">{teams[0].name}</span>
+              </span>
+            ) : (
+              <select value={selectedTeamId || ''} onChange={e => setSelectedTeamId(parseInt(e.target.value) || null)}
+                className="rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+                {isAdmin && <option value="">No team</option>}
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            )
           )}
           {isAdmin && engines.length > 1 && (
             <select value={selectedEngineId || ''} onChange={e => { setSelectedEngineId(parseInt(e.target.value) || null); setDirty(true); }}

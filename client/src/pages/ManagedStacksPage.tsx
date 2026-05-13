@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, RefreshCw, Layers, Play, Square, RotateCcw, Trash2, XCircle, Globe } from 'lucide-react';
+import { Plus, RefreshCw, Layers, Play, Square, RotateCcw, Trash2, XCircle, Globe, Server } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { stacksApi } from '@/api/stacks.api';
-import type { ManagedStack, ManagedStackStatus, Stack } from '@oblihub/shared';
+import { enginesApi } from '@/api/engines.api';
+import type { ManagedStack, ManagedStackStatus, Stack, DockerEngine } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 const STATUS_STYLES: Record<ManagedStackStatus, string> = {
@@ -26,21 +27,35 @@ export function ManagedStacksPage() {
   const navigate = useNavigate();
   const [stacks, setStacks] = useState<ManagedStack[]>([]);
   const [liveStacks, setLiveStacks] = useState<Stack[]>([]);
+  const [engines, setEngines] = useState<DockerEngine[]>([]);
   const [loading, setLoading] = useState(true);
+  // `null` = "all engines" selected. A number = filter to that engine only.
+  const [engineFilter, setEngineFilter] = useState<number | null>(null);
 
   const load = async () => {
     try {
-      const [managed, live] = await Promise.all([
+      const [managed, live, eng] = await Promise.all([
         managedStacksApi.list(),
         stacksApi.list().catch(() => [] as Stack[]),
+        enginesApi.list().catch(() => [] as DockerEngine[]),
       ]);
       setStacks(managed);
       setLiveStacks(live);
+      setEngines(eng);
     } catch { toast.error('Failed to load managed stacks'); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
+
+  const enginesById = useMemo(() => new Map(engines.map(e => [e.id, e])), [engines]);
+  // Only show the filter row when there are at least 2 engines — single-engine setups don't
+  // need filtering and the row would just take space.
+  const showFilter = engines.length >= 2;
+  const visibleStacks = useMemo(
+    () => engineFilter == null ? stacks : stacks.filter(s => (s.engineId ?? null) === engineFilter),
+    [stacks, engineFilter]
+  );
 
   const portsForProject = (composeProject: string) => {
     const live = liveStacks.find(s => s.composeProject === composeProject);
@@ -127,6 +142,15 @@ export function ManagedStacksPage() {
         </div>
       </div>
 
+      <EngineFilterBar
+        engines={engines}
+        selected={engineFilter}
+        onSelect={setEngineFilter}
+        counts={Object.fromEntries(engines.map(e => [e.id, stacks.filter(s => (s.engineId ?? null) === e.id).length]))}
+        totalCount={stacks.length}
+        visible={showFilter}
+      />
+
       {stacks.length === 0 ? (
         <div className="text-center py-20">
           <Layers size={40} className="mx-auto mb-3 text-text-muted" />
@@ -137,15 +161,32 @@ export function ManagedStacksPage() {
           </button>
         </div>
       ) : (
+        visibleStacks.length === 0 ? (
+          <div className="text-center py-16 text-text-muted text-sm">
+            No managed stacks on this engine.
+          </div>
+        ) : (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-          {stacks.map(s => (
+          {visibleStacks.map(s => {
+            const engine = s.engineId != null ? enginesById.get(s.engineId) : null;
+            return (
             <div key={s.id} onClick={() => navigate(`/stack-editor/${s.id}`)}
               className="rounded-xl border border-border bg-bg-secondary p-4 hover:border-accent/30 cursor-pointer transition-colors">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-2 gap-2">
                 <h3 className="text-sm font-semibold text-text-primary truncate">{s.name}</h3>
-                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[s.status]}`}>
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[s.status]} flex-shrink-0`}>
                   {STATUS_LABELS[s.status]}
                 </span>
+              </div>
+              <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                {engine && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-bg-tertiary text-text-secondary border border-border"
+                    title={engine.isDefault ? 'Local Docker engine' : `Remote engine — ${engine.host || engine.tailscaleHostname || engine.type}`}
+                  >
+                    <Server size={9} /> {engine.name}
+                  </span>
+                )}
               </div>
               <div className="text-xs text-text-muted mb-2">
                 Project: <code className="bg-bg-tertiary px-1 py-0.5 rounded">{s.composeProject}</code>
@@ -193,9 +234,56 @@ export function ManagedStacksPage() {
               </div>
               <p className="text-[10px] text-text-muted mt-2">Updated: {new Date(s.updatedAt).toLocaleString()}</p>
             </div>
-          ))}
+            );
+          })}
         </div>
+        )
       )}
+    </div>
+  );
+}
+
+// Engine filter — a row of toggle buttons "All / Local / Remote1 / Remote2…". Selecting a
+// button narrows the visible stacks to that engine. Shared visual treatment with the dashboard
+// version so the two pages feel consistent.
+function EngineFilterBar({
+  engines,
+  selected,
+  onSelect,
+  counts,
+  totalCount,
+  visible,
+}: {
+  engines: DockerEngine[];
+  selected: number | null;
+  onSelect: (id: number | null) => void;
+  counts: Record<number, number>;
+  totalCount: number;
+  visible: boolean;
+}) {
+  if (!visible) return null;
+  const btn = (id: number | null, label: string, count: number) => {
+    const active = selected === id;
+    return (
+      <button
+        key={id ?? 'all'}
+        onClick={() => onSelect(id)}
+        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium border transition-colors ${
+          active
+            ? 'border-accent bg-accent/10 text-accent'
+            : 'border-border bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+        }`}
+      >
+        {id != null && <Server size={11} />}
+        {label}
+        <span className={`text-[10px] ${active ? 'text-accent/70' : 'text-text-muted'}`}>({count})</span>
+      </button>
+    );
+  };
+  return (
+    <div className="flex flex-wrap gap-2 mb-4">
+      {btn(null, 'All', totalCount)}
+      {engines.map((e) => btn(e.id, e.name, counts[e.id] ?? 0))}
     </div>
   );
 }

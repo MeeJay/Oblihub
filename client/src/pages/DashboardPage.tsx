@@ -77,6 +77,8 @@ export function DashboardPage() {
   const [stackTeamNames, setStackTeamNames] = useState<Record<number, string[]>>({});
   const [globalTeams, setGlobalTeams] = useState<string[]>([]);
   const [engines, setEngines] = useState<DockerEngine[]>([]);
+  // null = all engines. Number = filter to that engine only.
+  const [engineFilter, setEngineFilter] = useState<number | null>(null);
   const socket = useSocket();
 
   const load = async () => {
@@ -125,6 +127,13 @@ export function DashboardPage() {
   // Map engine_id → engine for fast lookup in card rendering
   const enginesById = new Map(engines.map(e => [e.id, e]));
   const defaultEngineId = engines.find(e => e.isDefault)?.id ?? null;
+
+  // Filter stacks by engine when the user has toggled the filter. Stacks without an engine_id
+  // (legacy rows pre-multi-engine) are bucketed with the default engine, matching how the
+  // backend treats them on discovery.
+  const visibleStacks = engineFilter == null
+    ? stacks
+    : stacks.filter(s => (s.engineId ?? defaultEngineId) === engineFilter);
 
   // Pre-populate sparklines from server-side history on stack load, then poll for fresh samples.
   useEffect(() => {
@@ -248,6 +257,39 @@ export function DashboardPage() {
         </div>
       </div>
 
+      {engines.length >= 2 && !loading && stacks.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-5">
+          {(() => {
+            const btn = (id: number | null, label: string, count: number) => {
+              const active = engineFilter === id;
+              return (
+                <button
+                  key={id ?? 'all'}
+                  onClick={() => setEngineFilter(id)}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium border transition-colors ${
+                    active
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border bg-bg-secondary text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                  }`}
+                >
+                  {id != null && <Server size={11} />}
+                  {label}
+                  <span className={`text-[10px] ${active ? 'text-accent/70' : 'text-text-muted'}`}>({count})</span>
+                </button>
+              );
+            };
+            const totalByEngine = (id: number) =>
+              stacks.filter(s => (s.engineId ?? defaultEngineId) === id).length;
+            return (
+              <>
+                {btn(null, 'All', stacks.length)}
+                {engines.map((e) => btn(e.id, e.name, totalByEngine(e.id)))}
+              </>
+            );
+          })()}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-20">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
@@ -258,9 +300,13 @@ export function DashboardPage() {
           <p className="text-text-muted">No Docker stacks discovered yet</p>
           <p className="text-xs text-text-muted mt-1">Make sure Docker socket is mounted</p>
         </div>
+      ) : visibleStacks.length === 0 ? (
+        <div className="text-center py-16 text-text-muted text-sm">
+          No stacks on this engine.
+        </div>
       ) : (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-          {stacks.map((stack) => {
+          {visibleStacks.map((stack) => {
             const status = getStackStatus(stack);
             const origin = getOrigin(stack);
             return (
@@ -270,11 +316,18 @@ export function DashboardPage() {
                   <div className="flex items-center gap-2 min-w-0">
                     <h3 className="text-sm font-semibold text-text-primary truncate">{stack.name}</h3>
                     <OriginBadge origin={origin} />
-                    {stack.engineId != null && stack.engineId !== defaultEngineId && enginesById.has(stack.engineId) && (
-                      <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-bg-tertiary text-text-secondary border border-border" title={`Running on ${enginesById.get(stack.engineId)!.name}`}>
-                        <Server size={9} /> {enginesById.get(stack.engineId)!.name}
-                      </span>
-                    )}
+                    {/* Engine badge — shown on every stack, including the local one, so users
+                        on multi-engine setups can tell at a glance where each stack runs. */}
+                    {(() => {
+                      const id = stack.engineId ?? defaultEngineId;
+                      const eng = id != null ? enginesById.get(id) : null;
+                      if (!eng) return null;
+                      return (
+                        <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-bg-tertiary text-text-secondary border border-border" title={`Running on ${eng.name}`}>
+                          <Server size={9} /> {eng.name}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <StatusBadge status={status} />
                 </div>

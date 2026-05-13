@@ -1,4 +1,5 @@
 import { db } from '../db';
+import { AppError } from '../middleware/errorHandler';
 import type { ManagedStack, ManagedStackStatus } from '@oblihub/shared';
 
 function toCamelCase(row: Record<string, unknown>): ManagedStack {
@@ -36,9 +37,7 @@ export const managedStackService = {
       .where({ name: data.name, engine_id: data.engineId ?? null })
       .first();
     if (existing) {
-      const err = new Error(`A managed stack named "${data.name}" already exists on this engine.`) as Error & { status?: number };
-      err.status = 409;
-      throw err;
+      throw new AppError(409, `A managed stack named "${data.name}" already exists on this engine.`);
     }
     const [row] = await db('managed_stacks').insert({
       name: data.name,
@@ -71,9 +70,7 @@ export const managedStackService = {
           .whereNot({ id })
           .first();
         if (conflict) {
-          const err = new Error(`A managed stack named "${newName}" already exists on this engine.`) as Error & { status?: number };
-          err.status = 409;
-          throw err;
+          throw new AppError(409, `A managed stack named "${newName}" already exists on this engine.`);
         }
       }
     }
