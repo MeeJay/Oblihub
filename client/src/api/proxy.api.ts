@@ -120,7 +120,7 @@ export const proxyApi = {
     const res = await apiClient.get<ApiResponse<CustomPage[]>>('/proxy/custom-pages');
     return res.data.data!;
   },
-  async createCustomPage(data: { name: string; description?: string; errorCodes: number[]; htmlContent: string; theme?: string }): Promise<CustomPage> {
+  async createCustomPage(data: { name: string; description?: string; errorCodes: number[]; htmlContent: string; theme?: string; isWakingPage?: boolean }): Promise<CustomPage> {
     const res = await apiClient.post<ApiResponse<CustomPage>>('/proxy/custom-pages', data);
     return res.data.data!;
   },

@@ -1,5 +1,5 @@
 import { db } from '../db';
-import type { Stack, Container, ContainerStatus } from '@oblihub/shared';
+import type { Stack, Container, ContainerStatus, SleepMode, SleepState } from '@oblihub/shared';
 import type { DiscoveredContainer } from './docker.service';
 import { logger } from '../utils/logger';
 
@@ -36,6 +36,13 @@ interface ContainerRow {
   ports: unknown;
   last_checked_at: Date | null;
   last_updated_at: Date | null;
+  sleep_enabled: boolean;
+  sleep_after_seconds: number;
+  sleep_mode: string;
+  last_active_at: Date | null;
+  sleep_state: string;
+  wake_started_at: Date | null;
+  wake_health_path: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -63,6 +70,13 @@ function rowToContainer(row: ContainerRow): Container {
     lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
     lastUpdatedAt: row.last_updated_at?.toISOString() ?? null,
     ports,
+    sleepEnabled: row.sleep_enabled,
+    sleepAfterSeconds: row.sleep_after_seconds,
+    sleepMode: row.sleep_mode as SleepMode,
+    sleepState: row.sleep_state as SleepState,
+    lastActiveAt: row.last_active_at?.toISOString() ?? null,
+    wakeStartedAt: row.wake_started_at?.toISOString() ?? null,
+    wakeHealthPath: row.wake_health_path,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };

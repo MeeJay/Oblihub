@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { stackController } from '../controllers/stack.controller';
+import { sleepController } from '../controllers/sleep.controller';
 import { requireAuth } from '../middleware/auth';
 import { requirePermission, requireContainerAccess } from '../middleware/permissions';
 
@@ -14,5 +15,11 @@ router.post('/:id/stop', requirePermission('stacks.stop'), requireContainerAcces
 router.post('/:id/start', requirePermission('stacks.stop'), requireContainerAccess(), stackController.startContainer);
 router.delete('/:id', requirePermission('stacks.manage'), requireContainerAccess(), stackController.removeContainer);
 router.get('/:id/inspect', requirePermission('containers.inspect'), requireContainerAccess(), stackController.inspectContainer);
+
+// Sleep mode
+router.patch('/:id/sleep-config', requirePermission('stacks.manage'), requireContainerAccess(), sleepController.updateConfig);
+router.post('/:id/sleep', requirePermission('stacks.stop'), requireContainerAccess(), sleepController.sleepNow);
+router.post('/:id/wake', requirePermission('stacks.stop'), requireContainerAccess(), sleepController.wakeNow);
+router.get('/:id/wake-status', requirePermission('stacks.view'), requireContainerAccess(), sleepController.wakeStatus);
 
 export default router;

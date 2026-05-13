@@ -9,6 +9,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { apiLimiter } from './middleware/rateLimiter';
 import { routes } from './routes';
 import obligateCallbackRoutes from './routes/obligateCallback.routes';
+import wakeInternalRoutes from './routes/wakeInternal.routes';
 import { obligateService } from './services/obligate.service';
 
 const PgSession = connectPgSimple(session);
@@ -72,6 +73,8 @@ export function createApp() {
   app.use('/api/auth', obligateCallbackRoutes);
 
   app.use('/api', routes);
+  // Internal wake endpoint — only callable from the nginx proxy (shared-secret auth inside the router)
+  app.use('/__oblihub_internal', wakeInternalRoutes);
   app.use(errorHandler);
 
   return app;

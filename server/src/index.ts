@@ -10,6 +10,8 @@ import { setUpdateServiceIO } from './services/update.service';
 import { startDiscoveryWorker, stopDiscoveryWorker } from './workers/DiscoveryWorker';
 import { startStatsWorker, stopStatsWorker, cleanupOldStats } from './workers/StatsWorker';
 import { startUptimeWorker, stopUptimeWorker } from './workers/UptimeWorker';
+import { startSleepWorker, stopSleepWorker } from './workers/SleepWorker';
+import { startActivityTracker, stopActivityTracker } from './workers/ActivityTracker';
 import { schedulerService } from './services/scheduler.service';
 import { dockerService } from './services/docker.service';
 
@@ -83,6 +85,12 @@ async function main() {
   // Start uptime monitoring worker
   await startUptimeWorker();
 
+  // Start sleep worker (idle container detection)
+  startSleepWorker();
+
+  // Start activity tracker (tails nginx access log → updates last_active_at)
+  if (config.allowNginx) startActivityTracker();
+
   // Nginx proxy: regenerate configs on startup + auto-renewal
   if (config.allowNginx) {
     const { nginxService } = await import('./services/nginx.service');
@@ -107,6 +115,8 @@ async function main() {
     stopDiscoveryWorker();
     stopStatsWorker();
     stopUptimeWorker();
+    stopSleepWorker();
+    stopActivityTracker();
     schedulerService.stopAll();
     server.close();
     process.exit(0);

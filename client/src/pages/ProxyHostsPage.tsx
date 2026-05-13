@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, Plus, Trash2, Edit2, Globe, Shield, Zap, Lock, Power, PowerOff, ChevronDown, ChevronRight } from 'lucide-react';
+import { RefreshCw, Plus, Trash2, Edit2, Globe, Shield, Zap, Lock, Power, PowerOff, ChevronDown, ChevronRight, Moon } from 'lucide-react';
 import { proxyApi } from '@/api/proxy.api';
-import type { ProxyHost, Certificate, AccessList, CustomPage } from '@oblihub/shared';
+import { stacksApi } from '@/api/stacks.api';
+import type { ProxyHost, Certificate, AccessList, CustomPage, Stack, Container } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 const DEFAULT_HOST: Partial<ProxyHost> = {
@@ -24,6 +25,7 @@ export function ProxyHostsPage() {
   const [certs, setCerts] = useState<Certificate[]>([]);
   const [accessLists, setAccessLists] = useState<AccessList[]>([]);
   const [customPages, setCustomPages] = useState<CustomPage[]>([]);
+  const [allContainers, setAllContainers] = useState<{ container: Container; stackName: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<ProxyHost> | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
@@ -33,11 +35,17 @@ export function ProxyHostsPage() {
 
   const load = async () => {
     try {
-      const [h, c, a, p] = await Promise.all([proxyApi.listHosts(), proxyApi.listCertificates(), proxyApi.listAccessLists(), proxyApi.listCustomPages()]);
+      const [h, c, a, p, stacks] = await Promise.all([
+        proxyApi.listHosts(), proxyApi.listCertificates(), proxyApi.listAccessLists(), proxyApi.listCustomPages(),
+        stacksApi.list().catch(() => [] as Stack[]),
+      ]);
       setHosts(h);
       setCerts(c);
       setAccessLists(a);
       setCustomPages(p);
+      const flat: { container: Container; stackName: string }[] = [];
+      for (const s of stacks) for (const ctr of s.containers) flat.push({ container: ctr, stackName: s.name });
+      setAllContainers(flat);
     } catch { toast.error('Failed to load proxy hosts'); }
     finally { setLoading(false); }
   };
@@ -316,8 +324,42 @@ export function ProxyHostsPage() {
                 <select value={editing.errorPageId || ''} onChange={e => setEditing(h => h ? { ...h, errorPageId: parseInt(e.target.value) || null } : null)}
                   className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
                   <option value="">Use global default</option>
-                  {customPages.map(p => <option key={p.id} value={p.id}>{p.name} ({p.errorCodes.join(', ')})</option>)}
+                  {customPages.filter(p => !p.isWakingPage).map(p => <option key={p.id} value={p.id}>{p.name} ({p.errorCodes.join(', ')})</option>)}
                 </select>
+              </div>
+
+              {/* Sleep mode (auto-wake) */}
+              <div className="rounded-lg border border-border bg-bg-tertiary/50 p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Moon size={14} className="text-accent" />
+                  <span className="text-sm font-medium text-text-primary">Sleep mode</span>
+                </div>
+                <p className="text-[11px] text-text-muted mb-3">
+                  When the linked container is asleep, requests to this host show a loading page that auto-wakes it. Configure the container's idle timeout from its Sleep panel in the Stack page.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-medium text-text-secondary block mb-1">Wake container</label>
+                    <select value={editing.wakeContainerId || ''} onChange={e => setEditing(h => h ? { ...h, wakeContainerId: parseInt(e.target.value) || null } : null)}
+                      className="w-full rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
+                      <option value="">Disabled</option>
+                      {allContainers.map(({ container, stackName }) => (
+                        <option key={container.id} value={container.id}>
+                          {stackName} / {container.containerName}{container.sleepEnabled ? ' ⏾' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-text-secondary block mb-1">Waking page</label>
+                    <select value={editing.wakingPageId || ''} onChange={e => setEditing(h => h ? { ...h, wakingPageId: parseInt(e.target.value) || null } : null)}
+                      className="w-full rounded-lg border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                      disabled={!editing.wakeContainerId}>
+                      <option value="">Built-in default</option>
+                      {customPages.filter(p => p.isWakingPage).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
               </div>
 
               {/* Custom Response Headers */}

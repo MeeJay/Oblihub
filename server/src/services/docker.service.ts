@@ -266,6 +266,24 @@ export const dockerService = {
     logger.info({ dockerId }, 'Container started');
   },
 
+  /** Pause a running container (cgroup freezer — does NOT free GPU VRAM). */
+  async pauseContainer(dockerId: string): Promise<void> {
+    const docker = getDocker();
+    const container = docker.getContainer(dockerId);
+    logger.info({ dockerId }, 'Pausing container...');
+    await container.pause();
+    logger.info({ dockerId }, 'Container paused');
+  },
+
+  /** Unpause a paused container. */
+  async unpauseContainer(dockerId: string): Promise<void> {
+    const docker = getDocker();
+    const container = docker.getContainer(dockerId);
+    logger.info({ dockerId }, 'Unpausing container...');
+    await container.unpause();
+    logger.info({ dockerId }, 'Container unpaused');
+  },
+
   /** Stream container logs. Returns the stream so the caller can destroy it. */
   async getContainerLogs(dockerId: string, tail: number = 100): Promise<Readable> {
     const docker = getDocker();

@@ -8,6 +8,69 @@ import type { ProxyHost, RedirectionHost, DeadHost, AccessList } from '@oblihub/
 import { logger } from '../utils/logger';
 
 const PROXY_DIR = path.join(config.stacksDir, '_proxy');
+
+// Default waking page — used when a proxy host has no waking_page_id and no custom default exists.
+// Tokens: {{APP_NAME}}, {{PROXY_HOST_ID}}
+const DEFAULT_WAKING_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Waking up {{APP_NAME}}…</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0b0d1a; color: #e8ecf5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  .card { max-width: 480px; padding: 32px; text-align: center; }
+  .spinner { width: 48px; height: 48px; margin: 0 auto 24px; border: 3px solid rgba(45,78,201,0.2); border-top-color: #2d4ec9; border-radius: 50%; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 20px; margin: 0 0 8px; font-weight: 600; }
+  p { margin: 0; color: #8c93b6; font-size: 14px; line-height: 1.5; }
+  .elapsed { margin-top: 16px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; color: #5a78e8; }
+  .error { color: #e03a3a; margin-top: 16px; display: none; }
+  .error.visible { display: block; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="spinner"></div>
+  <h1>Waking up {{APP_NAME}}…</h1>
+  <p>The application was idle and shut down to save resources. It's starting back up — this can take up to a minute for AI workloads.</p>
+  <div class="elapsed"><span id="elapsed">0</span>s elapsed</div>
+  <div class="error" id="error">Wake failed — <a href="javascript:location.reload()" style="color:#5a78e8">retry</a></div>
+</div>
+<script>
+(function(){
+  var host = {{PROXY_HOST_ID}};
+  var start = Date.now();
+  var el = document.getElementById('elapsed');
+  var err = document.getElementById('error');
+
+  function tick(){ el.textContent = Math.floor((Date.now() - start) / 1000); }
+  setInterval(tick, 250);
+
+  function poll(){
+    fetch('/__oblihub_internal/wake/status?host=' + host, { cache: 'no-store' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.success && d.data && d.data.ready) {
+          location.reload();
+        } else if (d && d.data && d.data.state === 'wake_failed') {
+          err.classList.add('visible');
+        } else {
+          setTimeout(poll, 1500);
+        }
+      })
+      .catch(function(){ setTimeout(poll, 2000); });
+  }
+  // Kick off the wake then start polling
+  fetch('/__oblihub_internal/wake?host=' + host, { method: 'POST', cache: 'no-store' })
+    .finally(function(){ poll(); });
+})();
+</script>
+</body>
+</html>
+`;
+
 const CONF_DIR = path.join(PROXY_DIR, 'conf.d');
 const STREAM_DIR = path.join(PROXY_DIR, 'stream.d');
 const CERTS_DIR = path.join(PROXY_DIR, 'certs');
@@ -241,6 +304,28 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += '\n';
   }
 
+  // Sleep mode wake — intercept 502/503/504 (upstream down) with the waking page,
+  // and proxy the polling endpoints to the Oblihub server via a private location.
+  if (host.wakeContainerId) {
+    conf += `    # Sleep/wake — container ${host.wakeContainerId}\n`;
+    conf += `    error_page 502 503 504 = @oblihub_waking;\n`;
+    conf += `    location @oblihub_waking {\n`;
+    conf += `        internal;\n`;
+    conf += `        alias /etc/nginx/error_pages/waking_${host.id}.html;\n`;
+    conf += `    }\n`;
+    conf += `    location /__oblihub_internal/ {\n`;
+    // Compose service name = "server" (overridable via OBLIHUB_SERVER_HOST env on the proxy generator side).
+    conf += `        proxy_pass http://${process.env.OBLIHUB_SERVER_HOST || 'server'}:3001/__oblihub_internal/;\n`;
+    conf += `        proxy_set_header X-Oblihub-Internal "${process.env.OBLIHUB_INTERNAL_TOKEN || 'oblihub-internal'}";\n`;
+    conf += `        proxy_set_header Host $host;\n`;
+    conf += `        proxy_http_version 1.1;\n`;
+    conf += `    }\n`;
+    // Activity log — one line per request, parsed by ActivityTracker
+    conf += `    set $proxy_host_id ${host.id};\n`;
+    conf += `    access_log /etc/nginx/sleep_activity.log sleep_activity;\n`;
+    conf += '\n';
+  }
+
   // Resolver for dynamic upstream DNS (Docker internal DNS)
   conf += `    resolver 127.0.0.11 valid=10s ipv6=off;\n`;
   conf += `    set $upstream ${upstream};\n\n`;
@@ -344,6 +429,11 @@ http {
     log_format main '$remote_addr - $remote_user [$time_local] "$request" '
                     '$status $body_bytes_sent "$http_referer" '
                     '"$http_user_agent" "$http_x_forwarded_for"';
+
+    # Sleep activity log — pipe-separated, parsed by Oblihub's ActivityTracker.
+    # Default $proxy_host_id to "0" so non-sleep-enabled hosts never accidentally update last_active_at.
+    map $proxy_host_id $proxy_host_id_or_zero { default $proxy_host_id; "" "0"; }
+    log_format sleep_activity '$proxy_host_id_or_zero|$msec|$status|$http_user_agent|$request_uri';
 
     access_log /var/log/nginx/access.log main;
 
@@ -453,6 +543,11 @@ export const nginxService = {
       fs.writeFileSync(path.join(ERROR_PAGES_DIR, `page_${page.id}.html`), fallbackHtml);
     }
 
+    // Clear old waking HTML files (regenerated below per-host)
+    for (const f of fs.readdirSync(ERROR_PAGES_DIR).filter(f => f.startsWith('waking_'))) {
+      fs.unlinkSync(path.join(ERROR_PAGES_DIR, f));
+    }
+
     // Clear old configs
     for (const f of fs.readdirSync(CONF_DIR)) fs.unlinkSync(path.join(CONF_DIR, f));
     for (const f of fs.readdirSync(STREAM_DIR)) fs.unlinkSync(path.join(STREAM_DIR, f));
@@ -460,6 +555,10 @@ export const nginxService = {
     // Generate proxy host configs (named by primary domain)
     // Load access lists for config generation
     const allAccessLists = await accessListService.getAll();
+
+    // Waking page templates available to proxy hosts
+    const wakingPages = customPages.filter(p => p.isWakingPage);
+    const defaultWakingHtml = wakingPages[0]?.htmlContent || DEFAULT_WAKING_HTML;
 
     // Include disabled hosts with return 503 so they keep their cert and don't leak to other vhosts
     const allProxyHosts = await proxyHostService.getAll();
@@ -483,6 +582,15 @@ export const nginxService = {
       } else {
         // Apply default error page
         if (!host.errorPageId && defaultErrorPageId) host.errorPageId = defaultErrorPageId;
+        // Render waking page for this host if sleep mode is enabled
+        if (host.wakeContainerId) {
+          const tplPage = host.wakingPageId ? wakingPages.find(p => p.id === host.wakingPageId) : null;
+          const tpl = tplPage?.htmlContent || defaultWakingHtml;
+          const rendered = tpl
+            .replace(/\{\{PROXY_HOST_ID\}\}/g, String(host.id))
+            .replace(/\{\{APP_NAME\}\}/g, sanitizeForNginx(host.domainNames[0] || `app-${host.id}`));
+          fs.writeFileSync(path.join(ERROR_PAGES_DIR, `waking_${host.id}.html`), rendered);
+        }
         fs.writeFileSync(path.join(CONF_DIR, `${host.domainNames[0] || `proxy_${host.id}`}.conf`), generateProxyHostConfig(host, allAccessLists));
       }
     }

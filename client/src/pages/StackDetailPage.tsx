@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info, Trash2, ExternalLink, Globe, Plus, Power, PowerOff, Shield } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info, Trash2, ExternalLink, Globe, Plus, Power, PowerOff, Shield, Moon, Sun } from 'lucide-react';
 import { stacksApi, containersApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { proxyApi } from '@/api/proxy.api';
@@ -14,7 +14,7 @@ import { NotificationBindingsPanel } from '@/components/NotificationBindingsPane
 import type { Stack, Container, UpdateHistoryEntry, ManagedStack, ProxyHost } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
-type PanelType = 'logs' | 'console' | 'inspect';
+type PanelType = 'logs' | 'console' | 'inspect' | 'sleep';
 
 interface ContainerInspect {
   env: string[];
@@ -353,6 +353,24 @@ export function StackDetailPage() {
                   >
                     <Info size={14} />
                   </button>
+                  <button
+                    onClick={() => togglePanel(c.id, 'sleep')}
+                    className={`p-1.5 rounded-md transition-colors ${
+                      openPanels[c.id] === 'sleep' ? 'bg-accent/20 text-accent'
+                      : c.sleepState === 'sleeping' ? 'text-status-pending hover:bg-bg-hover'
+                      : c.sleepState === 'waking' ? 'text-accent animate-pulse'
+                      : c.sleepEnabled ? 'text-accent/70 hover:bg-bg-hover'
+                      : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
+                    }`}
+                    title={
+                      c.sleepState === 'sleeping' ? 'Sleeping — click to configure'
+                      : c.sleepState === 'waking' ? 'Waking…'
+                      : c.sleepEnabled ? `Sleep mode (idle after ${c.sleepAfterSeconds}s)`
+                      : 'Configure sleep mode'
+                    }
+                  >
+                    <Moon size={14} />
+                  </button>
                   {allowConsole && (
                     <button
                       onClick={() => togglePanel(c.id, 'console')}
@@ -402,6 +420,17 @@ export function StackDetailPage() {
               {openPanels[c.id] === 'console' && (
                 <div className="px-4 pb-3">
                   <ContainerConsole dockerId={c.dockerId} onClose={() => togglePanel(c.id, 'console')} />
+                </div>
+              )}
+              {openPanels[c.id] === 'sleep' && (
+                <div className="px-4 pb-3">
+                  <SleepPanel
+                    container={c}
+                    onChange={(updated) => {
+                      setStack(s => s ? { ...s, containers: s.containers.map(x => x.id === updated.id ? updated : x) } : null);
+                    }}
+                    onClose={() => togglePanel(c.id, 'sleep')}
+                  />
                 </div>
               )}
               {openPanels[c.id] === 'inspect' && (
@@ -845,6 +874,157 @@ export function StackDetailPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Sleep panel ────────────────────────────────────────────────────────────
+function SleepPanel({ container, onChange, onClose }: { container: Container; onChange: (c: Container) => void; onClose: () => void }) {
+  const [enabled, setEnabled] = useState(container.sleepEnabled);
+  const [idleMinutes, setIdleMinutes] = useState(Math.round(container.sleepAfterSeconds / 60));
+  const [mode, setMode] = useState(container.sleepMode);
+  const [healthPath, setHealthPath] = useState(container.wakeHealthPath || '');
+  const [saving, setSaving] = useState(false);
+  const [acting, setActing] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await containersApi.updateSleepConfig(container.id, {
+        sleepEnabled: enabled,
+        sleepAfterSeconds: Math.max(60, idleMinutes * 60),
+        sleepMode: mode,
+        wakeHealthPath: healthPath.trim() || null,
+      });
+      onChange(updated);
+      toast.success('Sleep config saved');
+    } catch { toast.error('Failed to save'); }
+    finally { setSaving(false); }
+  };
+
+  const handleSleepNow = async () => {
+    if (!confirm(`Put "${container.containerName}" to sleep now? It will ${mode === 'pause' ? 'pause' : 'stop'} until accessed via proxy.`)) return;
+    setActing(true);
+    try {
+      await containersApi.sleepNow(container.id);
+      toast.success('Sleeping');
+      onChange({ ...container, sleepState: 'sleeping' });
+    } catch { toast.error('Failed to sleep'); }
+    finally { setActing(false); }
+  };
+
+  const handleWakeNow = async () => {
+    setActing(true);
+    try {
+      await containersApi.wakeNow(container.id);
+      toast.success('Waking…');
+      onChange({ ...container, sleepState: 'waking', wakeStartedAt: new Date().toISOString() });
+    } catch { toast.error('Failed to wake'); }
+    finally { setActing(false); }
+  };
+
+  const stateBadge =
+    container.sleepState === 'sleeping' ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-status-pending/10 text-status-pending">Sleeping</span>
+    : container.sleepState === 'waking' ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-accent/10 text-accent">Waking…</span>
+    : container.sleepState === 'wake_failed' ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-status-down/10 text-status-down">Wake failed</span>
+    : <span className="px-1.5 py-0.5 rounded text-[10px] bg-status-up/10 text-status-up">Awake</span>;
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-tertiary overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-bg-secondary border-b border-border">
+        <span className="text-xs font-medium text-text-secondary flex items-center gap-1.5"><Moon size={12} /> Sleep mode</span>
+        <div className="flex items-center gap-2">
+          {stateBadge}
+          <button onClick={onClose} className="p-1 rounded hover:bg-bg-hover text-text-muted text-xs">&times;</button>
+        </div>
+      </div>
+      <div className="p-3 space-y-3 text-xs">
+        <p className="text-text-muted">
+          Idle containers can be put to sleep to free resources (incl. GPU VRAM). Wake-up is automatic when traffic hits the linked proxy host.
+          <strong className="block mt-1 text-status-pending">Use <code>stop</code> for AI/GPU workloads</strong> — <code>pause</code> only freezes the cgroup and keeps VRAM allocated.
+        </p>
+
+        {/* Enabled toggle */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-text-primary">Enable auto-sleep</div>
+            <div className="text-[11px] text-text-muted">Sleep the container after the idle threshold below</div>
+          </div>
+          <button onClick={() => setEnabled(!enabled)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enabled ? 'bg-accent' : 'bg-bg-hover border border-border'}`}>
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+
+        {/* Idle minutes */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-text-primary">Idle threshold</div>
+            <div className="text-[11px] text-text-muted">Sleep after this many minutes without activity</div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <input type="number" min={1} max={1440} value={idleMinutes}
+              onChange={e => setIdleMinutes(Math.max(1, parseInt(e.target.value) || 1))}
+              className="w-20 rounded border border-border bg-bg-primary px-2 py-1 text-right focus:outline-none focus:ring-1 focus:ring-accent" />
+            <span className="text-text-muted">min</span>
+          </div>
+        </div>
+
+        {/* Mode */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-text-primary">Mode</div>
+            <div className="text-[11px] text-text-muted">{mode === 'stop' ? 'docker stop — frees VRAM, slower wake (model reload)' : 'docker pause — instant wake, VRAM stays pinned'}</div>
+          </div>
+          <select value={mode} onChange={e => setMode(e.target.value as 'stop' | 'pause')}
+            className="rounded border border-border bg-bg-primary px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent">
+            <option value="stop">stop (frees VRAM)</option>
+            <option value="pause">pause (fast wake)</option>
+          </select>
+        </div>
+
+        {/* Health path */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-text-primary">Wake readiness check</div>
+            <div className="text-[11px] text-text-muted">Optional HTTP path probed during wake (e.g. <code>/health</code>). Empty = TCP probe on first port.</div>
+          </div>
+          <input type="text" value={healthPath} onChange={e => setHealthPath(e.target.value)} placeholder="/health"
+            className="w-36 rounded border border-border bg-bg-primary px-2 py-1 font-mono focus:outline-none focus:ring-1 focus:ring-accent" />
+        </div>
+
+        {/* Last active */}
+        {container.lastActiveAt && (
+          <div className="text-[11px] text-text-muted">
+            Last activity: {new Date(container.lastActiveAt).toLocaleString()}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 pt-2 border-t border-border">
+          <button onClick={save} disabled={saving}
+            className="px-3 py-1 rounded-md bg-accent text-white hover:bg-accent-hover disabled:opacity-50 flex items-center gap-1">
+            {saving ? 'Saving…' : 'Save config'}
+          </button>
+          {container.sleepState === 'awake' && (
+            <button onClick={handleSleepNow} disabled={acting}
+              className="px-3 py-1 rounded-md border border-border text-text-muted hover:bg-bg-hover hover:text-status-pending flex items-center gap-1">
+              <Moon size={11} /> Sleep now
+            </button>
+          )}
+          {container.sleepState === 'sleeping' && (
+            <button onClick={handleWakeNow} disabled={acting}
+              className="px-3 py-1 rounded-md border border-border text-text-muted hover:bg-bg-hover hover:text-status-up flex items-center gap-1">
+              <Sun size={11} /> Wake now
+            </button>
+          )}
+          {container.sleepState === 'wake_failed' && (
+            <button onClick={handleWakeNow} disabled={acting}
+              className="px-3 py-1 rounded-md border border-status-down text-status-down hover:bg-status-down/10 flex items-center gap-1">
+              <Sun size={11} /> Retry wake
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

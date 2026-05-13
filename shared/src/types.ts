@@ -26,6 +26,9 @@ export interface User {
 // ── Stack types ──
 export type ContainerStatus = 'up_to_date' | 'update_available' | 'updating' | 'error' | 'unknown' | 'checking' | 'excluded' | 'stopped';
 
+export type SleepMode = 'stop' | 'pause';
+export type SleepState = 'awake' | 'sleeping' | 'waking' | 'wake_failed';
+
 export interface Stack {
   id: number;
   name: string;
@@ -66,6 +69,14 @@ export interface Container {
   lastCheckedAt: string | null;
   lastUpdatedAt: string | null;
   ports: ContainerPort[];
+  // Sleep mode (per-container opt-in)
+  sleepEnabled: boolean;
+  sleepAfterSeconds: number;
+  sleepMode: SleepMode;
+  sleepState: SleepState;
+  lastActiveAt: string | null;
+  wakeStartedAt: string | null;
+  wakeHealthPath: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -206,6 +217,8 @@ export interface ProxyHost {
   corsEnabled: boolean;
   customResponseHeaders: { name: string; value: string; action: 'add' | 'remove' }[] | null;
   errorPageId: number | null;
+  wakeContainerId: number | null;
+  wakingPageId: number | null;
   autoMonitor: boolean;
   certificate?: Certificate | null;
   createdAt: string;
@@ -220,6 +233,7 @@ export interface CustomPage {
   htmlContent: string;
   theme: string;
   isBuiltin: boolean;
+  isWakingPage: boolean;
   createdAt: string;
   updatedAt: string;
 }

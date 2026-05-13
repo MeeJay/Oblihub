@@ -293,9 +293,9 @@ export const proxyController = {
 
   async createCustomPage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { name, description, errorCodes, htmlContent, theme } = req.body;
+      const { name, description, errorCodes, htmlContent, theme, isWakingPage } = req.body;
       if (!name || !htmlContent) throw new AppError(400, 'Name and HTML content required');
-      const page = await customPageService.create({ name, description, errorCodes: errorCodes || [500], htmlContent, theme });
+      const page = await customPageService.create({ name, description, errorCodes: errorCodes || [500], htmlContent, theme, isWakingPage });
       await nginxService.regenerateAndReload();
       res.json({ success: true, data: page });
     } catch (err) { next(err); }

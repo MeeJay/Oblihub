@@ -48,6 +48,8 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null): Prox
     corsEnabled: (row.cors_enabled as boolean) || false,
     customResponseHeaders: (row.custom_response_headers as { name: string; value: string; action: 'add' | 'remove' }[]) || null,
     errorPageId: (row.error_page_id as number) || null,
+    wakeContainerId: (row.wake_container_id as number) || null,
+    wakingPageId: (row.waking_page_id as number) || null,
     autoMonitor: (row.auto_monitor as boolean) || false,
     certificate: cert || null,
     createdAt: (row.created_at as Date).toISOString(),
@@ -197,6 +199,8 @@ export const proxyHostService = {
       cors_enabled: data.corsEnabled || false,
       custom_response_headers: data.customResponseHeaders ? JSON.stringify(data.customResponseHeaders) : null,
       error_page_id: data.errorPageId || null,
+      wake_container_id: data.wakeContainerId || null,
+      waking_page_id: data.wakingPageId || null,
       auto_monitor: data.autoMonitor || false,
     }).returning('*');
     return proxyRow(row, await getCert(row.certificate_id));
@@ -231,6 +235,8 @@ export const proxyHostService = {
     if (data.corsEnabled !== undefined) update.cors_enabled = data.corsEnabled;
     if (data.customResponseHeaders !== undefined) update.custom_response_headers = data.customResponseHeaders ? JSON.stringify(data.customResponseHeaders) : null;
     if (data.errorPageId !== undefined) update.error_page_id = data.errorPageId;
+    if (data.wakeContainerId !== undefined) update.wake_container_id = data.wakeContainerId;
+    if (data.wakingPageId !== undefined) update.waking_page_id = data.wakingPageId;
     if (data.autoMonitor !== undefined) update.auto_monitor = data.autoMonitor;
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');
     return row ? proxyRow(row, await getCert(row.certificate_id)) : null;
@@ -420,6 +426,7 @@ function customPageRow(row: Record<string, unknown>): CustomPage {
     htmlContent: row.html_content as string,
     theme: (row.theme as string) || 'custom',
     isBuiltin: row.is_builtin as boolean,
+    isWakingPage: (row.is_waking_page as boolean) || false,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
   };
@@ -436,7 +443,7 @@ export const customPageService = {
     return row ? customPageRow(row) : null;
   },
 
-  async create(data: { name: string; description?: string; errorCodes: number[]; htmlContent: string; theme?: string }): Promise<CustomPage> {
+  async create(data: { name: string; description?: string; errorCodes: number[]; htmlContent: string; theme?: string; isWakingPage?: boolean }): Promise<CustomPage> {
     const [row] = await db('custom_pages').insert({
       name: data.name,
       description: data.description || null,
@@ -444,16 +451,18 @@ export const customPageService = {
       html_content: data.htmlContent,
       theme: data.theme || 'custom',
       is_builtin: false,
+      is_waking_page: data.isWakingPage || false,
     }).returning('*');
     return customPageRow(row);
   },
 
-  async update(id: number, data: { name?: string; description?: string; errorCodes?: number[]; htmlContent?: string }): Promise<CustomPage | null> {
+  async update(id: number, data: { name?: string; description?: string; errorCodes?: number[]; htmlContent?: string; isWakingPage?: boolean }): Promise<CustomPage | null> {
     const update: Record<string, unknown> = { updated_at: new Date() };
     if (data.name !== undefined) update.name = data.name;
     if (data.description !== undefined) update.description = data.description;
     if (data.errorCodes !== undefined) update.error_codes = JSON.stringify(data.errorCodes);
     if (data.htmlContent !== undefined) update.html_content = data.htmlContent;
+    if (data.isWakingPage !== undefined) update.is_waking_page = data.isWakingPage;
     const [row] = await db('custom_pages').where({ id }).update(update).returning('*');
     return row ? customPageRow(row) : null;
   },

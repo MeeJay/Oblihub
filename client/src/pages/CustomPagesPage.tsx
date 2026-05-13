@@ -38,7 +38,7 @@ export function CustomPagesPage() {
         await proxyApi.updateCustomPage(editId, editing as CustomPage);
         toast.success('Page updated');
       } else {
-        await proxyApi.createCustomPage({ name: editing.name, description: editing.description || undefined, errorCodes: editing.errorCodes || [500], htmlContent: editing.htmlContent, theme: editing.theme });
+        await proxyApi.createCustomPage({ name: editing.name, description: editing.description || undefined, errorCodes: editing.errorCodes || [500], htmlContent: editing.htmlContent, theme: editing.theme, isWakingPage: editing.isWakingPage || false });
         toast.success('Page created');
       }
       setEditing(null); setEditId(null); load();
@@ -86,20 +86,37 @@ export function CustomPagesPage() {
                   className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
                 <input value={editing.description || ''} onChange={e => setEditing(p => p ? { ...p, description: e.target.value } : null)} placeholder="Description (optional)"
                   className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
-                <div>
-                  <label className="text-xs font-medium text-text-secondary block mb-1.5">Error Codes</label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {ERROR_CODE_OPTIONS.map(code => {
-                      const active = editing.errorCodes?.includes(code);
-                      return (
-                        <button key={code} onClick={() => toggleCode(code)}
-                          className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${active ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-muted hover:bg-bg-hover'}`}>
-                          {code}
-                        </button>
-                      );
-                    })}
+                <div className="flex items-center justify-between rounded-lg border border-border bg-bg-tertiary/50 px-3 py-2">
+                  <div>
+                    <div className="text-sm font-medium text-text-primary">Waking page</div>
+                    <div className="text-[11px] text-text-muted">Loading screen shown while a sleeping container wakes up (instead of error codes)</div>
                   </div>
+                  <button onClick={() => setEditing(p => p ? { ...p, isWakingPage: !p.isWakingPage } : null)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${editing.isWakingPage ? 'bg-accent' : 'bg-bg-hover border border-border'}`}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${editing.isWakingPage ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
                 </div>
+                {!editing.isWakingPage && (
+                  <div>
+                    <label className="text-xs font-medium text-text-secondary block mb-1.5">Error Codes</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {ERROR_CODE_OPTIONS.map(code => {
+                        const active = editing.errorCodes?.includes(code);
+                        return (
+                          <button key={code} onClick={() => toggleCode(code)}
+                            className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${active ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-muted hover:bg-bg-hover'}`}>
+                            {code}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {editing.isWakingPage && (
+                  <div className="rounded-lg border border-border bg-bg-tertiary/30 p-2.5 text-[11px] text-text-muted">
+                    Placeholders supported in HTML: <code>{`{{APP_NAME}}`}</code>, <code>{`{{PROXY_HOST_ID}}`}</code>. JS will receive <code>fetch('/__oblihub_internal/wake/status?host=...')</code> returning <code>{`{ ready, state, elapsedMs }`}</code>.
+                  </div>
+                )}
                 <div>
                   <label className="text-xs font-medium text-text-secondary block mb-1.5">HTML Content</label>
                   <textarea value={editing.htmlContent || ''} onChange={e => setEditing(p => p ? { ...p, htmlContent: e.target.value } : null)}

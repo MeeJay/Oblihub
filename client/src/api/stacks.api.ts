@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ApiResponse, Stack, UpdateHistoryEntry } from '@oblihub/shared';
+import type { ApiResponse, Stack, UpdateHistoryEntry, Container, SleepMode, SleepState } from '@oblihub/shared';
 
 export const stacksApi = {
   async list(): Promise<Stack[]> {
@@ -50,6 +50,20 @@ export const containersApi = {
   },
   async inspect(id: number): Promise<{ env: string[]; ports: Record<string, { HostIp: string; HostPort: string }[]>; mounts: { Type: string; Source: string; Destination: string; Mode: string }[]; networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }> }> {
     const res = await apiClient.get<ApiResponse<{ env: string[]; ports: Record<string, { HostIp: string; HostPort: string }[]>; mounts: { Type: string; Source: string; Destination: string; Mode: string }[]; networks: Record<string, { IPAddress: string; Gateway: string; NetworkID: string }> }>>(`/containers/${id}/inspect`);
+    return res.data.data!;
+  },
+  async updateSleepConfig(id: number, data: { sleepEnabled?: boolean; sleepAfterSeconds?: number; sleepMode?: SleepMode; wakeHealthPath?: string | null }): Promise<Container> {
+    const res = await apiClient.patch<ApiResponse<Container>>(`/containers/${id}/sleep-config`, data);
+    return res.data.data!;
+  },
+  async sleepNow(id: number): Promise<void> {
+    await apiClient.post(`/containers/${id}/sleep`);
+  },
+  async wakeNow(id: number): Promise<void> {
+    await apiClient.post(`/containers/${id}/wake`);
+  },
+  async wakeStatus(id: number): Promise<{ state: SleepState; elapsedMs: number; message?: string }> {
+    const res = await apiClient.get<ApiResponse<{ state: SleepState; elapsedMs: number; message?: string }>>(`/containers/${id}/wake-status`);
     return res.data.data!;
   },
 };
