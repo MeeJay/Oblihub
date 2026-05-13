@@ -14,8 +14,10 @@ RUN cd server && npm run build
 
 FROM node:24-alpine AS production
 
-# Install Docker CLI (needed for managed stack compose operations)
-RUN apk add --no-cache docker-cli docker-cli-compose
+# Install Docker CLI (compose operations) + openssh-client (DOCKER_HOST=ssh://...).
+# The docker CLI shells out to `ssh` when the host scheme is ssh, so openssh-client
+# is mandatory for compose deploys against SSH-based remote engines.
+RUN apk add --no-cache docker-cli docker-cli-compose openssh-client
 
 WORKDIR /app
 
