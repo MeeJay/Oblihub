@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield, Cpu, MemoryStick, Globe, Server } from 'lucide-react';
+import { RefreshCw, Play, Package, Search, RotateCcw, Plus, ExternalLink, Shield, Cpu, MemoryStick, Globe, Server, Moon } from 'lucide-react';
 import { stacksApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { proxyApi } from '@/api/proxy.api';
@@ -325,6 +325,46 @@ export function DashboardPage() {
                       return (
                         <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium bg-bg-tertiary text-text-secondary border border-border" title={`Running on ${eng.name}`}>
                           <Server size={9} /> {eng.name}
+                        </span>
+                      );
+                    })()}
+                    {/* Sleep badge — surfaces when any container in this stack is sleeping,
+                        waking, or stuck in wake_failed. Helps distinguish "stack stopped on
+                        purpose for sleep" from "stack broken". */}
+                    {(() => {
+                      const sleepEnabled = stack.containers.filter(c => c.sleepEnabled);
+                      if (sleepEnabled.length === 0) return null;
+                      const states = sleepEnabled.map(c => c.sleepState);
+                      const anySleeping = states.includes('sleeping');
+                      const anyWaking = states.includes('waking');
+                      const anyFailed = states.includes('wake_failed');
+                      const allAwake = states.every(s => s === 'awake');
+                      let cls = 'bg-bg-tertiary text-text-muted border-border';
+                      let label = 'Sleep ready';
+                      let title = `${sleepEnabled.length} container${sleepEnabled.length !== 1 ? 's' : ''} with sleep mode enabled`;
+                      if (anyFailed) {
+                        cls = 'bg-status-down/10 text-status-down border-status-down/30';
+                        label = 'Wake failed';
+                        title = 'A container failed to wake — check sleep panel';
+                      } else if (anyWaking) {
+                        cls = 'bg-accent/15 text-accent border-accent/30';
+                        label = 'Waking…';
+                        title = 'A container is currently being woken';
+                      } else if (anySleeping) {
+                        cls = 'bg-blue-500/10 text-blue-400 border-blue-500/30';
+                        label = 'Sleeping';
+                        title = `${states.filter(s => s === 'sleeping').length} container(s) sleeping`;
+                      } else if (allAwake) {
+                        // Quieter for awake — slightly dim moon, no text, to avoid noise on the dashboard
+                        return (
+                          <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium bg-bg-tertiary text-text-muted border border-border" title={title}>
+                            <Moon size={9} />
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border ${cls}`} title={title}>
+                          <Moon size={9} /> {label}
                         </span>
                       );
                     })()}
