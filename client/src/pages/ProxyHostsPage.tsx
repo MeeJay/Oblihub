@@ -18,6 +18,7 @@ const DEFAULT_HOST: Partial<ProxyHost> = {
   cachingEnabled: false,
   websocketSupport: true,
   enabled: true,
+  wakeExtraContainerIds: [],
 };
 
 export function ProxyHostsPage() {
@@ -359,6 +360,50 @@ export function ProxyHostsPage() {
                       {customPages.filter(p => p.isWakingPage).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </div>
+                </div>
+
+                {/* Extra containers to wake — useful for multi-container apps where the proxy
+                    fronts only one service but its dependencies must also start. The primary
+                    above governs the readiness probe; these wake in parallel without affecting
+                    the redirect timing. Disabled until a primary is chosen. */}
+                <div className="mt-3">
+                  <label className="text-[11px] font-medium text-text-secondary block mb-1">
+                    Also wake these containers{' '}
+                    <span className="text-text-muted">(optional, parallel)</span>
+                  </label>
+                  {editing.wakeContainerId ? (
+                    <div className="rounded-lg border border-border bg-bg-tertiary/40 p-2 max-h-40 overflow-y-auto space-y-1">
+                      {allContainers
+                        .filter(({ container }) => container.id !== editing.wakeContainerId)
+                        .map(({ container, stackName }) => {
+                          const checked = (editing.wakeExtraContainerIds || []).includes(container.id);
+                          return (
+                            <label key={container.id} className="flex items-center gap-2 text-[11px] text-text-primary cursor-pointer hover:bg-bg-tertiary px-1 py-0.5 rounded">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => setEditing(h => {
+                                  if (!h) return null;
+                                  const cur = h.wakeExtraContainerIds || [];
+                                  const next = e.target.checked
+                                    ? [...cur, container.id]
+                                    : cur.filter(id => id !== container.id);
+                                  return { ...h, wakeExtraContainerIds: next };
+                                })}
+                              />
+                              <span>{stackName} / {container.containerName}{container.sleepEnabled ? ' ⏾' : ''}</span>
+                            </label>
+                          );
+                        })}
+                      {allContainers.length <= 1 && (
+                        <div className="text-[11px] text-text-muted italic px-1 py-0.5">No other containers available.</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-border bg-bg-tertiary/40 p-2 text-[11px] text-text-muted italic">
+                      Select a primary wake container first.
+                    </div>
+                  )}
                 </div>
               </div>
 

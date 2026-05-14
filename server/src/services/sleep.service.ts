@@ -134,23 +134,62 @@ export const sleepService = {
       return { ok: false, message };
     }
 
-    // After start, Docker assigns a new IP. We re-resolve via inspect.
-    // Probe readiness — HTTP path if configured, else TCP on the first port.
+    // Probe readiness — HTTP path if configured, else TCP.
+    //
+    // Probe target selection — single source of truth: the proxy_host's forwardHost:forwardPort.
+    // That's what nginx routes to in production, so it's both reachable from here and exactly
+    // what the user has validated. Falls back to the container's bridge IP for containers
+    // not (yet) wired to a proxy host (e.g. the operator just enabled sleep on a container
+    // they're going to consume some other way).
+    let probeHost: string | null = null;
+    let probePort: number | null = null;
+    try {
+      const proxyRow = await db('proxy_hosts')
+        .where({ wake_container_id: containerId })
+        .select('forward_host', 'forward_port')
+        .first();
+      if (proxyRow?.forward_host && proxyRow?.forward_port) {
+        probeHost = proxyRow.forward_host as string;
+        probePort = proxyRow.forward_port as number;
+      }
+    } catch { /* leave nulls — fall through to bridge probe */ }
+
+    const containerPort = container.ports.find(p => p.containerPort)?.containerPort ?? null;
     const start = Date.now();
+
     while (Date.now() - start < WAKE_TIMEOUT_MS) {
       try {
-        const info = await dockerService.inspectContainer(container.dockerId, container.engineId);
-        const netSettings = info.NetworkSettings?.Networks || {};
-        const firstNet = Object.values(netSettings)[0] as { IPAddress?: string } | undefined;
-        const ip = firstNet?.IPAddress;
-        const firstPort = container.ports.find(p => p.containerPort)?.containerPort;
-        if (ip && firstPort) {
+        // Primary path: probe the proxy_host's forward target.
+        if (probeHost && probePort) {
           const ready = container.wakeHealthPath
-            ? await httpProbe(ip, firstPort, container.wakeHealthPath)
-            : await tcpProbe(ip, firstPort);
+            ? await httpProbe(probeHost, probePort, container.wakeHealthPath)
+            : await tcpProbe(probeHost, probePort);
           if (ready) {
             await setState(containerId, 'awake', { last_active_at: new Date() });
-            logger.info({ containerId, elapsedMs: Date.now() - start }, 'Container woken');
+            logger.info({ containerId, via: `proxy-host:${probeHost}:${probePort}`, elapsedMs: Date.now() - start }, 'Container woken');
+            return { ok: true };
+          }
+        } else {
+          // Fallback: no proxy_host wired to this container — probe via Docker bridge IP.
+          // This still works when proxy and container live on the same daemon.
+          const info = await dockerService.inspectContainer(container.dockerId, container.engineId);
+          const netSettings = info.NetworkSettings?.Networks || {};
+          const firstNet = Object.values(netSettings)[0] as { IPAddress?: string } | undefined;
+          const ip = firstNet?.IPAddress;
+          if (ip && containerPort) {
+            const ready = container.wakeHealthPath
+              ? await httpProbe(ip, containerPort, container.wakeHealthPath)
+              : await tcpProbe(ip, containerPort);
+            if (ready) {
+              await setState(containerId, 'awake', { last_active_at: new Date() });
+              logger.info({ containerId, via: 'bridge-ip', elapsedMs: Date.now() - start }, 'Container woken');
+              return { ok: true };
+            }
+          } else if (info.State?.Running === true && container.engineId) {
+            // Last resort: no probe target reachable from here. Trust docker status.
+            await new Promise(r => setTimeout(r, WAKE_HEALTH_POLL_MS));
+            await setState(containerId, 'awake', { last_active_at: new Date() });
+            logger.info({ containerId, via: 'docker-status-only', elapsedMs: Date.now() - start }, 'Container woken (no probe target)');
             return { ok: true };
           }
         }

@@ -30,13 +30,38 @@ async function resolveContainer(proxyHostId: number): Promise<number | null> {
   return (row?.wake_container_id as number) ?? null;
 }
 
+/**
+ * Resolve the full wake target set: primary (used by readiness probe) + extras (waked in
+ * parallel, not probed). Returns null if no primary is set.
+ */
+async function resolveWakeTargets(proxyHostId: number): Promise<{ primary: number; extras: number[] } | null> {
+  const row = await db('proxy_hosts')
+    .where({ id: proxyHostId })
+    .select('wake_container_id', 'wake_extra_container_ids')
+    .first();
+  const primary = (row?.wake_container_id as number) ?? null;
+  if (!primary) return null;
+  let extras: number[] = [];
+  const raw = row?.wake_extra_container_ids;
+  if (Array.isArray(raw)) extras = raw as number[];
+  else if (typeof raw === 'string' && raw) { try { extras = JSON.parse(raw) as number[]; } catch { /* keep empty */ } }
+  // Defensive: filter out the primary from extras to avoid double-wake on the same id.
+  extras = extras.filter(id => id !== primary);
+  return { primary, extras };
+}
+
 router.post('/wake', async (req, res) => {
   const proxyHostId = parseInt((req.query.host as string) || '', 10);
   if (!proxyHostId) { res.status(400).json({ success: false, error: 'missing host' }); return; }
-  const containerId = await resolveContainer(proxyHostId);
-  if (!containerId) { res.status(404).json({ success: false, error: 'no wake target' }); return; }
-  // Fire-and-forget; idempotent via sleepService.wake's in-flight map.
-  sleepService.wake(containerId).catch(err => logger.warn({ err, containerId }, 'wake failed'));
+  const targets = await resolveWakeTargets(proxyHostId);
+  if (!targets) { res.status(404).json({ success: false, error: 'no wake target' }); return; }
+  // Fire-and-forget on every target. Each call is idempotent via sleepService's in-flight map.
+  // We wake the primary first so its state transitions are observed by the polling page; extras
+  // start in parallel and don't affect readiness — they're nice-to-have backend boots.
+  sleepService.wake(targets.primary).catch(err => logger.warn({ err, containerId: targets.primary }, 'wake failed (primary)'));
+  for (const extraId of targets.extras) {
+    sleepService.wake(extraId).catch(err => logger.warn({ err, containerId: extraId }, 'wake failed (extra)'));
+  }
   res.json({ success: true });
 });
 

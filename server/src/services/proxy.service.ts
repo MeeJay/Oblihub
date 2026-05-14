@@ -49,6 +49,12 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null): Prox
     customResponseHeaders: (row.custom_response_headers as { name: string; value: string; action: 'add' | 'remove' }[]) || null,
     errorPageId: (row.error_page_id as number) || null,
     wakeContainerId: (row.wake_container_id as number) || null,
+    wakeExtraContainerIds: ((): number[] => {
+      const raw = row.wake_extra_container_ids;
+      if (Array.isArray(raw)) return raw as number[];
+      if (typeof raw === 'string' && raw) { try { return JSON.parse(raw) as number[]; } catch { return []; } }
+      return [];
+    })(),
     wakingPageId: (row.waking_page_id as number) || null,
     autoMonitor: (row.auto_monitor as boolean) || false,
     certificate: cert || null,
@@ -200,6 +206,7 @@ export const proxyHostService = {
       custom_response_headers: data.customResponseHeaders ? JSON.stringify(data.customResponseHeaders) : null,
       error_page_id: data.errorPageId || null,
       wake_container_id: data.wakeContainerId || null,
+      wake_extra_container_ids: JSON.stringify(data.wakeExtraContainerIds || []),
       waking_page_id: data.wakingPageId || null,
       auto_monitor: data.autoMonitor || false,
     }).returning('*');
@@ -236,6 +243,7 @@ export const proxyHostService = {
     if (data.customResponseHeaders !== undefined) update.custom_response_headers = data.customResponseHeaders ? JSON.stringify(data.customResponseHeaders) : null;
     if (data.errorPageId !== undefined) update.error_page_id = data.errorPageId;
     if (data.wakeContainerId !== undefined) update.wake_container_id = data.wakeContainerId;
+    if (data.wakeExtraContainerIds !== undefined) update.wake_extra_container_ids = JSON.stringify(data.wakeExtraContainerIds);
     if (data.wakingPageId !== undefined) update.waking_page_id = data.wakingPageId;
     if (data.autoMonitor !== undefined) update.auto_monitor = data.autoMonitor;
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');

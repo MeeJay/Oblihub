@@ -276,6 +276,10 @@ export interface ProxyHost {
   customResponseHeaders: { name: string; value: string; action: 'add' | 'remove' }[] | null;
   errorPageId: number | null;
   wakeContainerId: number | null;
+  // Additional containers to wake in parallel when this proxy_host receives a request while
+  // the primary target is asleep. Useful for multi-container apps (front + back) where the
+  // proxy fronts only the UI but the UI's backend services must also be running.
+  wakeExtraContainerIds: number[];
   wakingPageId: number | null;
   autoMonitor: boolean;
   certificate?: Certificate | null;
