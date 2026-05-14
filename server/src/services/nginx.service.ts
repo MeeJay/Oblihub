@@ -288,10 +288,14 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += customHeadersSnippet(host.customResponseHeaders) + '\n\n';
   }
 
-  // Error pages
+  // Error pages — per-code custom pages with dynamic content.
+  // When wakeContainerId is set, 502/503/504 are reserved for the waking page (declared
+  // immediately below) and we skip them here so there's no overlap between the two
+  // `error_page` directives for those codes.
   if (host.errorPageId) {
-    // Per-code error pages with dynamic content
-    const errorCodes = [400, 401, 403, 404, 500, 502, 503, 504];
+    const errorCodes = host.wakeContainerId
+      ? [400, 401, 403, 404, 500]
+      : [400, 401, 403, 404, 500, 502, 503, 504];
     for (const code of errorCodes) {
       conf += `    error_page ${code} /oblihub_err_${host.errorPageId}_${code}.html;\n`;
     }
@@ -348,6 +352,15 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   conf += `        proxy_set_header X-Forwarded-Host $host;\n`;
   conf += `        proxy_set_header X-Forwarded-Port $server_port;\n`;
   conf += `        proxy_http_version 1.1;\n`;
+
+  // When a wake target is set, intercept 5xx responses from the upstream too — not just
+  // connection failures. nginx defaults to off, which means a 502/503/504 returned BY the
+  // upstream (e.g. when there's a reverse proxy in front of the sleeping container that
+  // reports the backend as down) gets passed through to the client transparently. With
+  // proxy_intercept_errors on, those responses flow into our error_page → waking page.
+  if (host.wakeContainerId) {
+    conf += `        proxy_intercept_errors on;\n`;
+  }
 
   if (host.websocketSupport) {
     conf += `        proxy_set_header Upgrade $http_upgrade;\n`;
