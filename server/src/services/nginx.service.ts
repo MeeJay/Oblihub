@@ -308,8 +308,11 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   // and proxy the polling endpoints to the Oblihub server via a private location.
   if (host.wakeContainerId) {
     conf += `    # Sleep/wake — container ${host.wakeContainerId}\n`;
-    conf += `    error_page 502 503 504 = @oblihub_waking;\n`;
-    conf += `    location @oblihub_waking {\n`;
+    // error_page → URI (not a named location). nginx triggers an internal subrequest to that
+    // URI, which is matched by the `location =` block below. We can't use a named location
+    // here because nginx forbids `alias` inside them.
+    conf += `    error_page 502 503 504 /__oblihub_waking_${host.id}.html;\n`;
+    conf += `    location = /__oblihub_waking_${host.id}.html {\n`;
     conf += `        internal;\n`;
     conf += `        alias /etc/nginx/error_pages/waking_${host.id}.html;\n`;
     conf += `    }\n`;
