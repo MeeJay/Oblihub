@@ -1,7 +1,9 @@
-import { exec, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import Docker from 'dockerode';
+import type { Server as SocketIOServer } from 'socket.io';
+import { SOCKET_EVENTS } from '@oblihub/shared';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { dockerService } from './docker.service';
@@ -14,6 +16,9 @@ interface ComposeResult {
 
 // Active compose processes keyed by project name — used to cancel stuck deploys.
 const activeProcesses = new Map<string, ChildProcess>();
+
+let _io: SocketIOServer | null = null;
+export function setComposeServiceIO(io: SocketIOServer): void { _io = io; }
 
 function ensureStacksDir(): void {
   if (!fs.existsSync(config.stacksDir)) {
@@ -228,10 +233,27 @@ export const composeService = {
     throw new Error(`Unsupported engine type for compose CLI: ${engine.type}`);
   },
 
-  /** Run a docker compose command — optionally targeting a remote engine. */
-  async runCompose(projectName: string, args: string[], timeoutMs = 120000, engineId: number | null = null): Promise<ComposeResult> {
+  /**
+   * Run a docker compose command — optionally targeting a remote engine.
+   *
+   * Uses spawn() (not exec) so stdout/stderr stream to clients via Socket.io as they arrive.
+   *
+   * No automatic timeout: pulling a multi-GB image over SSH legitimately takes 15-30 minutes,
+   * any value we'd pick would be wrong for someone. The operator sees the live log and clicks
+   * Cancel when (and only when) they decide the process is stuck. The `cancel(projectName)`
+   * method kills via SIGTERM + SIGKILL after 3s.
+   *
+   * `idleTimeoutMs > 0` re-enables a safety net (idle-only, reset on each chunk) — used by
+   * short housekeeping ops like `ps` to avoid hanging indefinitely on a broken engine.
+   */
+  async runCompose(
+    projectName: string,
+    args: string[],
+    idleTimeoutMs = 0,
+    engineId: number | null = null,
+  ): Promise<ComposeResult> {
     const stackDir = getStackDir(projectName);
-    const cmd = `docker compose -p "${projectName}" -f docker-compose.yml ${args.join(' ')}`;
+    const cmdString = `docker compose -p "${projectName}" -f docker-compose.yml ${args.join(' ')}`;
 
     let envInjection: { env: Record<string, string>; cleanup: () => void };
     try {
@@ -239,30 +261,80 @@ export const composeService = {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.warn({ projectName, engineId, err: message }, 'Compose engine env resolution failed');
+      _io?.emit(SOCKET_EVENTS.COMPOSE_FINISHED, { projectName, exitCode: 1, durationMs: 0 });
       return { exitCode: 1, stdout: '', stderr: message };
     }
 
-    logger.info({ projectName, engineId, cmd }, 'Running compose command');
+    logger.info({ projectName, engineId, cmd: cmdString, idleTimeoutMs }, 'Running compose command');
 
     return new Promise((resolve) => {
-      const child = exec(cmd, {
+      const startedAt = Date.now();
+      const spawnArgs = ['compose', '-p', projectName, '-f', 'docker-compose.yml', ...args];
+      const child = spawn('docker', spawnArgs, {
         cwd: stackDir,
-        timeout: timeoutMs,
-        maxBuffer: 10 * 1024 * 1024,
         env: { ...process.env, ...envInjection.env },
-      }, (error, stdout, stderr) => {
+      });
+
+      activeProcesses.set(projectName, child);
+      _io?.emit(SOCKET_EVENTS.COMPOSE_STARTED, { projectName, cmd: cmdString });
+
+      let stdoutBuf = '';
+      let stderrBuf = '';
+      // Cap retained buffer to 5 MB per stream so very long-running commands don't OOM the server.
+      // Live output still streams to clients in real time; this only affects the final result blob.
+      const MAX_BUF = 5 * 1024 * 1024;
+
+      let idleTimer: NodeJS.Timeout | null = null;
+      const resetIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        if (idleTimeoutMs > 0) {
+          idleTimer = setTimeout(() => {
+            logger.warn({ projectName, idleTimeoutMs }, 'Compose command idle timeout — killing process');
+            try { child.kill('SIGTERM'); } catch { /* ignore */ }
+            setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } }, 3000);
+          }, idleTimeoutMs);
+        }
+      };
+      resetIdle();
+
+      const onChunk = (stream: 'stdout' | 'stderr') => (data: Buffer) => {
+        resetIdle();
+        const chunk = data.toString();
+        if (stream === 'stdout') {
+          stdoutBuf = (stdoutBuf + chunk).slice(-MAX_BUF);
+        } else {
+          stderrBuf = (stderrBuf + chunk).slice(-MAX_BUF);
+        }
+        _io?.emit(SOCKET_EVENTS.COMPOSE_LOG, { projectName, stream, chunk });
+      };
+      child.stdout?.on('data', onChunk('stdout'));
+      child.stderr?.on('data', onChunk('stderr'));
+
+      child.on('error', (err) => {
+        if (idleTimer) clearTimeout(idleTimer);
+        activeProcesses.delete(projectName);
+        envInjection.cleanup();
+        const message = err.message;
+        _io?.emit(SOCKET_EVENTS.COMPOSE_FINISHED, { projectName, exitCode: 1, durationMs: Date.now() - startedAt });
+        logger.warn({ projectName, err: message }, 'Compose spawn error');
+        resolve({ exitCode: 1, stdout: stdoutBuf, stderr: stderrBuf || message });
+      });
+
+      child.on('close', (code, signal) => {
+        if (idleTimer) clearTimeout(idleTimer);
         activeProcesses.delete(projectName);
         envInjection.cleanup();
         const killedByCancel = (child as ChildProcess & { _cancelled?: boolean })._cancelled === true;
-        const result = {
-          exitCode: killedByCancel ? 130 : error ? (error as NodeJS.ErrnoException).code ? 1 : (error as { code?: number }).code ?? 1 : 0,
-          stdout: stdout?.toString() || '',
-          stderr: killedByCancel ? 'Cancelled by user' : (stderr?.toString() || ''),
-        };
-        logger.info({ projectName, exitCode: result.exitCode, cancelled: killedByCancel, stderr: result.stderr.slice(0, 500) }, 'Compose command finished');
-        resolve(result);
+        const exitCode = killedByCancel ? 130 : (code ?? (signal ? 1 : 0));
+        const durationMs = Date.now() - startedAt;
+        _io?.emit(SOCKET_EVENTS.COMPOSE_FINISHED, { projectName, exitCode, durationMs });
+        logger.info({ projectName, exitCode, signal, durationMs, cancelled: killedByCancel }, 'Compose command finished');
+        resolve({
+          exitCode,
+          stdout: stdoutBuf,
+          stderr: killedByCancel ? 'Cancelled by user' : stderrBuf,
+        });
       });
-      activeProcesses.set(projectName, child);
     });
   },
 
@@ -293,40 +365,40 @@ export const composeService = {
     return !!child && !child.killed;
   },
 
-  /** Deploy a stack (up -d) */
+  /** Deploy a stack (up -d) — no timeout, user cancels via UI. */
   async deploy(projectName: string, composeContent: string, envContent: string | null, engineId: number | null = null): Promise<ComposeResult> {
     this.writeStackFiles(projectName, composeContent, envContent);
-    return this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 120000, engineId);
+    return this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 0, engineId);
   },
 
   /** Stop a stack */
   async stop(projectName: string, engineId: number | null = null): Promise<ComposeResult> {
-    return this.runCompose(projectName, ['stop'], 120000, engineId);
+    return this.runCompose(projectName, ['stop'], 0, engineId);
   },
 
   /** Down a stack (stop + remove containers + networks) */
   async down(projectName: string, removeVolumes = false, engineId: number | null = null): Promise<ComposeResult> {
     const args = ['down', '--remove-orphans'];
     if (removeVolumes) args.push('-v');
-    return this.runCompose(projectName, args, 120000, engineId);
+    return this.runCompose(projectName, args, 0, engineId);
   },
 
-  /** Pull images for a stack */
+  /** Pull images for a stack — no timeout (multi-GB images over SSH can take 30+ minutes). */
   async pull(projectName: string, engineId: number | null = null): Promise<ComposeResult> {
-    return this.runCompose(projectName, ['pull'], 120000, engineId);
+    return this.runCompose(projectName, ['pull'], 0, engineId);
   },
 
-  /** Get compose ps */
+  /** Get compose ps — keep a short idle safety net since it should never hang. */
   async ps(projectName: string, engineId: number | null = null): Promise<ComposeResult> {
-    return this.runCompose(projectName, ['ps', '--format', 'json'], 120000, engineId);
+    return this.runCompose(projectName, ['ps', '--format', 'json'], 60 * 1000, engineId);
   },
 
-  /** Redeploy: pull + up */
+  /** Redeploy: pull + up — both with no timeout. */
   async redeploy(projectName: string, composeContent: string, envContent: string | null, engineId: number | null = null): Promise<ComposeResult> {
     this.writeStackFiles(projectName, composeContent, envContent);
-    const pullResult = await this.runCompose(projectName, ['pull'], 120000, engineId);
+    const pullResult = await this.runCompose(projectName, ['pull'], 0, engineId);
     if (pullResult.exitCode !== 0) return pullResult;
-    return this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 120000, engineId);
+    return this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 0, engineId);
   },
 
   /**

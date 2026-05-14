@@ -7,6 +7,7 @@ import { config } from './config';
 import { logger } from './utils/logger';
 import { authService } from './services/auth.service';
 import { setUpdateServiceIO } from './services/update.service';
+import { setComposeServiceIO } from './services/compose.service';
 import { startDiscoveryWorker, stopDiscoveryWorker } from './workers/DiscoveryWorker';
 import { startStatsWorker, stopStatsWorker, cleanupOldStats } from './workers/StatsWorker';
 import { startUptimeWorker, stopUptimeWorker } from './workers/UptimeWorker';
@@ -70,6 +71,8 @@ async function main() {
 
   // Provide io to update service for real-time progress events
   setUpdateServiceIO(io);
+  // Provide io to compose service so deploy/pull stream stdout/stderr live to subscribers.
+  setComposeServiceIO(io);
 
   // Start Docker discovery worker
   startDiscoveryWorker(io);

@@ -1,13 +1,14 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code, Link, Box, AlertTriangle, XCircle } from 'lucide-react';
+import { ArrowLeft, Play, Square, Trash2, Save, RotateCcw, Download, Plus, X, FileText, Code, Link, Box, AlertTriangle, XCircle, Terminal } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { systemApi } from '@/api/stacks.api';
 import { teamsApi } from '@/api/teams.api';
 import { useAuthStore } from '@/store/authStore';
+import { useSocket } from '@/hooks/useSocket';
 import type { Team } from '@oblihub/shared';
 import { ComposePreview } from '@/components/ComposePreview';
-import type { ManagedStack, ManagedStackStatus } from '@oblihub/shared';
+import { SOCKET_EVENTS, type ManagedStack, type ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 const STATUS_STYLES: Record<ManagedStackStatus, string> = {
@@ -427,16 +428,12 @@ export function StackEditorPage() {
           <pre className="text-xs text-text-secondary whitespace-pre-wrap font-mono max-h-48 overflow-auto bg-[#0d1117] rounded p-2 mt-1">{stack.errorMessage}</pre>
         </div>
       )}
-      {stack?.status === 'deploying' && (
-        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3 mb-4 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-accent">
-            <div className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-            Deploying... This may take a moment.
-          </div>
-          <button onClick={handleCancel} className="flex items-center gap-1 px-2 py-1 text-xs rounded bg-status-down/10 text-status-down hover:bg-status-down/20">
-            <XCircle size={12} /> Cancel
-          </button>
-        </div>
+      {stack && (stack.status === 'deploying' || stack.composeProject) && (
+        <DeployLogPanel
+          projectName={stack.composeProject}
+          isDeploying={stack.status === 'deploying'}
+          onCancel={handleCancel}
+        />
       )}
 
       {/* Relative path warning */}
@@ -549,6 +546,121 @@ export function StackEditorPage() {
           <span>Created: {new Date(stack.createdAt).toLocaleString()}</span>
           <span>Updated: {new Date(stack.updatedAt).toLocaleString()}</span>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Live deploy log panel — subscribes to the COMPOSE_LOG socket event for this stack's project
+// and renders the streaming stdout/stderr. The big red Cancel button is the user's emergency
+// stop when they see a deploy stuck on a slow pull or hung SSH session. Buffer is auto-scrolled
+// while deploying; the user can scroll up to inspect history and we won't snap them back.
+function DeployLogPanel({
+  projectName,
+  isDeploying,
+  onCancel,
+}: {
+  projectName: string | null | undefined;
+  isDeploying: boolean;
+  onCancel: () => void;
+}) {
+  const socket = useSocket();
+  const [lines, setLines] = useState<string[]>([]);
+  const [collapsed, setCollapsed] = useState(!isDeploying);
+  const [autoscroll, setAutoscroll] = useState(true);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  // Whenever a deploy starts, expand the panel and clear stale history.
+  useEffect(() => {
+    if (isDeploying) {
+      setCollapsed(false);
+      setLines([]);
+    }
+  }, [isDeploying]);
+
+  useEffect(() => {
+    if (!projectName) return;
+    const onLog = (data: { projectName: string; stream: 'stdout' | 'stderr'; chunk: string }) => {
+      if (data.projectName !== projectName) return;
+      setLines((prev) => {
+        const split = data.chunk.split('\n');
+        // Drop the trailing empty string when chunk ends with \n
+        if (split[split.length - 1] === '') split.pop();
+        const merged = [...prev, ...split];
+        // Keep at most 2000 lines client-side — anything older is logged on the server anyway.
+        return merged.length > 2000 ? merged.slice(-2000) : merged;
+      });
+    };
+    const onStarted = (data: { projectName: string }) => {
+      if (data.projectName !== projectName) return;
+      setLines([]);
+      setCollapsed(false);
+    };
+    socket.on(SOCKET_EVENTS.COMPOSE_LOG, onLog);
+    socket.on(SOCKET_EVENTS.COMPOSE_STARTED, onStarted);
+    return () => {
+      socket.off(SOCKET_EVENTS.COMPOSE_LOG, onLog);
+      socket.off(SOCKET_EVENTS.COMPOSE_STARTED, onStarted);
+    };
+  }, [socket, projectName]);
+
+  useEffect(() => {
+    if (autoscroll && preRef.current) {
+      preRef.current.scrollTop = preRef.current.scrollHeight;
+    }
+  }, [lines, autoscroll]);
+
+  if (!isDeploying && lines.length === 0 && collapsed) return null;
+
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-bg-secondary overflow-hidden">
+      <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2 bg-bg-tertiary/40">
+        <div className="flex items-center gap-2 text-xs font-medium">
+          {isDeploying && <div className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />}
+          <Terminal size={13} className={isDeploying ? 'text-accent' : 'text-text-muted'} />
+          <span className={isDeploying ? 'text-accent' : 'text-text-secondary'}>
+            {isDeploying ? 'Deploying — live output' : 'Deploy output'}
+          </span>
+          {lines.length > 0 && (
+            <span className="text-[10px] text-text-muted ml-1">({lines.length} lines)</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] text-text-muted flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoscroll}
+              onChange={(e) => setAutoscroll(e.target.checked)}
+              className="cursor-pointer"
+            />
+            auto-scroll
+          </label>
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            className="text-[10px] text-text-muted hover:text-text-primary"
+          >
+            {collapsed ? 'expand' : 'collapse'}
+          </button>
+          {isDeploying && (
+            <button
+              onClick={onCancel}
+              className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md bg-red-600 hover:bg-red-700 text-white shadow-sm shadow-red-900/30"
+              title="Kill the docker compose process — use this if the deploy looks stuck"
+            >
+              <XCircle size={13} /> Cancel deploy
+            </button>
+          )}
+        </div>
+      </div>
+      {!collapsed && (
+        <pre
+          ref={preRef}
+          className="text-[11px] leading-relaxed font-mono text-text-secondary whitespace-pre-wrap break-all bg-[#0d1117] p-3 max-h-72 overflow-auto"
+        >
+          {lines.length === 0
+            ? <span className="text-text-muted italic">Waiting for output…</span>
+            : lines.join('\n')}
+        </pre>
       )}
     </div>
   );

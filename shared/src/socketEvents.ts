@@ -22,4 +22,9 @@ export const SOCKET_EVENTS = {
 
   // Container stats
   CONTAINER_STATS_UPDATE: 'container:stats:update',
+
+  // Managed stack compose deploy — live stdout/stderr stream + lifecycle
+  COMPOSE_LOG: 'compose:log',         // { projectName, stream: 'stdout'|'stderr', chunk }
+  COMPOSE_STARTED: 'compose:started', // { projectName, cmd }
+  COMPOSE_FINISHED: 'compose:finished', // { projectName, exitCode, durationMs }
 } as const;
