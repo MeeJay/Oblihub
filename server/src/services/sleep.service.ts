@@ -228,6 +228,37 @@ export const sleepService = {
     return stackService.getContainerById(containerId);
   },
 
+  /**
+   * Reconcile sleep_state against Docker reality. Picks up containers stuck in `wake_failed` or
+   * `sleeping` whose Docker state actually says they're running (e.g. someone started them by
+   * hand, or a previous wake attempt timed out due to an unrelated bug and the container ended
+   * up healthy later). Resets them to `awake` so the proxy waking page stops being shown and
+   * the idle-detection clock resets.
+   *
+   * Returns the IDs that were reconciled, mainly for logging.
+   */
+  async reconcileStuckStates(): Promise<number[]> {
+    const rows = await db('containers')
+      .whereIn('sleep_state', ['wake_failed', 'sleeping'])
+      .where({ sleep_enabled: true })
+      .select('id', 'docker_id', 'engine_id', 'sleep_state');
+    const reconciled: number[] = [];
+    for (const r of rows) {
+      try {
+        const info = await dockerService.inspectContainer(r.docker_id as string, (r.engine_id as number | null) ?? null);
+        const running = info.State?.Running === true && info.State?.Paused !== true;
+        if (running) {
+          await setState(r.id as number, 'awake', { last_active_at: new Date() });
+          reconciled.push(r.id as number);
+          logger.info({ containerId: r.id, previousState: r.sleep_state }, 'Sleep state reconciled to awake (container is running)');
+        }
+      } catch {
+        // Container might be gone or engine unreachable — leave state as-is, will retry next tick.
+      }
+    }
+    return reconciled;
+  },
+
   /** List containers that should be put to sleep right now (idle past threshold). */
   async listIdleSleepCandidates(): Promise<Container[]> {
     const rows = await db('containers')

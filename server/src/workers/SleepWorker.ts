@@ -8,6 +8,12 @@ const TICK_MS = 30_000; // check idle containers every 30s
 export function startSleepWorker(): void {
   const run = async () => {
     try {
+      // First: reconcile any containers stuck in wake_failed/sleeping that are actually running.
+      // Cheap (one inspect per stuck row, usually 0-2 rows) and self-heals leftover bad state
+      // from earlier failed wakes — important after engine config changes or bug fixes that
+      // rendered the previous probe target unreachable.
+      await sleepService.reconcileStuckStates();
+
       const candidates = await sleepService.listIdleSleepCandidates();
       for (const c of candidates) {
         logger.info({ containerId: c.id, containerName: c.containerName, idleAfterS: c.sleepAfterSeconds }, 'Sleeping idle container');
