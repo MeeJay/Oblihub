@@ -73,7 +73,17 @@ router.get('/wake/status', async (req, res) => {
   const status = await sleepService.getWakeStatus(containerId);
   // Map sleep_state to a simpler frontend signal
   const ready = status.state === 'awake';
-  res.json({ success: true, data: { ready, state: status.state, elapsedMs: status.elapsedMs, message: status.message } });
+  res.json({
+    success: true,
+    data: {
+      ready,
+      state: status.state,
+      elapsedMs: status.elapsedMs,
+      estimatedMs: status.estimatedMs,
+      sampleCount: status.sampleCount,
+      message: status.message,
+    },
+  });
 });
 
 export default router;

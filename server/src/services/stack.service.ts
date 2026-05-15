@@ -45,6 +45,7 @@ interface ContainerRow {
   sleep_state: string;
   wake_started_at: Date | null;
   wake_health_path: string | null;
+  wake_durations_ms: number[] | string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -80,6 +81,12 @@ function rowToContainer(row: ContainerRow): Container {
     lastActiveAt: row.last_active_at?.toISOString() ?? null,
     wakeStartedAt: row.wake_started_at?.toISOString() ?? null,
     wakeHealthPath: row.wake_health_path,
+    wakeDurationsMs: ((): number[] => {
+      const raw = row.wake_durations_ms;
+      if (Array.isArray(raw)) return raw as number[];
+      if (typeof raw === 'string' && raw) { try { return JSON.parse(raw) as number[]; } catch { return []; } }
+      return [];
+    })(),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };

@@ -134,6 +134,10 @@ export interface Container {
   lastActiveAt: string | null;
   wakeStartedAt: string | null;
   wakeHealthPath: string | null;
+  // Rolling history of the last 10 successful wake durations in milliseconds. The waking page
+  // uses the average to render its progress bar; if a new wake exceeds the average it falls
+  // back to "still working…" messaging instead of overshooting 100%.
+  wakeDurationsMs: number[];
   createdAt: string;
   updatedAt: string;
 }

@@ -157,6 +157,30 @@ export const sleepService = {
     const containerPort = container.ports.find(p => p.containerPort)?.containerPort ?? null;
     const start = Date.now();
 
+    // Helper invoked when readiness is confirmed — keeps the success branches DRY and ensures
+    // every successful wake records a duration sample for the rolling history. We compute
+    // duration HERE (not at `start`) so it reflects the actual wait the user experienced.
+    const markAwake = async (via: string): Promise<void> => {
+      const elapsedMs = Date.now() - start;
+      await setState(containerId, 'awake', { last_active_at: new Date() });
+      // Append the new duration, FIFO-cap to 10. We re-fetch the latest array from DB rather
+      // than trust `container.wakeDurationsMs` because concurrent wakes (different containers)
+      // could otherwise produce stale-write races on this column. Per-row updates so it's safe.
+      try {
+        const current = await db('containers').where({ id: containerId }).select('wake_durations_ms').first();
+        let arr: number[] = [];
+        const raw = current?.wake_durations_ms;
+        if (Array.isArray(raw)) arr = raw as number[];
+        else if (typeof raw === 'string' && raw) { try { arr = JSON.parse(raw) as number[]; } catch { arr = []; } }
+        arr.push(elapsedMs);
+        if (arr.length > 10) arr = arr.slice(-10);
+        await db('containers').where({ id: containerId }).update({ wake_durations_ms: JSON.stringify(arr) });
+      } catch (err) {
+        logger.warn({ containerId, err }, 'Failed to record wake duration sample');
+      }
+      logger.info({ containerId, via, elapsedMs }, 'Container woken');
+    };
+
     while (Date.now() - start < WAKE_TIMEOUT_MS) {
       try {
         // Primary path: probe the proxy_host's forward target.
@@ -165,8 +189,7 @@ export const sleepService = {
             ? await httpProbe(probeHost, probePort, container.wakeHealthPath)
             : await tcpProbe(probeHost, probePort);
           if (ready) {
-            await setState(containerId, 'awake', { last_active_at: new Date() });
-            logger.info({ containerId, via: `proxy-host:${probeHost}:${probePort}`, elapsedMs: Date.now() - start }, 'Container woken');
+            await markAwake(`proxy-host:${probeHost}:${probePort}`);
             return { ok: true };
           }
         } else {
@@ -181,15 +204,13 @@ export const sleepService = {
               ? await httpProbe(ip, containerPort, container.wakeHealthPath)
               : await tcpProbe(ip, containerPort);
             if (ready) {
-              await setState(containerId, 'awake', { last_active_at: new Date() });
-              logger.info({ containerId, via: 'bridge-ip', elapsedMs: Date.now() - start }, 'Container woken');
+              await markAwake('bridge-ip');
               return { ok: true };
             }
           } else if (info.State?.Running === true && container.engineId) {
             // Last resort: no probe target reachable from here. Trust docker status.
             await new Promise(r => setTimeout(r, WAKE_HEALTH_POLL_MS));
-            await setState(containerId, 'awake', { last_active_at: new Date() });
-            logger.info({ containerId, via: 'docker-status-only', elapsedMs: Date.now() - start }, 'Container woken (no probe target)');
+            await markAwake('docker-status-only');
             return { ok: true };
           }
         }
@@ -204,12 +225,28 @@ export const sleepService = {
     return { ok: false, message: 'Wake timed out — container did not become ready' };
   },
 
-  /** Return current wake status for the waking page poller. */
-  async getWakeStatus(containerId: number): Promise<{ state: SleepState; elapsedMs: number; message?: string }> {
+  /**
+   * Return current wake status for the waking page poller.
+   *
+   * `estimatedMs` is the rolling average of past wake durations for this container — the
+   * waking page uses it to render an honest progress bar. Falls back to null (page shows
+   * a spinner without bar) when we have no history yet.
+   */
+  async getWakeStatus(containerId: number): Promise<{
+    state: SleepState;
+    elapsedMs: number;
+    estimatedMs: number | null;
+    sampleCount: number;
+    message?: string;
+  }> {
     const c = await stackService.getContainerById(containerId);
-    if (!c) return { state: 'wake_failed', elapsedMs: 0, message: 'Container not found' };
+    if (!c) return { state: 'wake_failed', elapsedMs: 0, estimatedMs: null, sampleCount: 0, message: 'Container not found' };
     const elapsedMs = c.wakeStartedAt ? Date.now() - new Date(c.wakeStartedAt).getTime() : 0;
-    return { state: c.sleepState, elapsedMs };
+    const samples = c.wakeDurationsMs || [];
+    const estimatedMs = samples.length > 0
+      ? Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
+      : null;
+    return { state: c.sleepState, elapsedMs, estimatedMs, sampleCount: samples.length };
   },
 
   /** Update sleep config for a container. */

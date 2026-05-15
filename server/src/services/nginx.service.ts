@@ -25,7 +25,14 @@ const DEFAULT_WAKING_HTML = `<!DOCTYPE html>
   @keyframes spin { to { transform: rotate(360deg); } }
   h1 { font-size: 20px; margin: 0 0 8px; font-weight: 600; }
   p { margin: 0; color: #8c93b6; font-size: 14px; line-height: 1.5; }
-  .elapsed { margin-top: 16px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; color: #5a78e8; }
+  .progress { margin: 18px auto 6px; width: 100%; height: 6px; background: rgba(45,78,201,0.15); border-radius: 3px; overflow: hidden; display: none; }
+  .progress.visible { display: block; }
+  .progress > .bar { height: 100%; width: 0; background: linear-gradient(90deg, #2d4ec9, #5a78e8); border-radius: 3px; transition: width 0.3s ease-out; }
+  .progress.indeterminate > .bar { width: 100% !important; animation: shimmer 1.6s ease-in-out infinite; }
+  @keyframes shimmer { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+  .elapsed { margin-top: 8px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; color: #5a78e8; }
+  .hint { margin-top: 10px; font-size: 12px; color: #ffb454; display: none; }
+  .hint.visible { display: block; }
   .error { color: #e03a3a; margin-top: 16px; display: none; }
   .error.visible { display: block; }
 </style>
@@ -34,8 +41,10 @@ const DEFAULT_WAKING_HTML = `<!DOCTYPE html>
 <div class="card">
   <div class="spinner"></div>
   <h1>Waking up {{APP_NAME}}…</h1>
-  <p>The application was idle and shut down to save resources. It's starting back up — this can take up to a minute for AI workloads.</p>
-  <div class="elapsed"><span id="elapsed">0</span>s elapsed</div>
+  <p>The application was idle and shut down to save resources. It's starting back up.</p>
+  <div class="progress" id="progress"><div class="bar" id="bar"></div></div>
+  <div class="elapsed"><span id="elapsed">0</span>s<span id="estimated"></span></div>
+  <div class="hint" id="hint">It's taking longer than usual — please wait a bit more…</div>
   <div class="error" id="error">Wake failed — <a href="javascript:location.reload()" style="color:#5a78e8">retry</a></div>
 </div>
 <script>
@@ -43,18 +52,52 @@ const DEFAULT_WAKING_HTML = `<!DOCTYPE html>
   var host = {{PROXY_HOST_ID}};
   var start = Date.now();
   var el = document.getElementById('elapsed');
+  var est = document.getElementById('estimated');
+  var bar = document.getElementById('bar');
+  var progress = document.getElementById('progress');
+  var hint = document.getElementById('hint');
   var err = document.getElementById('error');
+  // null = unknown (first wake, no history). number = ms estimate from rolling avg.
+  var estimatedMs = null;
 
-  function tick(){ el.textContent = Math.floor((Date.now() - start) / 1000); }
+  function tick(){
+    var elapsedMs = Date.now() - start;
+    el.textContent = Math.floor(elapsedMs / 1000);
+    if (estimatedMs && estimatedMs > 0) {
+      progress.classList.add('visible');
+      progress.classList.remove('indeterminate');
+      var pct = Math.min(100, (elapsedMs / estimatedMs) * 100);
+      bar.style.width = pct + '%';
+      // Once we overshoot the estimate, pin the bar at 100% and reveal the "longer than usual" hint.
+      if (elapsedMs > estimatedMs) {
+        hint.classList.add('visible');
+      }
+    } else if (estimatedMs === 0) {
+      // No history yet — show an indeterminate shimmer so the page doesn't feel dead.
+      progress.classList.add('visible');
+      progress.classList.add('indeterminate');
+    }
+  }
   setInterval(tick, 250);
 
   function poll(){
     fetch('/__oblihub_internal/wake/status?host=' + host, { cache: 'no-store' })
       .then(function(r){ return r.json(); })
       .then(function(d){
-        if (d && d.success && d.data && d.data.ready) {
+        if (!d || !d.data) { setTimeout(poll, 1500); return; }
+        // Refresh estimate on every poll — first-time visitors get it after the first response,
+        // and a wake that produces a fresh sample mid-poll will refine it for subsequent ticks.
+        if (typeof d.data.estimatedMs === 'number') {
+          estimatedMs = d.data.estimatedMs;
+          if (estimatedMs > 0) {
+            est.textContent = ' / ~' + Math.round(estimatedMs / 1000) + 's expected';
+          }
+        } else if (d.data.estimatedMs === null) {
+          estimatedMs = 0;
+        }
+        if (d.data.ready) {
           location.reload();
-        } else if (d && d.data && d.data.state === 'wake_failed') {
+        } else if (d.data.state === 'wake_failed') {
           err.classList.add('visible');
         } else {
           setTimeout(poll, 1500);
