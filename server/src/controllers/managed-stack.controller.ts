@@ -294,4 +294,68 @@ export const managedStackController = {
       })();
     } catch (err) { next(err); }
   },
+
+  /**
+   * Given a list of host ports the user wants to claim on a specific Docker engine, return
+   * which ones are already in use by other containers on that engine — along with which
+   * stack/container is holding each one. The client uses this for pre-deploy validation in
+   * the stack editor so port conflicts surface before `docker compose up` fails.
+   *
+   * Body: { engineId: number | null, ports: number[], excludeStackId?: number }
+   *  - engineId: which engine to check against (null = local/default)
+   *  - ports: host ports the user is about to claim
+   *  - excludeStackId: optional stack id to skip (editing an existing stack — its own
+   *                    currently-running ports must not count as conflicts against itself)
+   */
+  async checkPortConflicts(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = req.body as { engineId?: number | null; ports?: number[]; excludeStackId?: number };
+      const ports = Array.isArray(body.ports) ? body.ports.filter(p => Number.isInteger(p) && p > 0 && p < 65536) : [];
+      if (ports.length === 0) { res.json({ success: true, data: { conflicts: [] } }); return; }
+      const engineId = body.engineId ?? null;
+
+      // Resolve the default engine id when engineId is null — discovery stamps each container
+      // row with engine_id, so we need to know which one to filter on.
+      let effectiveEngineId: number | null = engineId;
+      if (effectiveEngineId == null) {
+        const { engineService } = await import('../services/engine.service');
+        const def = await engineService.getDefault();
+        effectiveEngineId = def?.id ?? null;
+      }
+
+      const { db } = await import('../db');
+      let q = db('containers')
+        .leftJoin('stacks', 'containers.stack_id', 'stacks.id')
+        .select('containers.id as containerId',
+                'containers.container_name as containerName',
+                'containers.ports as ports',
+                'stacks.id as stackId',
+                'stacks.name as stackName');
+      if (effectiveEngineId != null) q = q.where('containers.engine_id', effectiveEngineId);
+
+      const rows = await q;
+      const conflicts: { port: number; stackName: string | null; containerName: string; containerId: number }[] = [];
+      const requested = new Set(ports);
+      for (const row of rows) {
+        // Skip the stack we're editing — its existing ports don't conflict with itself.
+        if (body.excludeStackId && row.stackId === body.excludeStackId) continue;
+        let portsArr: { hostPort?: number | null }[] = [];
+        try {
+          const raw = row.ports;
+          portsArr = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+        } catch { /* skip malformed rows */ }
+        for (const p of portsArr) {
+          if (p?.hostPort && requested.has(p.hostPort)) {
+            conflicts.push({
+              port: p.hostPort,
+              stackName: row.stackName ?? null,
+              containerName: row.containerName,
+              containerId: row.containerId,
+            });
+          }
+        }
+      }
+      res.json({ success: true, data: { conflicts } });
+    } catch (err) { next(err); }
+  },
 };

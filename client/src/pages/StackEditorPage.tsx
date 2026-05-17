@@ -7,7 +7,8 @@ import { teamsApi } from '@/api/teams.api';
 import { useAuthStore } from '@/store/authStore';
 import { useSocket } from '@/hooks/useSocket';
 import type { Team } from '@oblihub/shared';
-import { ComposePreview } from '@/components/ComposePreview';
+import { ComposePreview, extractHostPort, type PortConflict } from '@/components/ComposePreview';
+import yaml from 'js-yaml';
 import { SOCKET_EVENTS, type ManagedStack, type ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
@@ -172,6 +173,57 @@ export function StackEditorPage() {
     }
     return map;
   })();
+
+  // ── Port conflict detection ──
+  // Extract every host port declared by this stack's compose, then ask the server which ones
+  // are already in use by another container on the same engine. Debounced 500ms so we don't
+  // spam the API on each keystroke. The result feeds two UI surfaces: a red banner above the
+  // editor + per-port "!" markers in the ComposePreview.
+  const [portConflicts, setPortConflicts] = useState<PortConflict[]>([]);
+  useEffect(() => {
+    if (!composeContent.trim()) { setPortConflicts([]); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        // Reuse the same env-substitution semantics as ComposePreview by parsing the YAML
+        // here too — keeps the two views consistent.
+        const doc = yaml.load(composeContent) as { services?: Record<string, { ports?: unknown[] }> } | null;
+        const services = doc?.services || {};
+        const hostPorts = new Set<number>();
+        const substitute = (s: string): string => s
+          .replace(/\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}/gi, (_, n, d) => resolvedEnvVars[n] || d)
+          .replace(/\$\{([A-Z_][A-Z0-9_]*)\}/gi, (_, n) => resolvedEnvVars[n] || '')
+          .replace(/\$([A-Z_][A-Z0-9_]*)/gi, (_, n) => resolvedEnvVars[n] || '');
+        for (const svc of Object.values(services)) {
+          if (!Array.isArray(svc?.ports)) continue;
+          for (const p of svc.ports as unknown[]) {
+            let str: string;
+            if (typeof p === 'string' || typeof p === 'number') str = String(p);
+            else if (p && typeof p === 'object') {
+              const o = p as { published?: unknown; target?: unknown };
+              if (o.published != null && o.target != null) str = `${o.published}:${o.target}`;
+              else continue;
+            } else continue;
+            const resolved = substitute(str);
+            const hp = extractHostPort(resolved);
+            if (hp != null) hostPorts.add(hp);
+          }
+        }
+        if (hostPorts.size === 0) { if (!cancelled) setPortConflicts([]); return; }
+        const result = await managedStacksApi.checkPortConflicts({
+          engineId: selectedEngineId,
+          ports: [...hostPorts],
+          excludeStackId: stack?.id,
+        });
+        if (!cancelled) setPortConflicts(result.conflicts.map(c => ({ port: c.port, stackName: c.stackName, containerName: c.containerName })));
+      } catch {
+        // YAML parse fails or API down — just clear so we don't show stale conflicts on broken input.
+        if (!cancelled) setPortConflicts([]);
+      }
+    }, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- resolvedEnvVars is a fresh object each render; we re-resolve on compose/env changes
+  }, [composeContent, envRaw, JSON.stringify(envEntries), selectedEngineId, stack?.id]);
 
   const handleDeletePort = (serviceName: string, rawPort: string) => {
     // Find and remove the port line within the named service's ports list.
@@ -436,6 +488,28 @@ export function StackEditorPage() {
         />
       )}
 
+      {/* Port conflict warning — surfaces ports that another stack/container on this engine is
+          already using. Red because deploy WILL fail at `docker compose up` otherwise. */}
+      {portConflicts.length > 0 && (
+        <div className="rounded-lg border border-status-down/40 bg-status-down/10 p-3 mb-4">
+          <div className="text-xs font-semibold text-status-down mb-1 flex items-center gap-1.5">
+            <AlertTriangle size={13} /> Port conflict{portConflicts.length > 1 ? 's' : ''} detected
+          </div>
+          <div className="text-xs text-text-secondary space-y-0.5">
+            {portConflicts.map((c, i) => (
+              <div key={i}>
+                <span className="font-mono text-status-down">Port {c.port}</span>{' '}
+                is already used by{' '}
+                <span className="font-mono text-text-primary">
+                  {c.stackName ? `${c.stackName} / ` : ''}{c.containerName}
+                </span>{' '}
+                on this Docker host. Deployment will fail until you change this port or stop the other container.
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Relative path warning */}
       {composeContent.includes('./') && (
         <div className="rounded-lg border border-status-pending/30 bg-status-pending/5 p-3 mb-4">
@@ -535,7 +609,7 @@ export function StackEditorPage() {
           <h2 className="text-sm font-semibold text-text-secondary">Preview</h2>
         </div>
         <div className="p-4">
-          <ComposePreview composeContent={composeContent} envVars={resolvedEnvVars} onDeletePort={handleDeletePort} />
+          <ComposePreview composeContent={composeContent} envVars={resolvedEnvVars} onDeletePort={handleDeletePort} portConflicts={portConflicts} />
         </div>
       </div>
 

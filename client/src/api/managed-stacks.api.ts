@@ -37,6 +37,14 @@ export const managedStacksApi = {
   async redeploy(id: number): Promise<void> {
     await apiClient.post(`/managed-stacks/${id}/redeploy`);
   },
+  async checkPortConflicts(args: { engineId: number | null; ports: number[]; excludeStackId?: number }): Promise<{
+    conflicts: { port: number; stackName: string | null; containerName: string; containerId: number }[];
+  }> {
+    const res = await apiClient.post<ApiResponse<{
+      conflicts: { port: number; stackName: string | null; containerName: string; containerId: number }[];
+    }>>('/managed-stacks/check-port-conflicts', args);
+    return res.data.data!;
+  },
   async cancel(id: number): Promise<{ killed: boolean }> {
     const res = await apiClient.post<ApiResponse<{ killed: boolean }>>(`/managed-stacks/${id}/cancel`);
     return res.data.data!;

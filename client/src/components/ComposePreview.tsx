@@ -1,6 +1,31 @@
 import { useMemo } from 'react';
 import yaml from 'js-yaml';
-import { Box, Network, HardDrive, Database, Globe, Plug, X } from 'lucide-react';
+import { Box, Network, HardDrive, Database, Globe, Plug, X, AlertTriangle } from 'lucide-react';
+
+/**
+ * Extract the host port number from a compose port string (the left side of "host:container").
+ * Returns null when there's no published host port (container-only "8080" style entries).
+ *
+ *   "3000:3000"           → 3000
+ *   "8080:80/tcp"         → 8080
+ *   "127.0.0.1:8080:80"   → 8080
+ *   "8080"                → null  (container port only, no host publish)
+ */
+export function extractHostPort(portStr: string): number | null {
+  const cleaned = portStr.split('/')[0]; // drop /tcp /udp
+  const parts = cleaned.split(':');
+  // Forms: "container" | "host:container" | "ip:host:container"
+  if (parts.length < 2) return null;
+  const hostPart = parts.length === 3 ? parts[1] : parts[0];
+  const n = parseInt(hostPart, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export interface PortConflict {
+  port: number;
+  stackName: string | null;
+  containerName: string;
+}
 
 interface ParsedPort {
   /** Original string as written in compose (may contain ${VAR} refs) */
@@ -144,10 +169,18 @@ interface Props {
   composeContent: string;
   envVars?: Record<string, string>;
   onDeletePort?: (serviceName: string, rawPort: string) => void;
+  /** Optional list of host ports already in use elsewhere on the target engine. Each matching
+   *  port in the preview gets a red "!" marker with a tooltip pointing at the colliding stack. */
+  portConflicts?: PortConflict[];
 }
 
-export function ComposePreview({ composeContent, envVars, onDeletePort }: Props) {
+export function ComposePreview({ composeContent, envVars, onDeletePort, portConflicts }: Props) {
   const parsed = useMemo(() => parseCompose(composeContent, envVars || {}), [composeContent, envVars]);
+  const conflictByPort = useMemo(() => {
+    const m = new Map<number, PortConflict>();
+    for (const c of portConflicts || []) m.set(c.port, c);
+    return m;
+  }, [portConflicts]);
 
   if (parsed.error) {
     return (
@@ -189,23 +222,36 @@ export function ComposePreview({ composeContent, envVars, onDeletePort }: Props)
                 <div className="flex items-start gap-1.5 text-[10px] text-text-muted mb-1.5">
                   <Globe size={9} className="shrink-0 mt-0.5" />
                   <div className="flex flex-wrap gap-1">
-                    {svc.ports.map((p, i) => (
-                      <span key={i} className="inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded bg-bg-secondary group">
-                        <span className="text-text-secondary">{p.resolved}</span>
-                        {p.raw !== p.resolved && (
-                          <span className="text-text-muted opacity-60" title={`Template: ${p.raw}`}>*</span>
-                        )}
-                        {onDeletePort && (
-                          <button
-                            onClick={() => onDeletePort(svc.name, p.raw)}
-                            className="ml-0.5 opacity-0 group-hover:opacity-100 text-text-muted hover:text-status-down transition-opacity"
-                            title="Remove this port"
-                          >
-                            <X size={10} />
-                          </button>
-                        )}
-                      </span>
-                    ))}
+                    {svc.ports.map((p, i) => {
+                      const hostPort = extractHostPort(p.resolved);
+                      const conflict = hostPort != null ? conflictByPort.get(hostPort) : null;
+                      return (
+                        <span
+                          key={i}
+                          className={`inline-flex items-center gap-0.5 font-mono text-[10px] px-1.5 py-0.5 rounded group ${
+                            conflict ? 'bg-status-down/15 border border-status-down/40' : 'bg-bg-secondary'
+                          }`}
+                          title={conflict
+                            ? `Port ${conflict.port} already used by ${conflict.stackName ? `${conflict.stackName} / ` : ''}${conflict.containerName}`
+                            : undefined}
+                        >
+                          {conflict && <AlertTriangle size={10} className="text-status-down" />}
+                          <span className={conflict ? 'text-status-down' : 'text-text-secondary'}>{p.resolved}</span>
+                          {p.raw !== p.resolved && (
+                            <span className="text-text-muted opacity-60" title={`Template: ${p.raw}`}>*</span>
+                          )}
+                          {onDeletePort && (
+                            <button
+                              onClick={() => onDeletePort(svc.name, p.raw)}
+                              className="ml-0.5 opacity-0 group-hover:opacity-100 text-text-muted hover:text-status-down transition-opacity"
+                              title="Remove this port"
+                            >
+                              <X size={10} />
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               )}

@@ -14,6 +14,7 @@ router.use((_req: Request, res: Response, next: NextFunction) => {
 
 router.get('/', managedStackController.list);
 router.post('/', managedStackController.create);
+router.post('/check-port-conflicts', managedStackController.checkPortConflicts);
 router.get('/:id', managedStackController.getById);
 router.put('/:id', managedStackController.update);
 router.delete('/:id', managedStackController.delete);
