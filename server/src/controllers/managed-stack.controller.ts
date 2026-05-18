@@ -301,15 +301,19 @@ export const managedStackController = {
    * stack/container is holding each one. The client uses this for pre-deploy validation in
    * the stack editor so port conflicts surface before `docker compose up` fails.
    *
-   * Body: { engineId: number | null, ports: number[], excludeStackId?: number }
+   * Body: { engineId: number | null, ports: number[], excludeComposeProject?: string }
    *  - engineId: which engine to check against (null = local/default)
    *  - ports: host ports the user is about to claim
-   *  - excludeStackId: optional stack id to skip (editing an existing stack — its own
-   *                    currently-running ports must not count as conflicts against itself)
+   *  - excludeComposeProject: optional compose_project name to skip — the stack being edited
+   *                           must not count as conflicting with itself. We match by compose
+   *                           project name because that's the natural link between the
+   *                           `managed_stacks` table (the user's definition) and the `stacks`
+   *                           table (what DiscoveryWorker actually sees running on Docker) —
+   *                           those two tables have unrelated IDs.
    */
   async checkPortConflicts(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const body = req.body as { engineId?: number | null; ports?: number[]; excludeStackId?: number };
+      const body = req.body as { engineId?: number | null; ports?: number[]; excludeComposeProject?: string };
       const ports = Array.isArray(body.ports) ? body.ports.filter(p => Number.isInteger(p) && p > 0 && p < 65536) : [];
       if (ports.length === 0) { res.json({ success: true, data: { conflicts: [] } }); return; }
       const engineId = body.engineId ?? null;
@@ -330,15 +334,19 @@ export const managedStackController = {
                 'containers.container_name as containerName',
                 'containers.ports as ports',
                 'stacks.id as stackId',
-                'stacks.name as stackName');
+                'stacks.name as stackName',
+                'stacks.compose_project as composeProject');
       if (effectiveEngineId != null) q = q.where('containers.engine_id', effectiveEngineId);
 
       const rows = await q;
       const conflicts: { port: number; stackName: string | null; containerName: string; containerId: number }[] = [];
       const requested = new Set(ports);
+      const excludeProject = body.excludeComposeProject || null;
       for (const row of rows) {
-        // Skip the stack we're editing — its existing ports don't conflict with itself.
-        if (body.excludeStackId && row.stackId === body.excludeStackId) continue;
+        // Skip rows belonging to the same compose project as the stack being edited — its own
+        // containers' ports don't conflict with itself, even if those containers will be
+        // recreated as part of the redeploy.
+        if (excludeProject && row.composeProject === excludeProject) continue;
         let portsArr: { hostPort?: number | null }[] = [];
         try {
           const raw = row.ports;

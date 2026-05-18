@@ -210,10 +210,17 @@ export function StackEditorPage() {
           }
         }
         if (hostPorts.size === 0) { if (!cancelled) setPortConflicts([]); return; }
+        // For an existing stack: exclude by compose_project name — the link between
+        // managed_stacks (where stack.id lives) and the discovered `stacks` table is
+        // compose_project, not numeric id. For a brand new stack, derive the project name
+        // we'll be using at deploy time so a user editing pre-deploy still gets self-exclusion.
+        const excludeComposeProject =
+          stack?.composeProject ||
+          (name ? name.toLowerCase().replace(/[^a-z0-9_-]/g, '-') : undefined);
         const result = await managedStacksApi.checkPortConflicts({
           engineId: selectedEngineId,
           ports: [...hostPorts],
-          excludeStackId: stack?.id,
+          excludeComposeProject,
         });
         if (!cancelled) setPortConflicts(result.conflicts.map(c => ({ port: c.port, stackName: c.stackName, containerName: c.containerName })));
       } catch {
@@ -223,7 +230,7 @@ export function StackEditorPage() {
     }, 500);
     return () => { cancelled = true; clearTimeout(timer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- resolvedEnvVars is a fresh object each render; we re-resolve on compose/env changes
-  }, [composeContent, envRaw, JSON.stringify(envEntries), selectedEngineId, stack?.id]);
+  }, [composeContent, envRaw, JSON.stringify(envEntries), selectedEngineId, stack?.id, stack?.composeProject, name]);
 
   const handleDeletePort = (serviceName: string, rawPort: string) => {
     // Find and remove the port line within the named service's ports list.
