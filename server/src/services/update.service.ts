@@ -214,8 +214,23 @@ export const updateService = {
         return;
       }
 
-      // 1. Pull new image
-      await dockerService.pullImage(container.image, container.imageTag, container.engineId);
+      // 1. Pull new image — forward live progress to subscribers. Pull events arrive as one
+      // JSON object per line in the docker stream; we format each into a short human-readable
+      // string and emit as UPDATE_LOG so the stack page can render a streaming tail.
+      await dockerService.pullImage(container.image, container.imageTag, container.engineId, (ev) => {
+        if (!_io) return;
+        let chunk: string;
+        if (ev.status && ev.id) {
+          chunk = `${ev.id}: ${ev.status}${ev.progress ? ` ${ev.progress}` : ''}`;
+        } else if (ev.status) {
+          chunk = ev.status;
+        } else {
+          chunk = JSON.stringify(ev);
+        }
+        _io.emit(SOCKET_EVENTS.UPDATE_LOG, {
+          stackId, containerId, containerName: container.containerName, chunk,
+        });
+      });
 
       // Update history
       await db('update_history').where({ id: historyId }).update({ status: 'recreating' });
@@ -223,6 +238,10 @@ export const updateService = {
         _io.emit(SOCKET_EVENTS.UPDATE_PROGRESS, {
           stackId, containerId, phase: 'recreating',
           message: `Recreating ${container.containerName}...`,
+        });
+        _io.emit(SOCKET_EVENTS.UPDATE_LOG, {
+          stackId, containerId, containerName: container.containerName,
+          chunk: `Recreating ${container.containerName}...`,
         });
       }
 

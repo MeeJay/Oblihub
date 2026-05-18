@@ -9,7 +9,24 @@ import { logger } from './utils/logger';
 // Track active streams per socket to clean up on disconnect
 interface SocketState {
   logStreams: Map<string, Readable>;
-  execStreams: Map<string, { stream: Duplex; execId: string }>;
+  // We track engineId alongside the exec stream so resize requests target the same daemon —
+  // dockerode's resize call has to go to whichever engine owns the exec id.
+  execStreams: Map<string, { stream: Duplex; execId: string; engineId: number | null }>;
+}
+
+/**
+ * Look up the engine id for a given Docker container id. Returns null when the container is
+ * unknown OR explicitly on the local engine, so callers can pass the result straight to the
+ * dockerService methods (null = local).
+ */
+async function resolveEngineIdForContainer(dockerId: string): Promise<number | null> {
+  try {
+    const { db } = await import('./db');
+    const row = await db('containers').where({ docker_id: dockerId }).select('engine_id').first();
+    return (row?.engine_id as number | undefined) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 const socketStates = new Map<string, SocketState>();
@@ -78,7 +95,10 @@ function setupLogHandlers(socket: Socket) {
     }
 
     try {
-      const stream = await dockerService.getContainerLogs(dockerId, tail);
+      // Route to the right daemon for remote engines. Falls back to local if the container
+      // isn't tracked in our DB (shouldn't happen in practice, but defends against races).
+      const engineId = await resolveEngineIdForContainer(dockerId);
+      const stream = await dockerService.getContainerLogs(dockerId, tail, engineId);
       state.logStreams.set(dockerId, stream);
 
       stream.on('data', (chunk: Buffer) => {
@@ -137,8 +157,9 @@ function setupExecHandlers(socket: Socket) {
     }
 
     try {
-      const { exec, stream } = await dockerService.execContainer(dockerId, cols, rows);
-      state.execStreams.set(dockerId, { stream, execId: exec.id });
+      const engineId = await resolveEngineIdForContainer(dockerId);
+      const { exec, stream } = await dockerService.execContainer(dockerId, cols, rows, engineId);
+      state.execStreams.set(dockerId, { stream, execId: exec.id, engineId });
 
       stream.on('data', (chunk: Buffer) => {
         socket.emit(SOCKET_EVENTS.CONTAINER_EXEC_OUTPUT, { dockerId, data: chunk.toString('utf8') });
@@ -173,7 +194,7 @@ function setupExecHandlers(socket: Socket) {
     const entry = state.execStreams.get(data.dockerId);
     if (entry) {
       try {
-        await dockerService.execResize(entry.execId, data.cols, data.rows);
+        await dockerService.execResize(entry.execId, data.cols, data.rows, entry.engineId);
       } catch (err) {
         logger.warn({ dockerId: data.dockerId, err }, 'Failed to resize exec');
       }

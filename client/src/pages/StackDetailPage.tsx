@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info, Trash2, ExternalLink, Globe, Plus, Power, PowerOff, Shield, Moon, Sun } from 'lucide-react';
 import { stacksApi, containersApi, systemApi } from '@/api/stacks.api';
@@ -288,6 +288,9 @@ export function StackDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Live update progress — only renders while at least one container is updating */}
+      <UpdateProgressPanel stackId={stack.id} containerNames={Object.fromEntries(stack.containers.map(c => [c.id, c.containerName]))} />
 
       {/* Containers */}
       <div className="rounded-xl border border-border bg-bg-secondary mb-6">
@@ -1024,6 +1027,100 @@ function SleepPanel({ container, onChange, onClose }: { container: Container; on
             </button>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Live update progress panel — subscribes to UPDATE_LOG (per-line stream of pull/recreate
+// output) and UPDATE_COMPLETE (clears the active container when done) for THIS stack only.
+// Sits above the container list so it's visible without scrolling. Auto-collapses when the
+// stack has no active update.
+function UpdateProgressPanel({ stackId, containerNames }: { stackId: number; containerNames: Record<number, string> }) {
+  const socket = useSocket();
+  // Keyed by containerId so we can show output for parallel updates (multiple containers
+  // in the same stack updating simultaneously). Each entry holds the last N lines.
+  const [perContainer, setPerContainer] = useState<Record<number, string[]>>({});
+  const [activeContainerIds, setActiveContainerIds] = useState<Set<number>>(new Set());
+  const tailRefs = useRef<Record<number, HTMLPreElement | null>>({});
+
+  useEffect(() => {
+    const onLog = (data: { stackId: number; containerId: number; chunk: string }) => {
+      if (data.stackId !== stackId) return;
+      setActiveContainerIds((prev) => {
+        if (prev.has(data.containerId)) return prev;
+        const next = new Set(prev); next.add(data.containerId); return next;
+      });
+      setPerContainer((prev) => {
+        const cur = prev[data.containerId] || [];
+        const next = [...cur, data.chunk];
+        // Cap retained history per container so a long pull doesn't bloat React state.
+        if (next.length > 500) next.splice(0, next.length - 500);
+        return { ...prev, [data.containerId]: next };
+      });
+    };
+    const onComplete = (data: { stackId: number; containerId: number; success: boolean }) => {
+      if (data.stackId !== stackId) return;
+      setActiveContainerIds((prev) => {
+        if (!prev.has(data.containerId)) return prev;
+        const next = new Set(prev); next.delete(data.containerId); return next;
+      });
+      // Append a final line so the user sees the resolution before the panel collapses.
+      setPerContainer((prev) => {
+        const cur = prev[data.containerId] || [];
+        return { ...prev, [data.containerId]: [...cur, data.success ? '✓ Update complete' : '✗ Update failed'] };
+      });
+    };
+    socket.on(SOCKET_EVENTS.UPDATE_LOG, onLog);
+    socket.on(SOCKET_EVENTS.UPDATE_COMPLETE, onComplete);
+    return () => {
+      socket.off(SOCKET_EVENTS.UPDATE_LOG, onLog);
+      socket.off(SOCKET_EVENTS.UPDATE_COMPLETE, onComplete);
+    };
+  }, [socket, stackId]);
+
+  // Auto-scroll each tail to the bottom as new lines arrive.
+  useEffect(() => {
+    for (const [cid, el] of Object.entries(tailRefs.current)) {
+      if (el) el.scrollTop = el.scrollHeight;
+      void cid;
+    }
+  }, [perContainer]);
+
+  // Only show containers that have any log output OR are currently active.
+  const visibleIds = Object.keys(perContainer).map(Number).filter(id => (perContainer[id] || []).length > 0);
+  if (visibleIds.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-accent/30 bg-accent/5 mb-6 overflow-hidden">
+      <div className="px-4 py-2 border-b border-accent/20 flex items-center gap-2 bg-accent/10">
+        <div className="h-2 w-2 rounded-full bg-accent animate-pulse" />
+        <span className="text-xs font-semibold text-accent">
+          {activeContainerIds.size > 0
+            ? `Updating ${activeContainerIds.size} container${activeContainerIds.size > 1 ? 's' : ''}…`
+            : 'Last update output'}
+        </span>
+      </div>
+      <div className="divide-y divide-border">
+        {visibleIds.map((cid) => {
+          const lines = perContainer[cid] || [];
+          const isActive = activeContainerIds.has(cid);
+          return (
+            <div key={cid}>
+              <div className="px-4 py-1.5 flex items-center gap-2 text-[11px] font-mono bg-bg-secondary/60">
+                {isActive && <div className="h-2 w-2 rounded-full border border-accent border-t-transparent animate-spin" />}
+                <span className="text-text-primary font-semibold">{containerNames[cid] || `Container #${cid}`}</span>
+                <span className="text-text-muted">— {lines.length} line{lines.length !== 1 ? 's' : ''}</span>
+              </div>
+              <pre
+                ref={(el) => { tailRefs.current[cid] = el; }}
+                className="text-[11px] leading-relaxed font-mono text-text-secondary whitespace-pre-wrap break-all bg-[#0d1117] p-3 max-h-48 overflow-auto"
+              >
+                {lines.join('\n')}
+              </pre>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

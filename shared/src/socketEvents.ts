@@ -4,6 +4,9 @@ export const SOCKET_EVENTS = {
   CONTAINER_STATUS_CHANGED: 'container:status_changed',
   UPDATE_PROGRESS: 'update:progress',
   UPDATE_COMPLETE: 'update:complete',
+  // Per-layer/per-step live output during a container update (pull progress lines, etc.).
+  // Emitted by the update service alongside UPDATE_PROGRESS so the stack page can show a tail.
+  UPDATE_LOG: 'update:log',
   DISCOVERY_COMPLETE: 'discovery:complete',
 
   // Container logs

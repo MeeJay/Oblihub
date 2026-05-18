@@ -119,7 +119,12 @@ export const dockerService = {
   },
 
   /** Pull a new image */
-  async pullImage(imageName: string, tag: string = 'latest', engineId: number | null = null): Promise<void> {
+  async pullImage(
+    imageName: string,
+    tag: string = 'latest',
+    engineId: number | null = null,
+    onProgress?: (event: { status?: string; id?: string; progress?: string; progressDetail?: { current?: number; total?: number } }) => void,
+  ): Promise<void> {
     const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const fullRef = `${imageName}:${tag}`;
     logger.info({ fullRef }, 'Pulling image...');
@@ -127,12 +132,23 @@ export const dockerService = {
     return new Promise((resolve, reject) => {
       docker.pull(fullRef, {}, (err: Error | null, stream?: NodeJS.ReadableStream) => {
         if (err || !stream) return reject(err || new Error('No stream'));
-        // Follow the pull progress stream to completion
-        docker.modem.followProgress(stream, (err2: Error | null) => {
-          if (err2) return reject(err2);
-          logger.info({ fullRef }, 'Image pulled successfully');
-          resolve();
-        });
+        // Follow the pull progress stream to completion. Third arg `onProgress` is called for
+        // every JSON event in the stream — pull layer status, download bars, "Pull complete",
+        // etc. We forward each to the optional caller-supplied callback so the UI can render
+        // a live tail without us having to buffer/parse anything.
+        docker.modem.followProgress(
+          stream,
+          (err2: Error | null) => {
+            if (err2) return reject(err2);
+            logger.info({ fullRef }, 'Image pulled successfully');
+            resolve();
+          },
+          onProgress
+            ? (event: { status?: string; id?: string; progress?: string; progressDetail?: { current?: number; total?: number } }) => {
+                try { onProgress(event); } catch { /* never let UI emission break the pull */ }
+              }
+            : undefined,
+        );
       });
     });
   },
@@ -318,8 +334,8 @@ export const dockerService = {
   },
 
   /** Create an exec instance for interactive shell */
-  async execContainer(dockerId: string, cols: number = 80, rows: number = 24): Promise<{ exec: Docker.Exec; stream: Duplex }> {
-    const docker = getDocker();
+  async execContainer(dockerId: string, cols: number = 80, rows: number = 24, engineId: number | null = null): Promise<{ exec: Docker.Exec; stream: Duplex; engineId: number | null }> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const container = docker.getContainer(dockerId);
     const exec = await container.exec({
       Cmd: ['/bin/sh'],
@@ -330,12 +346,14 @@ export const dockerService = {
       Env: [`COLUMNS=${cols}`, `LINES=${rows}`, 'TERM=xterm-256color'],
     });
     const stream = await exec.start({ hijack: true, stdin: true, Tty: true } as Docker.ExecStartOptions);
-    return { exec, stream: stream as unknown as Duplex };
+    // We return engineId so callers (the socket handler) can use the same daemon for follow-up
+    // exec/resize calls without having to re-resolve the engine.
+    return { exec, stream: stream as unknown as Duplex, engineId };
   },
 
-  /** Resize an exec TTY */
-  async execResize(execId: string, cols: number, rows: number): Promise<void> {
-    const docker = getDocker();
+  /** Resize an exec TTY on the specified engine (defaults to the local daemon). */
+  async execResize(execId: string, cols: number, rows: number, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     // dockerode doesn't have a direct execResize, use modem
     await new Promise<void>((resolve, reject) => {
       docker.modem.dial({
