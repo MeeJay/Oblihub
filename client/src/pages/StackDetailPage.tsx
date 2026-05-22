@@ -1059,16 +1059,20 @@ function UpdateProgressPanel({ stackId, containerNames }: { stackId: number; con
         return { ...prev, [data.containerId]: next };
       });
     };
-    const onComplete = (data: { stackId: number; containerId: number; success: boolean }) => {
+    const onComplete = (data: { stackId: number; containerId: number; success: boolean; error?: string }) => {
       if (data.stackId !== stackId) return;
       setActiveContainerIds((prev) => {
         if (!prev.has(data.containerId)) return prev;
         const next = new Set(prev); next.delete(data.containerId); return next;
       });
-      // Append a final line so the user sees the resolution before the panel collapses.
+      // Append the resolution + the error detail (when present) so the failure reason is
+      // visible right in the panel rather than buried in server logs.
       setPerContainer((prev) => {
         const cur = prev[data.containerId] || [];
-        return { ...prev, [data.containerId]: [...cur, data.success ? '✓ Update complete' : '✗ Update failed'] };
+        const lines = data.success
+          ? [...cur, '✓ Update complete']
+          : [...cur, '✗ Update failed', ...(data.error ? [`  → ${data.error}`] : [])];
+        return { ...prev, [data.containerId]: lines };
       });
     };
     socket.on(SOCKET_EVENTS.UPDATE_LOG, onLog);
