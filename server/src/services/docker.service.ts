@@ -129,8 +129,22 @@ export const dockerService = {
     const fullRef = `${imageName}:${tag}`;
     logger.info({ fullRef }, 'Pulling image...');
 
+    // Attach Docker Hub auth only for Docker Hub images. The image ref has no registry prefix
+    // (e.g. "nginx", "meejay/foo") OR explicitly references docker.io. Passing these creds to a
+    // different registry (ghcr.io, lscr.io, …) would be rejected, so we scope it carefully.
+    const pullOpts: { authconfig?: { username: string; password: string; serveraddress: string } } = {};
+    const firstSegment = imageName.split('/')[0];
+    const isDockerHub = !firstSegment.includes('.') && !firstSegment.includes(':') || firstSegment === 'docker.io' || firstSegment === 'registry-1.docker.io';
+    if (isDockerHub && config.dockerHubUsername && config.dockerHubToken) {
+      pullOpts.authconfig = {
+        username: config.dockerHubUsername,
+        password: config.dockerHubToken,
+        serveraddress: 'https://index.docker.io/v1/',
+      };
+    }
+
     return new Promise((resolve, reject) => {
-      docker.pull(fullRef, {}, (err: Error | null, stream?: NodeJS.ReadableStream) => {
+      docker.pull(fullRef, pullOpts, (err: Error | null, stream?: NodeJS.ReadableStream) => {
         if (err || !stream) return reject(err || new Error('No stream'));
         // Follow the pull progress stream to completion. Third arg `onProgress` is called for
         // every JSON event in the stream — pull layer status, download bars, "Pull complete",

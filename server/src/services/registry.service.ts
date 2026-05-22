@@ -43,11 +43,26 @@ function parseImageRef(image: string): { registry: string; namespace: string; re
 
 /**
  * Get a Docker Hub bearer token for pulling manifests.
+ *
+ * When DOCKERHUB_USERNAME + DOCKERHUB_TOKEN are configured, we authenticate the token request
+ * with HTTP Basic auth. Docker Hub then issues a token tied to the account, which counts
+ * against the higher authenticated rate limit (200/6h free, unlimited on paid plans) instead
+ * of the shared 100/6h-per-IP anonymous bucket. Anonymous fallback is preserved when no creds
+ * are set, so existing installs keep working unchanged.
  */
 async function getDockerHubToken(repository: string): Promise<string> {
   const url = `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Token request failed: ${res.status}`);
+  const headers: Record<string, string> = {};
+  const { config } = await import('../config');
+  if (config.dockerHubUsername && config.dockerHubToken) {
+    const basic = Buffer.from(`${config.dockerHubUsername}:${config.dockerHubToken}`).toString('base64');
+    headers['Authorization'] = `Basic ${basic}`;
+  }
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    // 401 here usually means bad credentials — surface that clearly rather than a generic failure.
+    throw new Error(`Docker Hub token request failed: ${res.status}${res.status === 401 ? ' (check DOCKERHUB_USERNAME / DOCKERHUB_TOKEN)' : ''}`);
+  }
   const data = await res.json() as { token: string };
   return data.token;
 }

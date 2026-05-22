@@ -70,6 +70,10 @@ services:
       APP_NAME: ${APP_NAME:-Oblihub}
       DISCOVERY_INTERVAL: ${DISCOVERY_INTERVAL:-30000}
       DEFAULT_CHECK_INTERVAL: ${DEFAULT_CHECK_INTERVAL:-60}
+      # Docker Hub auth — raises the rate limit from 100/6h (anonymous, per-IP) to 200/6h
+      # (free account) or unlimited (Pro/Team). Use an access token, not your password.
+      DOCKERHUB_USERNAME: ${DOCKERHUB_USERNAME:-}
+      DOCKERHUB_TOKEN: ${DOCKERHUB_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - stacks_data:/data/stacks

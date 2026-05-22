@@ -19,4 +19,9 @@ export const config = {
   allowStack: isTruthy(process.env.ALLOW_STACK),
   allowNginx: isTruthy(process.env.ALLOW_NGINX),
   stacksDir: process.env.STACKS_DIR || '/data/stacks',
+  // Docker Hub credentials for authenticated registry access (raises the pull/manifest rate
+  // limit from 100/6h anonymous to 200/6h free, or unlimited on Pro/Team). Use an access token
+  // (https://hub.docker.com/settings/security) — NOT your account password.
+  dockerHubUsername: process.env.DOCKERHUB_USERNAME || '',
+  dockerHubToken: process.env.DOCKERHUB_TOKEN || '',
 };
