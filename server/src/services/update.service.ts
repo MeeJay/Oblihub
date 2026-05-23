@@ -11,6 +11,20 @@ import type { UpdateHistoryEntry, UpdateStatus } from '@oblihub/shared';
 
 let _io: SocketIOServer | null = null;
 
+// In-flight updates keyed by container id. Lets concurrent triggers (scheduler tick during a
+// 16 GB pull, manual re-click, auto-update racing a check-now) share the running operation
+// instead of starting a duplicate. The AbortController is exposed so a Cancel button can stop
+// a stuck pull mid-stream.
+interface InFlightUpdate {
+  promise: Promise<void>;
+  abort: AbortController;
+  startedAt: number;
+  stackId: number | null;
+  containerName: string;
+  triggeredBy: 'auto' | 'manual';
+}
+const inFlightUpdates = new Map<number, InFlightUpdate>();
+
 // Notification throttle: avoid spamming (default 300s)
 const lastNotified = new Map<string, number>();
 function shouldNotify(key: string, thresholdMs: number = 300000): boolean {
@@ -165,11 +179,62 @@ export const updateService = {
   },
 
   /**
-   * Update a single container.
+   * Update a single container. Concurrent callers (auto-update scheduler tick during a long
+   * pull, double-click on the UI, etc.) share the same in-flight run instead of starting a
+   * second one. Returns the same promise to all waiters.
    */
   async updateContainer(containerId: number, stackId: number | null, triggeredBy: 'auto' | 'manual' = 'manual'): Promise<void> {
+    const existing = inFlightUpdates.get(containerId);
+    if (existing) {
+      logger.info({ containerId, runningSince: existing.startedAt }, 'Update already in progress — joining existing run');
+      return existing.promise;
+    }
+
     const container = await stackService.getContainerById(containerId);
     if (!container) return;
+
+    const abort = new AbortController();
+    const promise = (async () => {
+      try {
+        await this._updateContainerInner(containerId, stackId, triggeredBy, abort.signal);
+      } finally {
+        inFlightUpdates.delete(containerId);
+      }
+    })();
+    inFlightUpdates.set(containerId, {
+      promise, abort, startedAt: Date.now(), stackId, containerName: container.containerName, triggeredBy,
+    });
+    return promise;
+  },
+
+  /** True when an update is currently running for this container. */
+  isUpdating(containerId: number): boolean {
+    return inFlightUpdates.has(containerId);
+  },
+
+  /**
+   * Abort an in-flight update. Returns true if a run was actually cancelled, false when no
+   * update was running. The pull stream and any downstream awaits observe the abort signal
+   * and bail out, which results in an UPDATE_COMPLETE with `error: 'Cancelled by user'`.
+   */
+  cancelUpdate(containerId: number): boolean {
+    const entry = inFlightUpdates.get(containerId);
+    if (!entry) return false;
+    logger.warn({ containerId, runningSinceMs: Date.now() - entry.startedAt }, 'Cancelling in-flight update');
+    entry.abort.abort(new Error('Cancelled by user'));
+    return true;
+  },
+
+  /**
+   * Internal — the actual update sequence. Wrapped by `updateContainer` for in-flight tracking.
+   * Accepts an AbortSignal that's checked at each major step to allow user-initiated cancel.
+   */
+  async _updateContainerInner(containerId: number, stackId: number | null, triggeredBy: 'auto' | 'manual', signal: AbortSignal): Promise<void> {
+    const container = await stackService.getContainerById(containerId);
+    if (!container) return;
+    const throwIfCancelled = () => {
+      if (signal.aborted) throw new Error('Cancelled by user');
+    };
 
     // Create history entry
     const [historyRow] = await db('update_history').insert({
@@ -214,10 +279,18 @@ export const updateService = {
         return;
       }
 
+      throwIfCancelled();
+
       // 1. Pull new image — forward live progress to subscribers. Pull events arrive as one
       // JSON object per line in the docker stream; we format each into a short human-readable
       // string and emit as UPDATE_LOG so the stack page can render a streaming tail.
+      //
+      // We check the abort signal on every progress event (cheap, runs hundreds of times for a
+      // multi-GB pull) and throw if set — the surrounding catch surfaces it as "Cancelled".
+      // The pull itself can't be force-killed via Node, but the throw stops us from waiting for
+      // it to finish, and the Docker daemon eventually GC's the orphaned pull.
       await dockerService.pullImage(container.image, container.imageTag, container.engineId, (ev) => {
+        if (signal.aborted) throw new Error('Cancelled by user');
         if (!_io) return;
         let chunk: string;
         if (ev.status && ev.id) {
@@ -231,6 +304,8 @@ export const updateService = {
           stackId, containerId, containerName: container.containerName, chunk,
         });
       });
+
+      throwIfCancelled();
 
       // Update history
       await db('update_history').where({ id: historyId }).update({ status: 'recreating' });

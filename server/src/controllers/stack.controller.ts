@@ -102,9 +102,19 @@ export const stackController = {
   async triggerUpdate(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = parseInt(req.params.id, 10);
-      // Run update in background
+      // Run update in background. updateService internally dedupes per-container in-flight runs
+      // so a second click while a 16 GB pull is already going just joins the existing op.
       updateService.updateStack(id, 'manual').catch(() => {});
       res.json({ success: true, message: 'Update started' });
+    } catch (err) { next(err); }
+  },
+
+  /** Cancel an in-flight update for a single container. */
+  async cancelContainerUpdate(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const cancelled = updateService.cancelUpdate(id);
+      res.json({ success: true, data: { cancelled } });
     } catch (err) { next(err); }
   },
 

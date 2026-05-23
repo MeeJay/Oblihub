@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info, Trash2, ExternalLink, Globe, Plus, Power, PowerOff, Shield, Moon, Sun } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Play, Settings2, RotateCcw, Square, Terminal, ScrollText, FileEdit, Info, Trash2, ExternalLink, Globe, Plus, Power, PowerOff, Shield, Moon, Sun, XCircle } from 'lucide-react';
 import { stacksApi, containersApi, systemApi } from '@/api/stacks.api';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import { proxyApi } from '@/api/proxy.api';
@@ -1115,6 +1115,22 @@ function UpdateProgressPanel({ stackId, containerNames }: { stackId: number; con
                 {isActive && <div className="h-2 w-2 rounded-full border border-accent border-t-transparent animate-spin" />}
                 <span className="text-text-primary font-semibold">{containerNames[cid] || `Container #${cid}`}</span>
                 <span className="text-text-muted">— {lines.length} line{lines.length !== 1 ? 's' : ''}</span>
+                {isActive && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const { containersApi } = await import('@/api/stacks.api');
+                        const r = await containersApi.cancelUpdate(cid);
+                        if (!r.cancelled) toast('No update was running.');
+                        else toast.success('Cancel signal sent.');
+                      } catch { toast.error('Cancel failed'); }
+                    }}
+                    className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded bg-red-600 hover:bg-red-700 text-white shadow-sm"
+                    title="Stop this update — useful when a multi-GB pull is stuck or being rate-limited"
+                  >
+                    <XCircle size={11} /> Cancel update
+                  </button>
+                )}
               </div>
               <pre
                 ref={(el) => { tailRefs.current[cid] = el; }}

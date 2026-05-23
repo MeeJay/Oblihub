@@ -15,6 +15,7 @@ router.post('/:id/stop', requirePermission('stacks.stop'), requireContainerAcces
 router.post('/:id/start', requirePermission('stacks.stop'), requireContainerAccess(), stackController.startContainer);
 router.delete('/:id', requirePermission('stacks.manage'), requireContainerAccess(), stackController.removeContainer);
 router.get('/:id/inspect', requirePermission('containers.inspect'), requireContainerAccess(), stackController.inspectContainer);
+router.post('/:id/cancel-update', requirePermission('stacks.update'), requireContainerAccess(), stackController.cancelContainerUpdate);
 
 // Sleep mode
 router.patch('/:id/sleep-config', requirePermission('stacks.manage'), requireContainerAccess(), sleepController.updateConfig);

@@ -66,6 +66,10 @@ export const containersApi = {
     const res = await apiClient.get<ApiResponse<{ state: SleepState; elapsedMs: number; message?: string }>>(`/containers/${id}/wake-status`);
     return res.data.data!;
   },
+  async cancelUpdate(id: number): Promise<{ cancelled: boolean }> {
+    const res = await apiClient.post<ApiResponse<{ cancelled: boolean }>>(`/containers/${id}/cancel-update`);
+    return res.data.data!;
+  },
 };
 
 export const systemApi = {
