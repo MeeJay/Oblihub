@@ -45,6 +45,46 @@ export const managedStacksApi = {
     }>>('/managed-stacks/check-port-conflicts', args);
     return res.data.data!;
   },
+
+  // ── Build-pipeline source operations ──
+  async uploadZip(id: number, file: File): Promise<ManagedStack> {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await apiClient.post<ApiResponse<ManagedStack>>(`/managed-stacks/${id}/source/zip`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data.data!;
+  },
+  async setGitSource(id: number, gitUrl: string, gitBranch?: string): Promise<ManagedStack> {
+    const res = await apiClient.post<ApiResponse<ManagedStack>>(`/managed-stacks/${id}/source/git`, { gitUrl, gitBranch });
+    return res.data.data!;
+  },
+  async gitPull(id: number): Promise<ManagedStack> {
+    const res = await apiClient.post<ApiResponse<ManagedStack>>(`/managed-stacks/${id}/source/git-pull`);
+    return res.data.data!;
+  },
+  async listSourceFiles(id: number): Promise<{ path: string; size: number; isDir: boolean }[]> {
+    const res = await apiClient.get<ApiResponse<{ path: string; size: number; isDir: boolean }[]>>(`/managed-stacks/${id}/source/files`);
+    return res.data.data!;
+  },
+
+  // Engine migration
+  async previewMigration(id: number): Promise<{ named: string[]; binds: string[] }> {
+    const res = await apiClient.get<ApiResponse<{ named: string[]; binds: string[] }>>(`/managed-stacks/${id}/migration-preview`);
+    return res.data.data!;
+  },
+  async migrateEngine(id: number, body: { targetEngineId: number | null; strategy: 'just-save' | 'stop-and-deploy' | 'migrate-data' }): Promise<{
+    stack: ManagedStack;
+    migrated: { name: string; ok: boolean; bytesIn?: number; error?: string }[];
+    skippedBinds: string[];
+  }> {
+    const res = await apiClient.post<ApiResponse<{
+      stack: ManagedStack;
+      migrated: { name: string; ok: boolean; bytesIn?: number; error?: string }[];
+      skippedBinds: string[];
+    }>>(`/managed-stacks/${id}/migrate-engine`, body);
+    return res.data.data!;
+  },
   async cancel(id: number): Promise<{ killed: boolean }> {
     const res = await apiClient.post<ApiResponse<{ killed: boolean }>>(`/managed-stacks/${id}/cancel`);
     return res.data.data!;

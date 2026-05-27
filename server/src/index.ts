@@ -8,6 +8,8 @@ import { logger } from './utils/logger';
 import { authService } from './services/auth.service';
 import { setUpdateServiceIO } from './services/update.service';
 import { setComposeServiceIO } from './services/compose.service';
+import { setSourceManagerIO } from './services/sourceManager.service';
+import { setVolumeMigrationIO } from './services/volumeMigration.service';
 import { startDiscoveryWorker, stopDiscoveryWorker } from './workers/DiscoveryWorker';
 import { startStatsWorker, stopStatsWorker, cleanupOldStats } from './workers/StatsWorker';
 import { startUptimeWorker, stopUptimeWorker } from './workers/UptimeWorker';
@@ -73,6 +75,11 @@ async function main() {
   setUpdateServiceIO(io);
   // Provide io to compose service so deploy/pull stream stdout/stderr live to subscribers.
   setComposeServiceIO(io);
+  // Source manager re-uses the compose:log channel to stream zip-extract / git-clone progress
+  // — saves us a dedicated socket event since the UI panel already renders that stream.
+  setSourceManagerIO(io);
+  // Volume migration also reuses the compose:log channel for live progress (tar bytes/sec).
+  setVolumeMigrationIO(io);
 
   // Start Docker discovery worker
   startDiscoveryWorker(io);

@@ -521,35 +521,35 @@ export const dockerService = {
   // ── Docker resource management ──
 
   /** List all images */
-  async listImages(): Promise<Docker.ImageInfo[]> {
-    const docker = getDocker();
+  async listImages(engineId: number | null = null): Promise<Docker.ImageInfo[]> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     return docker.listImages({ all: false });
   },
 
   /** Remove an image */
-  async removeImage(imageId: string, force = false): Promise<void> {
-    const docker = getDocker();
+  async removeImage(imageId: string, force = false, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const image = docker.getImage(imageId);
     await image.remove({ force });
-    logger.info({ imageId }, 'Image removed');
+    logger.info({ imageId, engineId }, 'Image removed');
   },
 
   /** List all networks */
-  async listNetworks(): Promise<Docker.NetworkInspectInfo[]> {
-    const docker = getDocker();
+  async listNetworks(engineId: number | null = null): Promise<Docker.NetworkInspectInfo[]> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     return docker.listNetworks();
   },
 
   /** Inspect a network */
-  async inspectNetwork(networkId: string): Promise<Docker.NetworkInspectInfo> {
-    const docker = getDocker();
+  async inspectNetwork(networkId: string, engineId: number | null = null): Promise<Docker.NetworkInspectInfo> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const network = docker.getNetwork(networkId);
     return network.inspect();
   },
 
   /** Create a network */
-  async createNetwork(opts: { name: string; driver?: string; internal?: boolean; attachable?: boolean; labels?: Record<string, string>; subnet?: string; gateway?: string }): Promise<string> {
-    const docker = getDocker();
+  async createNetwork(opts: { name: string; driver?: string; internal?: boolean; attachable?: boolean; labels?: Record<string, string>; subnet?: string; gateway?: string }, engineId: number | null = null): Promise<string> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const createOpts: Docker.NetworkCreateOptions = {
       Name: opts.name,
       Driver: opts.driver || 'bridge',
@@ -565,87 +565,87 @@ export const dockerService = {
       };
     }
     const network = await docker.createNetwork(createOpts);
-    logger.info({ name: opts.name, id: network.id }, 'Network created');
+    logger.info({ name: opts.name, id: network.id, engineId }, 'Network created');
     return network.id;
   },
 
   /** Remove a network */
-  async removeNetwork(networkId: string): Promise<void> {
-    const docker = getDocker();
+  async removeNetwork(networkId: string, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const network = docker.getNetwork(networkId);
     await network.remove();
-    logger.info({ networkId }, 'Network removed');
+    logger.info({ networkId, engineId }, 'Network removed');
   },
 
   /** Connect a container to a network */
-  async connectNetwork(networkId: string, containerId: string, aliases?: string[]): Promise<void> {
-    const docker = getDocker();
+  async connectNetwork(networkId: string, containerId: string, aliases?: string[], engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const network = docker.getNetwork(networkId);
     await network.connect({ Container: containerId, EndpointConfig: { Aliases: aliases || [] } as Docker.EndpointSettings });
-    logger.info({ networkId, containerId }, 'Container connected to network');
+    logger.info({ networkId, containerId, engineId }, 'Container connected to network');
   },
 
   /** Disconnect a container from a network */
-  async disconnectNetwork(networkId: string, containerId: string, force = false): Promise<void> {
-    const docker = getDocker();
+  async disconnectNetwork(networkId: string, containerId: string, force = false, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const network = docker.getNetwork(networkId);
     await network.disconnect({ Container: containerId, Force: force });
-    logger.info({ networkId, containerId }, 'Container disconnected from network');
+    logger.info({ networkId, containerId, engineId }, 'Container disconnected from network');
   },
 
   /** List all volumes */
-  async listVolumes(): Promise<{ Volumes: Docker.VolumeInspectInfo[]; Warnings: string[] }> {
-    const docker = getDocker();
+  async listVolumes(engineId: number | null = null): Promise<{ Volumes: Docker.VolumeInspectInfo[]; Warnings: string[] }> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     return docker.listVolumes();
   },
 
   /** Create a volume */
-  async createVolume(opts: { name: string; driver?: string; labels?: Record<string, string>; driverOpts?: Record<string, string> }): Promise<Docker.VolumeCreateResponse> {
-    const docker = getDocker();
+  async createVolume(opts: { name: string; driver?: string; labels?: Record<string, string>; driverOpts?: Record<string, string> }, engineId: number | null = null): Promise<Docker.VolumeCreateResponse> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const volume = await docker.createVolume({
       Name: opts.name,
       Driver: opts.driver || 'local',
       Labels: opts.labels || {},
       DriverOpts: opts.driverOpts || {},
     });
-    logger.info({ name: opts.name }, 'Volume created');
+    logger.info({ name: opts.name, engineId }, 'Volume created');
     return volume;
   },
 
   /** Remove a volume */
-  async removeVolume(name: string, force = false): Promise<void> {
-    const docker = getDocker();
+  async removeVolume(name: string, force = false, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const volume = docker.getVolume(name);
     await volume.remove({ force });
-    logger.info({ name }, 'Volume removed');
+    logger.info({ name, engineId }, 'Volume removed');
   },
 
   // ── Prune operations ──
 
   /** Prune unused images */
-  async pruneImages(): Promise<{ deleted: string[]; spaceReclaimed: number }> {
-    const docker = getDocker();
+  async pruneImages(engineId: number | null = null): Promise<{ deleted: string[]; spaceReclaimed: number }> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const result = await docker.pruneImages({ filters: { dangling: { 'false': true } } });
     const deleted = (result.ImagesDeleted || []).map((i: { Deleted?: string; Untagged?: string }) => i.Deleted || i.Untagged || '').filter(Boolean);
-    logger.info({ count: deleted.length, space: result.SpaceReclaimed }, 'Images pruned');
+    logger.info({ count: deleted.length, space: result.SpaceReclaimed, engineId }, 'Images pruned');
     return { deleted, spaceReclaimed: result.SpaceReclaimed || 0 };
   },
 
   /** Prune unused networks */
-  async pruneNetworks(): Promise<{ deleted: string[] }> {
-    const docker = getDocker();
+  async pruneNetworks(engineId: number | null = null): Promise<{ deleted: string[] }> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const result = await docker.pruneNetworks();
     const deleted = result.NetworksDeleted || [];
-    logger.info({ count: deleted.length }, 'Networks pruned');
+    logger.info({ count: deleted.length, engineId }, 'Networks pruned');
     return { deleted };
   },
 
   /** Prune unused volumes */
-  async pruneVolumes(): Promise<{ deleted: string[]; spaceReclaimed: number }> {
-    const docker = getDocker();
+  async pruneVolumes(engineId: number | null = null): Promise<{ deleted: string[]; spaceReclaimed: number }> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
     const result = await docker.pruneVolumes();
     const deleted = result.VolumesDeleted || [];
-    logger.info({ count: deleted.length, space: result.SpaceReclaimed }, 'Volumes pruned');
+    logger.info({ count: deleted.length, space: result.SpaceReclaimed, engineId }, 'Volumes pruned');
     return { deleted, spaceReclaimed: result.SpaceReclaimed || 0 };
   },
 

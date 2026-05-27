@@ -186,6 +186,13 @@ export interface NotificationBinding {
 // ── Managed stack types ──
 export type ManagedStackStatus = 'draft' | 'deploying' | 'deployed' | 'stopped' | 'error';
 
+/** Where the source files for this stack come from.
+ *   compose-only: legacy — just the docker-compose.yml + .env pasted/typed in the editor.
+ *   zip:          tarball uploaded by the user; build can run from local Dockerfile contexts.
+ *   git:          cloned from a remote repo; refreshable via `git pull` from the UI.
+ */
+export type ManagedStackSourceType = 'compose-only' | 'zip' | 'git';
+
 export interface ManagedStack {
   id: number;
   name: string;
@@ -195,6 +202,13 @@ export interface ManagedStack {
   composeProject: string;
   engineId: number | null;
   errorMessage: string | null;
+  // Source pipeline — populated for stacks built from uploaded files or a git repo. Defaults
+  // to 'compose-only' for stacks created via the legacy paste-compose-and-deploy flow.
+  sourceType: ManagedStackSourceType;
+  gitUrl: string | null;
+  gitBranch: string | null;
+  gitRef: string | null;
+  lastSourceSyncAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

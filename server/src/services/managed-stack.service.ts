@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { AppError } from '../middleware/errorHandler';
-import type { ManagedStack, ManagedStackStatus } from '@oblihub/shared';
+import type { ManagedStack, ManagedStackStatus, ManagedStackSourceType } from '@oblihub/shared';
 
 function toCamelCase(row: Record<string, unknown>): ManagedStack {
   return {
@@ -12,6 +12,11 @@ function toCamelCase(row: Record<string, unknown>): ManagedStack {
     composeProject: row.compose_project as string,
     engineId: (row.engine_id as number) ?? null,
     errorMessage: (row.error_message as string) || null,
+    sourceType: ((row.source_type as string) || 'compose-only') as ManagedStackSourceType,
+    gitUrl: (row.git_url as string) || null,
+    gitBranch: (row.git_branch as string) || null,
+    gitRef: (row.git_ref as string) || null,
+    lastSourceSyncAt: row.last_source_sync_at ? (row.last_source_sync_at as Date).toISOString() : null,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
   };

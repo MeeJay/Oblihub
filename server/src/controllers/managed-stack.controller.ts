@@ -2,6 +2,8 @@ import type { Request, Response, NextFunction } from 'express';
 import { managedStackService } from '../services/managed-stack.service';
 import { composeService } from '../services/compose.service';
 import { dockerService } from '../services/docker.service';
+import { sourceManagerService } from '../services/sourceManager.service';
+import { volumeMigrationService } from '../services/volumeMigration.service';
 import { config } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
@@ -364,6 +366,151 @@ export const managedStackController = {
         }
       }
       res.json({ success: true, data: { conflicts } });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * Receive a multipart/form-data zip upload and replace the stack's source files with it.
+   * Re-uploads are clean: the project dir is wiped (except .env, docker-compose.yml at root,
+   * and .oblihub state) before extraction.
+   */
+  async uploadZip(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const file = (req as Request & { file?: Express.Multer.File }).file;
+      if (!file) throw new AppError(400, 'No file uploaded (expected field "file")');
+      await sourceManagerService.receiveZip(id, file.buffer);
+      const stack = await managedStackService.getById(id);
+      res.json({ success: true, data: stack });
+    } catch (err) { next(err); }
+  },
+
+  /** Configure / replace the git source for this stack. */
+  async setGit(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const { gitUrl, gitBranch } = req.body as { gitUrl?: string; gitBranch?: string };
+      if (!gitUrl) throw new AppError(400, 'gitUrl required');
+      await sourceManagerService.setGitSource(id, gitUrl, gitBranch || 'main');
+      const stack = await managedStackService.getById(id);
+      res.json({ success: true, data: stack });
+    } catch (err) { next(err); }
+  },
+
+  /** Pull latest commits on the configured branch. */
+  async gitPull(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      await sourceManagerService.gitPull(id);
+      const stack = await managedStackService.getById(id);
+      res.json({ success: true, data: stack });
+    } catch (err) { next(err); }
+  },
+
+  /** List the files currently present in the stack's source dir (excluding .git/.oblihub). */
+  async listSourceFiles(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const files = await sourceManagerService.listFiles(id);
+      res.json({ success: true, data: files });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * Preview what volumes / bind mounts the stack uses on its current engine. Called by the
+   * client BEFORE showing the engine-migration modal so the user sees what they're about to
+   * move (or skip, in the case of bind mounts).
+   */
+  async previewMigration(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const stack = await managedStackService.getById(id);
+      if (!stack) throw new AppError(404, 'Stack not found');
+      const vols = await volumeMigrationService.discoverVolumes(stack.composeProject, stack.engineId);
+      res.json({ success: true, data: vols });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * Re-target a deployed stack to a different engine.
+   *
+   *   strategy = 'just-save'        — flip engine_id in DB only. Orphans the old containers.
+   *                                    Use when the operator will clean up the old engine
+   *                                    by hand or just doesn't care.
+   *   strategy = 'stop-and-deploy'  — `docker compose down` on old, flip DB, `up -d` on new.
+   *                                    Data is NOT migrated — new volumes will be empty.
+   *   strategy = 'migrate-data'     — `down` on old → tar-stream every named volume from old
+   *                                    to new → flip DB → `up -d` on new. Bind mounts are
+   *                                    surfaced as skipped. The longest path; live progress
+   *                                    streams via compose:log.
+   *
+   * Runs synchronously so the HTTP response only returns when the migration is fully done.
+   * For long transfers (multi-GB DB volumes) the client gets progress via the socket and can
+   * cancel via /cancel-update on the stack.
+   */
+  async migrateEngine(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const body = req.body as { targetEngineId: number | null; strategy: 'just-save' | 'stop-and-deploy' | 'migrate-data' };
+      if (!('targetEngineId' in body)) throw new AppError(400, 'targetEngineId required');
+      if (!['just-save', 'stop-and-deploy', 'migrate-data'].includes(body.strategy)) {
+        throw new AppError(400, 'Invalid strategy');
+      }
+      const stack = await managedStackService.getById(id);
+      if (!stack) throw new AppError(404, 'Stack not found');
+      const sourceEngineId = stack.engineId;
+      const targetEngineId = body.targetEngineId;
+      if (sourceEngineId === targetEngineId) {
+        res.json({ success: true, data: { changed: false, message: 'Already on this engine' } });
+        return;
+      }
+
+      const { db } = await import('../db');
+      const { setComposeServiceIO } = await import('../services/compose.service');
+      void setComposeServiceIO;
+
+      // ── Strategy: just-save ──
+      if (body.strategy === 'just-save') {
+        await db('managed_stacks').where({ id }).update({ engine_id: targetEngineId, updated_at: new Date() });
+        const updated = await managedStackService.getById(id);
+        res.json({ success: true, data: { stack: updated, migrated: [], skippedBinds: [] } });
+        return;
+      }
+
+      // ── Strategy: stop-and-deploy + migrate-data both start with `down` on the old engine ──
+      await managedStackService.setStatus(id, 'deploying', null);
+      try {
+        const downResult = await composeService.down(stack.composeProject, false, sourceEngineId);
+        if (downResult.exitCode !== 0) {
+          throw new AppError(500, `Failed to stop on source engine: ${downResult.stderr.slice(0, 500)}`);
+        }
+
+        let migration: Awaited<ReturnType<typeof volumeMigrationService.migrateAll>> = { migrated: [], skippedBinds: [] };
+        if (body.strategy === 'migrate-data') {
+          migration = await volumeMigrationService.migrateAll(stack.composeProject, sourceEngineId, targetEngineId);
+        }
+
+        await db('managed_stacks').where({ id }).update({ engine_id: targetEngineId, updated_at: new Date() });
+        const stackForDeploy = await managedStackService.getById(id);
+        if (!stackForDeploy) throw new AppError(500, 'Stack disappeared mid-migration');
+
+        const upResult = await composeService.deploy(
+          stackForDeploy.composeProject,
+          stackForDeploy.composeContent,
+          stackForDeploy.envContent,
+          targetEngineId,
+        );
+        if (upResult.exitCode !== 0) {
+          await managedStackService.setStatus(id, 'error', `Deploy on new engine failed: ${upResult.stderr.slice(0, 500)}`);
+          throw new AppError(500, `Deploy on target engine failed: ${upResult.stderr.slice(0, 500)}`);
+        }
+        await managedStackService.setStatus(id, 'deployed', null);
+        const updated = await managedStackService.getById(id);
+        res.json({ success: true, data: { stack: updated, ...migration } });
+      } catch (err) {
+        await managedStackService.setStatus(id, 'error', err instanceof Error ? err.message : String(err));
+        throw err;
+      }
     } catch (err) { next(err); }
   },
 };

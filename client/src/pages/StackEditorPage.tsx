@@ -8,6 +8,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useSocket } from '@/hooks/useSocket';
 import type { Team } from '@oblihub/shared';
 import { ComposePreview, extractHostPort, type PortConflict } from '@/components/ComposePreview';
+import { SourcePanel } from '@/components/SourcePanel';
 import yaml from 'js-yaml';
 import { SOCKET_EVENTS, type ManagedStack, type ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -250,10 +251,49 @@ export function StackEditorPage() {
     toast.success(`Removed port ${rawPort}`);
   };
 
+  // Engine-change modal state. Populated when the user picks a different engine on an
+  // already-deployed stack, gated through `handleSave` to force a deliberate choice between
+  // just-save (orphan), stop-and-deploy (clean cut), or migrate-data (full move).
+  const [engineMigration, setEngineMigration] = useState<null | {
+    fromEngineId: number | null;
+    toEngineId: number | null;
+    namedVolumes: string[];
+    bindMounts: string[];
+    loading: boolean;
+  }>(null);
+
   const handleSave = async () => {
     if (!name.trim()) { toast.error('Stack name is required'); return; }
     if (!composeContent.trim()) { toast.error('Compose content is required'); return; }
     if (isNew && !isAdmin && !selectedTeamId) { toast.error('Select a team for this stack'); return; }
+
+    // If the operator changed the target engine on a stack that's actually deployed, surface
+    // the migration modal before doing anything destructive. The 3 choices map to different
+    // back-end strategies; we never silently leave containers behind.
+    if (!isNew && stack && stack.status === 'deployed' && selectedEngineId !== stack.engineId) {
+      setEngineMigration({
+        fromEngineId: stack.engineId,
+        toEngineId: selectedEngineId,
+        namedVolumes: [],
+        bindMounts: [],
+        loading: true,
+      });
+      try {
+        const preview = await managedStacksApi.previewMigration(Number(id));
+        setEngineMigration({
+          fromEngineId: stack.engineId,
+          toEngineId: selectedEngineId,
+          namedVolumes: preview.named,
+          bindMounts: preview.binds,
+          loading: false,
+        });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to inspect volumes');
+        setEngineMigration(null);
+      }
+      return;
+    }
+
     setSaving(true);
     try {
       const envContent = getEnvContent();
@@ -272,6 +312,34 @@ export function StackEditorPage() {
       toast.error(msg);
     }
     finally { setSaving(false); }
+  };
+
+  /** Confirm the engine migration with the chosen strategy. Closes the modal on completion. */
+  const confirmEngineMigration = async (strategy: 'just-save' | 'stop-and-deploy' | 'migrate-data') => {
+    if (!engineMigration) return;
+    const targetEngineId = engineMigration.toEngineId;
+    setEngineMigration(null);
+    setSaving(true);
+    try {
+      // Save the rest of the form first (name / compose / env) so a single user action lands
+      // ALL pending edits, then do the engine migration. The migrate-engine endpoint flips
+      // engine_id itself — we pre-save with the OLD engine id to avoid a confusing race.
+      const envContent = getEnvContent();
+      await managedStacksApi.update(Number(id), {
+        name, composeContent, envContent,
+        engineId: stack?.engineId ?? null,
+      });
+      const result = await managedStacksApi.migrateEngine(Number(id), { targetEngineId, strategy });
+      setStack(result.stack);
+      setSelectedEngineId(result.stack.engineId ?? null);
+      setDirty(false);
+      const stratLabel = strategy === 'just-save' ? 'saved (old containers orphaned)'
+        : strategy === 'stop-and-deploy' ? 'stopped on old engine + redeployed'
+        : `migrated ${result.migrated.length} volume(s) + redeployed`;
+      toast.success(`Engine migration: ${stratLabel}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Migration failed');
+    } finally { setSaving(false); }
   };
 
   const handleDeploy = async () => {
@@ -495,6 +563,21 @@ export function StackEditorPage() {
         />
       )}
 
+      {/* Engine migration modal — opens when handleSave detects a deployed-stack engine change */}
+      {engineMigration && stack && (
+        <EngineMigrationModal
+          stack={stack}
+          fromEngineId={engineMigration.fromEngineId}
+          toEngineId={engineMigration.toEngineId}
+          namedVolumes={engineMigration.namedVolumes}
+          bindMounts={engineMigration.bindMounts}
+          loading={engineMigration.loading}
+          engines={engines}
+          onConfirm={confirmEngineMigration}
+          onCancel={() => setEngineMigration(null)}
+        />
+      )}
+
       {/* Port conflict warning — surfaces ports that another stack/container on this engine is
           already using. Red because deploy WILL fail at `docker compose up` otherwise. */}
       {portConflicts.length > 0 && (
@@ -525,6 +608,14 @@ export function StackEditorPage() {
             Your compose file uses relative paths (<code className="bg-bg-tertiary px-1 rounded">./</code>). These resolve relative to Oblihub's stack directory (<code className="bg-bg-tertiary px-1 rounded">/data/stacks/{stack?.composeProject || name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}/</code>), not the original location. Use <strong>absolute paths</strong> to mount existing data.
           </div>
         </div>
+      )}
+
+      {/* Source panel — only shown for existing stacks (need an id to upload to) */}
+      {stack && (
+        <SourcePanel
+          stack={stack}
+          onStackUpdated={(updated) => { setStack(updated); setSelectedEngineId(updated.engineId ?? null); }}
+        />
       )}
 
       {/* Compose + Env side by side */}
@@ -636,6 +727,153 @@ export function StackEditorPage() {
 // and renders the streaming stdout/stderr. The big red Cancel button is the user's emergency
 // stop when they see a deploy stuck on a slow pull or hung SSH session. Buffer is auto-scrolled
 // while deploying; the user can scroll up to inspect history and we won't snap them back.
+/**
+ * 3-choice modal shown when the operator changes the target engine on an already-deployed
+ * stack. Each strategy has a different blast radius — we lay it out plainly so there's no
+ * "oh shit" moment after the fact:
+ *
+ *   1. Just save        — fastest, least safe, orphans containers on the source engine
+ *   2. Stop + redeploy  — clean cut, new engine starts with empty volumes (data loss perceived)
+ *   3. Migrate data     — full move: stop source → tar-stream every named volume → redeploy
+ *
+ * Bind mounts are listed but skipped — the host paths can't be read across engines without
+ * filesystem access we don't have. The user has to copy those manually if they matter.
+ */
+function EngineMigrationModal({
+  stack,
+  fromEngineId,
+  toEngineId,
+  namedVolumes,
+  bindMounts,
+  loading,
+  engines,
+  onConfirm,
+  onCancel,
+}: {
+  stack: ManagedStack;
+  fromEngineId: number | null;
+  toEngineId: number | null;
+  namedVolumes: string[];
+  bindMounts: string[];
+  loading: boolean;
+  engines: { id: number; name: string }[];
+  onConfirm: (strategy: 'just-save' | 'stop-and-deploy' | 'migrate-data') => void;
+  onCancel: () => void;
+}) {
+  const [strategy, setStrategy] = useState<'just-save' | 'stop-and-deploy' | 'migrate-data'>('stop-and-deploy');
+  const engineName = (id: number | null): string => id == null ? 'Local' : engines.find(e => e.id === id)?.name || `Engine ${id}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onCancel}>
+      <div className="rounded-xl border border-border bg-bg-primary w-full max-w-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-border flex items-center gap-2">
+          <AlertTriangle size={16} className="text-status-pending" />
+          <h2 className="text-sm font-semibold text-text-primary">Move stack to a different engine</h2>
+        </div>
+        <div className="p-5 space-y-4 text-sm">
+          <p className="text-text-secondary">
+            You're moving <strong>{stack.name}</strong> from <strong>{engineName(fromEngineId)}</strong> to{' '}
+            <strong>{engineName(toEngineId)}</strong>. This stack is currently <span className="text-status-up font-medium">deployed</span> — pick how you want to handle the existing containers and data.
+          </p>
+
+          {/* Volume preview */}
+          <div className="rounded-lg border border-border bg-bg-secondary p-3 text-xs">
+            <div className="font-semibold text-text-primary mb-1">Detected on source engine:</div>
+            {loading ? (
+              <div className="text-text-muted italic">Scanning…</div>
+            ) : (
+              <>
+                <div className="text-text-secondary mb-1">
+                  <span className="font-mono">{namedVolumes.length}</span> named volume{namedVolumes.length !== 1 ? 's' : ''}
+                  {namedVolumes.length > 0 && ' (can be migrated):'}
+                </div>
+                {namedVolumes.length > 0 && (
+                  <ul className="ml-3 space-y-0.5 mb-2">
+                    {namedVolumes.map(v => <li key={v} className="font-mono text-text-muted">· {v}</li>)}
+                  </ul>
+                )}
+                {bindMounts.length > 0 && (
+                  <>
+                    <div className="text-status-pending mb-1">
+                      <span className="font-mono">{bindMounts.length}</span> bind mount{bindMounts.length !== 1 ? 's' : ''} — <strong>NOT migrated</strong> (copy these manually):
+                    </div>
+                    <ul className="ml-3 space-y-0.5 max-h-20 overflow-auto">
+                      {bindMounts.map(b => <li key={b} className="font-mono text-text-muted">· {b}</li>)}
+                    </ul>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Strategy radios */}
+          <div className="space-y-2">
+            <StrategyOption
+              active={strategy === 'just-save'}
+              onClick={() => setStrategy('just-save')}
+              title="Just save (orphan old containers)"
+              tone="muted"
+              description={`Update the stack to target ${engineName(toEngineId)} but leave the existing containers running on ${engineName(fromEngineId)}. Fastest — useful when you'll clean up by hand or want to keep the old deploy as backup. The stack won't be deployed on ${engineName(toEngineId)} until you click Deploy manually.`}
+            />
+            <StrategyOption
+              active={strategy === 'stop-and-deploy'}
+              onClick={() => setStrategy('stop-and-deploy')}
+              title="Stop on source, redeploy on target (no data move)"
+              tone="default"
+              description={`Run \`docker compose down\` on ${engineName(fromEngineId)}, then deploy fresh on ${engineName(toEngineId)}. Containers are clean on both sides. Named volumes on the new engine will be EMPTY — any database / persistent data is left behind on the source.`}
+            />
+            <StrategyOption
+              active={strategy === 'migrate-data'}
+              onClick={() => setStrategy('migrate-data')}
+              title="Migrate everything (stop → copy data → redeploy)"
+              tone="strong"
+              description={`Full move. Stop on ${engineName(fromEngineId)}, tar-stream each named volume to ${engineName(toEngineId)} via temporary alpine helper containers (no SSH/rsync prerequisites), then deploy. Takes time proportional to volume size — progress is streamed live to the deploy log panel.${bindMounts.length > 0 ? ' Bind mounts are SKIPPED — copy host paths yourself.' : ''}`}
+            />
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-border flex items-center justify-between bg-bg-secondary rounded-b-xl">
+          <button onClick={onCancel} className="px-4 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(strategy)}
+            disabled={loading}
+            className={`px-4 py-1.5 text-sm rounded-lg font-medium ${
+              strategy === 'migrate-data' ? 'bg-accent text-white hover:bg-accent-hover'
+              : strategy === 'stop-and-deploy' ? 'bg-accent text-white hover:bg-accent-hover'
+              : 'bg-status-pending text-white hover:bg-status-pending/90'
+            } disabled:opacity-50`}
+          >
+            Confirm — {strategy === 'just-save' ? 'just save' : strategy === 'stop-and-deploy' ? 'stop & redeploy' : 'migrate & redeploy'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StrategyOption({ active, onClick, title, description, tone }: {
+  active: boolean; onClick: () => void; title: string; description: string; tone: 'muted' | 'default' | 'strong';
+}) {
+  const accentByTone = tone === 'muted' ? 'border-status-pending/40' : tone === 'strong' ? 'border-accent' : 'border-border';
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left rounded-lg border p-3 transition-colors ${
+        active ? `bg-accent/10 ${accentByTone}` : 'bg-bg-secondary border-border hover:bg-bg-hover'
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <div className={`mt-0.5 h-3 w-3 rounded-full border-2 flex-shrink-0 ${active ? 'border-accent bg-accent' : 'border-border'}`} />
+        <div className="flex-1">
+          <div className={`text-xs font-semibold ${active ? 'text-accent' : 'text-text-primary'}`}>{title}</div>
+          <div className="text-[11px] text-text-muted mt-1 leading-relaxed">{description}</div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function DeployLogPanel({
   projectName,
   isDeploying,

@@ -1,27 +1,38 @@
-import { useEffect, useState } from 'react';
-import { RefreshCw, Trash2, Plus, Network, Link, Unlink, ChevronDown, ChevronRight, Eraser } from 'lucide-react';
-import { dockerApi } from '@/api/docker.api';
+import { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Trash2, Plus, Network, Link, Unlink, ChevronDown, ChevronRight, Eraser, Server } from 'lucide-react';
+import { dockerApi, type WithEngine, type EngineTarget, type PruneAllRecap } from '@/api/docker.api';
 import { stacksApi } from '@/api/stacks.api';
-import type { DockerNetwork, Stack } from '@oblihub/shared';
+import { enginesApi } from '@/api/engines.api';
+import type { DockerNetwork, Stack, DockerEngine } from '@oblihub/shared';
+import { EngineFilterBar, type EngineFilterValue } from '@/components/EngineFilterBar';
 import toast from 'react-hot-toast';
 
 export function NetworksPage() {
-  const [networks, setNetworks] = useState<DockerNetwork[]>([]);
+  const [networks, setNetworks] = useState<WithEngine<DockerNetwork>[]>([]);
+  const [engines, setEngines] = useState<DockerEngine[]>([]);
+  const [engineFilter, setEngineFilter] = useState<EngineFilterValue>(null);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [createForm, setCreateForm] = useState({ name: '', driver: 'bridge', subnet: '', gateway: '', internal: false, attachable: true });
-  const [connectForm, setConnectForm] = useState<{ networkId: string; selectedContainers: Set<string> } | null>(null);
+  const [connectForm, setConnectForm] = useState<{ networkId: string; engineId: number | null; selectedContainers: Set<string> } | null>(null);
   const [stacks, setStacks] = useState<Stack[]>([]);
+  const [pruneOpen, setPruneOpen] = useState(false);
+
+  const apiTarget: EngineTarget = engineFilter == null ? 'all' : engineFilter;
 
   const load = async () => {
     try {
-      setNetworks(await dockerApi.listNetworks());
+      setNetworks(await dockerApi.listNetworks(apiTarget));
     } catch { toast.error('Failed to load networks'); }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); stacksApi.list().then(setStacks).catch(() => {}); }, []);
+  useEffect(() => { void load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [engineFilter]);
+  useEffect(() => {
+    stacksApi.list().then(setStacks).catch(() => {});
+    enginesApi.list().then(setEngines).catch(() => {});
+  }, []);
 
   const toggleExpand = (id: string) => {
     setExpanded(prev => {
@@ -34,7 +45,10 @@ export function NetworksPage() {
   const handleCreate = async () => {
     if (!createForm.name.trim()) return;
     try {
-      await dockerApi.createNetwork(createForm);
+      // Create on the currently-filtered engine (defaults to local when "All" is selected —
+      // creating "everywhere" doesn't make sense for networks, the user must pick a target).
+      const target: EngineTarget = engineFilter == null ? null : engineFilter;
+      await dockerApi.createNetwork(createForm, target);
       toast.success(`Network ${createForm.name} created`);
       setCreateForm({ name: '', driver: 'bridge', subnet: '', gateway: '', internal: false, attachable: true });
       setShowCreate(false);
@@ -42,18 +56,18 @@ export function NetworksPage() {
     } catch { toast.error('Failed to create network'); }
   };
 
-  const handleRemove = async (net: DockerNetwork) => {
-    if (!confirm(`Remove network "${net.name}"?`)) return;
+  const handleRemove = async (net: WithEngine<DockerNetwork>) => {
+    if (!confirm(`Remove network "${net.name}" on ${net.engineName}?`)) return;
     try {
-      await dockerApi.removeNetwork(net.id);
-      toast.success(`Network ${net.name} removed`);
+      await dockerApi.removeNetwork(net.id, net.engineId ?? null);
+      toast.success(`Network ${net.name} removed from ${net.engineName}`);
       load();
     } catch { toast.error('Failed to remove network. It may be in use.'); }
   };
 
-  const handleDisconnect = async (networkId: string, containerId: string, containerName: string) => {
+  const handleDisconnect = async (networkId: string, containerId: string, containerName: string, engineId: number | null) => {
     try {
-      await dockerApi.disconnectNetwork(networkId, containerId);
+      await dockerApi.disconnectNetwork(networkId, containerId, engineId);
       toast.success(`${containerName} disconnected`);
       load();
     } catch { toast.error('Failed to disconnect'); }
@@ -63,13 +77,37 @@ export function NetworksPage() {
     if (!connectForm || connectForm.selectedContainers.size === 0) return;
     try {
       for (const dockerId of connectForm.selectedContainers) {
-        await dockerApi.connectNetwork(connectForm.networkId, dockerId);
+        await dockerApi.connectNetwork(connectForm.networkId, dockerId, undefined, connectForm.engineId);
       }
       toast.success(`${connectForm.selectedContainers.size} container(s) connected`);
       setConnectForm(null);
       load();
     } catch { toast.error('Failed to connect containers'); }
   };
+
+  const runPrune = async (target: EngineTarget, label: string) => {
+    if (!confirm(`Remove all unused networks on ${label}?`)) return;
+    try {
+      const result = await dockerApi.pruneNetworks(target);
+      if (result && 'perEngine' in (result as PruneAllRecap<{ deleted: string[] }>)) {
+        const recap = result as PruneAllRecap<{ deleted: string[] }>;
+        const total = recap.perEngine.reduce((s, b) => s + (b.result?.deleted.length || 0), 0);
+        const failed = recap.perEngine.filter(b => !b.ok);
+        toast.success(`Pruned ${total} network(s) across ${recap.perEngine.length} engine(s)${failed.length ? ` (${failed.length} failed)` : ''}`);
+      } else {
+        const r = result as { deleted: string[] };
+        toast.success(`Pruned ${r.deleted.length} network(s)`);
+      }
+      load();
+    } catch { toast.error('Prune failed'); }
+    finally { setPruneOpen(false); }
+  };
+
+  const counts = useMemo(() => {
+    const c: Record<number, number> = {};
+    for (const n of networks) if (n.engineId != null) c[n.engineId] = (c[n.engineId] || 0) + 1;
+    return c;
+  }, [networks]);
 
   const toggleStackContainers = (stack: Stack) => {
     if (!connectForm) return;
@@ -104,23 +142,40 @@ export function NetworksPage() {
           <button onClick={() => setShowCreate(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">
             <Plus size={14} /> Create
           </button>
-          <button
-            onClick={async () => {
-              if (!confirm('Remove all unused networks?')) return;
-              try {
-                const result = await dockerApi.pruneNetworks();
-                toast.success(`Pruned ${result.deleted.length} network(s)`);
-                load();
-              } catch { toast.error('Prune failed'); }
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-status-down/30 text-status-down hover:bg-status-down/10">
-            <Eraser size={14} /> Prune
-          </button>
+          {engines.filter(e => e.enabled).length > 1 ? (
+            <div className="relative">
+              <button
+                onClick={() => setPruneOpen(o => !o)}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-status-down/30 text-status-down hover:bg-status-down/10"
+              >
+                <Eraser size={14} /> Prune <ChevronDown size={12} />
+              </button>
+              {pruneOpen && (
+                <div className="absolute right-0 top-full mt-1 z-10 min-w-[200px] rounded-lg border border-border bg-bg-secondary shadow-lg py-1">
+                  <button onClick={() => runPrune('all', 'all engines')} className="w-full text-left px-3 py-2 text-xs text-text-primary hover:bg-bg-hover flex items-center gap-2">
+                    <Server size={11} /> Prune on <strong>all engines</strong>
+                  </button>
+                  <div className="border-t border-border my-1" />
+                  {engines.filter(e => e.enabled).map((e) => (
+                    <button key={e.id} onClick={() => runPrune(e.id, e.name)} className="w-full text-left px-3 py-2 text-xs text-text-secondary hover:bg-bg-hover flex items-center gap-2">
+                      <Server size={11} /> Prune on {e.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <button onClick={() => runPrune(null, 'this engine')} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-status-down/30 text-status-down hover:bg-status-down/10">
+              <Eraser size={14} /> Prune
+            </button>
+          )}
           <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
             <RefreshCw size={14} /> Refresh
           </button>
         </div>
       </div>
+
+      <EngineFilterBar engines={engines} selected={engineFilter} onSelect={setEngineFilter} counts={counts} totalCount={networks.length} className="mb-4" />
 
       {/* Create form */}
       {showCreate && (
@@ -214,7 +269,7 @@ export function NetworksPage() {
       {/* Networks list */}
       <div className="space-y-2">
         {networks.map((net) => (
-          <div key={net.id} className="rounded-xl border border-border bg-bg-secondary overflow-hidden">
+          <div key={`${net.engineId ?? 'local'}:${net.id}`} className="rounded-xl border border-border bg-bg-secondary overflow-hidden">
             <div className="px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-bg-hover/50" onClick={() => toggleExpand(net.id)}>
               {expanded.has(net.id) ? <ChevronDown size={14} className="text-text-muted" /> : <ChevronRight size={14} className="text-text-muted" />}
               <div className="flex-1 min-w-0">
@@ -223,6 +278,11 @@ export function NetworksPage() {
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-tertiary text-text-muted">{net.driver}</span>
                   {net.internal && <span className="text-[10px] px-1.5 py-0.5 rounded bg-status-pending/10 text-status-pending">internal</span>}
                   {net.composeProject && <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent">{net.composeProject}</span>}
+                  {engineFilter == null && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-tertiary text-text-secondary border border-border inline-flex items-center gap-1">
+                      <Server size={9} /> {net.engineName}
+                    </span>
+                  )}
                 </div>
                 <div className="text-[10px] text-text-muted mt-0.5">
                   {net.id} &middot; {net.containers.length} container{net.containers.length !== 1 ? 's' : ''}
@@ -231,10 +291,10 @@ export function NetworksPage() {
               </div>
               {!isSystemNetwork(net.name) && (
                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => setConnectForm({ networkId: net.id, selectedContainers: new Set() })} className="p-1.5 rounded-md text-text-muted hover:text-accent hover:bg-bg-hover" title="Connect container">
+                  <button onClick={() => setConnectForm({ networkId: net.id, engineId: net.engineId ?? null, selectedContainers: new Set() })} className="p-1.5 rounded-md text-text-muted hover:text-accent hover:bg-bg-hover" title="Connect container">
                     <Link size={14} />
                   </button>
-                  <button onClick={() => handleRemove(net)} className="p-1.5 rounded-md text-text-muted hover:text-status-down hover:bg-bg-hover" title="Remove network">
+                  <button onClick={() => handleRemove(net)} className="p-1.5 rounded-md text-text-muted hover:text-status-down hover:bg-bg-hover" title={`Remove on ${net.engineName}`}>
                     <Trash2 size={14} />
                   </button>
                 </div>
@@ -261,7 +321,7 @@ export function NetworksPage() {
                         <td className="px-4 py-1.5 text-text-muted font-mono">{c.ipv6 || '-'}</td>
                         <td className="px-4 py-1.5">
                           {!isSystemNetwork(net.name) && (
-                            <button onClick={() => handleDisconnect(net.id, c.id, c.name)} className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-status-down" title="Disconnect">
+                            <button onClick={() => handleDisconnect(net.id, c.id, c.name, net.engineId ?? null)} className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-status-down" title="Disconnect">
                               <Unlink size={12} />
                             </button>
                           )}

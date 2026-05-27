@@ -14,10 +14,11 @@ RUN cd server && npm run build
 
 FROM node:24-alpine AS production
 
-# Install Docker CLI (compose operations) + openssh-client (DOCKER_HOST=ssh://...).
-# The docker CLI shells out to `ssh` when the host scheme is ssh, so openssh-client
-# is mandatory for compose deploys against SSH-based remote engines.
-RUN apk add --no-cache docker-cli docker-cli-compose openssh-client
+# Install Docker CLI (compose operations) + openssh-client (DOCKER_HOST=ssh://...) + git.
+# - docker CLI shells out to `ssh` when the host scheme is ssh, so openssh-client is mandatory.
+# - git is required for the build-pipeline "clone from repo" source type (managed stacks
+#   created from a git URL). Installed unconditionally because the binary is ~12 MB.
+RUN apk add --no-cache docker-cli docker-cli-compose openssh-client git
 
 WORKDIR /app
 
