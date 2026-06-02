@@ -368,7 +368,42 @@ export const composeService = {
   /** Deploy a stack (up -d) — no timeout, user cancels via UI. */
   async deploy(projectName: string, composeContent: string, envContent: string | null, engineId: number | null = null): Promise<ComposeResult> {
     this.writeStackFiles(projectName, composeContent, envContent);
-    return this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 0, engineId);
+    // Make sure the shared `proxy` network exists on the target engine BEFORE compose up — if
+    // the user's compose declares `networks: proxy: external: true` (the manual opt-in), compose
+    // would error out without it. Idempotent: no-op if the network already exists.
+    await dockerService.ensureProxyNetwork(engineId);
+    const result = await this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 0, engineId);
+    // After a successful up, attach every container of this stack to the proxy network.
+    // Fire-and-forget per container so a single failure doesn't taint the deploy result —
+    // the user already gets compose's exit code as the authoritative success signal.
+    if (result.exitCode === 0) {
+      await this._attachStackToProxyNetwork(projectName, engineId);
+    }
+    return result;
+  },
+
+  /**
+   * Auto-attach every container of a managed stack to the shared `proxy` network so that
+   * Oblihub's integrated nginx can resolve `forward_host: <compose-service>` via Docker DNS
+   * without published ports. Same-engine only — proxy network membership doesn't span daemons.
+   */
+  async _attachStackToProxyNetwork(projectName: string, engineId: number | null = null): Promise<void> {
+    try {
+      const docker = await dockerService.forEngine(engineId);
+      const containers = await docker.listContainers({
+        all: true,
+        filters: { label: [`com.docker.compose.project=${projectName}`] },
+      });
+      for (const c of containers) {
+        try {
+          await dockerService.connectToProxyNetwork(c.Id, engineId);
+        } catch (err) {
+          logger.warn({ container: c.Id, project: projectName, err: err instanceof Error ? err.message : String(err) }, 'Failed to attach container to proxy network');
+        }
+      }
+    } catch (err) {
+      logger.warn({ projectName, engineId, err: err instanceof Error ? err.message : String(err) }, 'Could not list containers to attach to proxy network');
+    }
   },
 
   /** Stop a stack */

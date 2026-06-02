@@ -659,4 +659,52 @@ export const dockerService = {
       return null;
     }
   },
+
+  /**
+   * Ensure the shared `proxy` bridge network exists on the given engine. Idempotent. Returns
+   * the network id on success, null when the engine is unreachable (so we don't crash startup).
+   *
+   * Every managed stack Oblihub deploys gets its containers auto-attached to this network so
+   * the integrated nginx proxy can resolve `forward_host: <compose-service-name>` via Docker
+   * DNS without needing published host ports.
+   */
+  async ensureProxyNetwork(engineId: number | null = null): Promise<string | null> {
+    try {
+      const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
+      try {
+        const net = await docker.getNetwork('proxy').inspect();
+        return net.Id;
+      } catch {
+        // not found — create it
+      }
+      const created = await docker.createNetwork({
+        Name: 'proxy',
+        Driver: 'bridge',
+        CheckDuplicate: true,
+        Labels: { 'oblihub.shared': 'true' },
+      });
+      logger.info({ engineId }, 'Created shared proxy network');
+      return created.id;
+    } catch (err) {
+      logger.warn({ engineId, err: err instanceof Error ? err.message : String(err) }, 'ensureProxyNetwork failed');
+      return null;
+    }
+  },
+
+  /**
+   * Attach a container to the shared `proxy` network. Idempotent — "already on this network"
+   * errors are swallowed. Throws on unrecoverable issues so the caller can decide whether to
+   * fail the deploy or just log.
+   */
+  async connectToProxyNetwork(containerId: string, engineId: number | null = null): Promise<void> {
+    const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
+    try {
+      await docker.getNetwork('proxy').connect({ Container: containerId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // dockerode surfaces "already exists" / "endpoint already exists" — fine, idempotent.
+      if (/already (exists|connected)/i.test(msg)) return;
+      throw err;
+    }
+  },
 };

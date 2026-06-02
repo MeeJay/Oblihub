@@ -31,6 +31,7 @@ router.get('/certificates', requirePermission('proxy.certificates'), proxyContro
 router.post('/certificates', requirePermission('proxy.certificates'), proxyController.createCertificate);
 router.post('/certificates/:id/upload', requirePermission('proxy.certificates'), proxyController.uploadCertificate);
 router.delete('/certificates/:id', requirePermission('proxy.certificates'), proxyController.deleteCertificate);
+router.post('/certificates/:id/retry', requirePermission('proxy.certificates'), proxyController.retryCertificate);
 
 // Redirections
 router.get('/redirections', requirePermission('proxy.manage'), proxyController.listRedirections);

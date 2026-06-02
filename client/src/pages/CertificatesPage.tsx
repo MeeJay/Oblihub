@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { RefreshCw, Plus, Trash2, Shield, Upload } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { RefreshCw, Plus, Trash2, Shield, Upload, RotateCw, ChevronDown, ChevronRight, FileText } from 'lucide-react';
 import { proxyApi } from '@/api/proxy.api';
 import type { Certificate } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -54,6 +54,43 @@ export function CertificatesPage() {
     } catch { toast.error('Failed to delete. Certificate may be in use.'); }
   };
 
+  const handleRetry = async (cert: Certificate) => {
+    if (cert.provider !== 'letsencrypt') { toast.error('Retry only available for Let\'s Encrypt'); return; }
+    try {
+      await proxyApi.retryCertificate(cert.id);
+      // Open the log row automatically so the operator sees fresh entries arrive.
+      setExpandedLogs(prev => { const n = new Set(prev); n.add(cert.id); return n; });
+      toast.success('Retry started — watch the log below');
+      load();
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Retry failed'); }
+  };
+
+  // Which certs have their log row expanded. Auto-expand rule: any time we OBSERVE a cert in
+  // pending or error state for the first time, we open its log row. That covers:
+  //   - First load: existing pending/error certs are opened immediately
+  //   - After clicking "Request cert": the new pending cert opens as soon as the next poll
+  //     surfaces it (since we polled `load()` after create)
+  //   - Retry click: handleRetry already adds it; if missed somehow, this catches it too
+  // We never auto-collapse — once open, only the user can hide it (collapse chevron). That
+  // way a transition pending → valid keeps the success log visible until they close it.
+  const [expandedLogs, setExpandedLogs] = useState<Set<number>>(new Set());
+  const seenIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const toOpen: number[] = [];
+    for (const c of certs) {
+      if (seenIdsRef.current.has(c.id)) continue;
+      seenIdsRef.current.add(c.id);
+      if (c.status === 'pending' || c.status === 'error') toOpen.push(c.id);
+    }
+    if (toOpen.length) {
+      setExpandedLogs(prev => {
+        const next = new Set(prev);
+        for (const id of toOpen) next.add(id);
+        return next;
+      });
+    }
+  }, [certs]);
+
   if (loading) return <div className="flex items-center justify-center h-full"><div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" /></div>;
 
   return (
@@ -107,33 +144,97 @@ export function CertificatesPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {certs.map(cert => (
-              <tr key={cert.id} className="hover:bg-bg-hover/50">
-                <td className="px-4 py-2.5">
-                  <div className="flex flex-wrap gap-1">
-                    {cert.domainNames.map(d => (
-                      <span key={d} className="font-mono text-xs text-text-primary">{d}</span>
-                    ))}
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 text-xs text-text-muted capitalize">{cert.provider}</td>
-                <td className="px-4 py-2.5">
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_STYLES[cert.status] || ''}`}>
-                    {cert.status === 'pending' && <span className="inline-block h-2 w-2 mr-1 animate-spin rounded-full border border-current border-t-transparent" />}
-                    {cert.status}
-                  </span>
-                  {cert.errorMessage && <div className="text-[10px] text-status-down mt-0.5 truncate max-w-xs" title={cert.errorMessage}>{cert.errorMessage}</div>}
-                </td>
-                <td className="px-4 py-2.5 text-right text-xs text-text-muted">
-                  {cert.expiresAt ? new Date(cert.expiresAt).toLocaleDateString() : '-'}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <button onClick={() => handleDelete(cert.id)} className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-status-down" title="Delete">
-                    <Trash2 size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {certs.map(cert => {
+              const open = expandedLogs.has(cert.id);
+              const hasLog = (cert.requestLog?.length || 0) > 0;
+              return (
+                <Fragment key={cert.id}>
+                  <tr className="hover:bg-bg-hover/50">
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1">
+                        {(hasLog || cert.status === 'pending') && (
+                          <button
+                            onClick={() => setExpandedLogs(prev => { const n = new Set(prev); n.has(cert.id) ? n.delete(cert.id) : n.add(cert.id); return n; })}
+                            className="text-text-muted hover:text-text-primary"
+                            title={open ? 'Hide request log' : 'Show request log'}
+                          >
+                            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                          </button>
+                        )}
+                        <div className="flex flex-wrap gap-1">
+                          {cert.domainNames.map(d => (
+                            <span key={d} className="font-mono text-xs text-text-primary">{d}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-text-muted capitalize">{cert.provider}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_STYLES[cert.status] || ''}`}>
+                        {cert.status === 'pending' && <span className="inline-block h-2 w-2 mr-1 animate-spin rounded-full border border-current border-t-transparent" />}
+                        {cert.status}
+                      </span>
+                      {cert.errorMessage && <div className="text-[10px] text-status-down mt-0.5 truncate max-w-xs" title={cert.errorMessage}>{cert.errorMessage}</div>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs text-text-muted">
+                      {cert.expiresAt ? new Date(cert.expiresAt).toLocaleDateString() : '-'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="inline-flex items-center gap-0.5">
+                        {cert.provider === 'letsencrypt' && (cert.status === 'error' || cert.status === 'expired' || cert.status === 'valid') && (
+                          <button
+                            onClick={() => handleRetry(cert)}
+                            className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-accent"
+                            title={cert.status === 'error' ? 'Retry Let\'s Encrypt request' : 'Renew Let\'s Encrypt cert now'}
+                          >
+                            <RotateCw size={14} />
+                          </button>
+                        )}
+                        <button onClick={() => handleDelete(cert.id)} className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-status-down" title="Delete">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {open && (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-3 bg-bg-tertiary/40">
+                        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted mb-2">
+                          <FileText size={11} /> Request log
+                          {cert.requestLog && <span className="text-text-muted normal-case font-normal">— {cert.requestLog.length} entries</span>}
+                        </div>
+                        {hasLog ? (
+                          <pre className="text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-all bg-[#0d1117] rounded p-2 max-h-72 overflow-auto">
+                            {cert.requestLog.map((e, i) => (
+                              <div
+                                key={i}
+                                className={
+                                  e.level === 'error' ? 'text-status-down' :
+                                  e.level === 'warn' ? 'text-status-pending' :
+                                  'text-text-secondary'
+                                }
+                              >
+                                <span className="text-text-muted">{new Date(e.at).toLocaleTimeString()}</span>{' '}
+                                <span className={
+                                  e.level === 'error' ? 'text-status-down/80' :
+                                  e.level === 'warn' ? 'text-status-pending/80' :
+                                  'text-text-muted'
+                                }>[{e.level}]</span>{' '}
+                                {e.message}
+                              </div>
+                            ))}
+                          </pre>
+                        ) : (
+                          <div className="text-[11px] text-text-muted italic">
+                            No log entries yet. {cert.status === 'pending' && 'Polling — entries will appear here as Let\'s Encrypt is contacted.'}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
             {certs.length === 0 && (
               <tr><td colSpan={5} className="px-4 py-8 text-center text-text-muted">No certificates</td></tr>
             )}

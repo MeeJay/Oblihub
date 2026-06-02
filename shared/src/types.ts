@@ -252,6 +252,12 @@ export interface DockerVolume {
 export type CertificateProvider = 'letsencrypt' | 'custom' | 'selfsigned';
 export type CertificateStatus = 'pending' | 'valid' | 'expired' | 'error';
 
+export interface CertificateLogEntry {
+  at: string;          // ISO timestamp
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
 export interface Certificate {
   id: number;
   domainNames: string[];
@@ -260,6 +266,10 @@ export interface Certificate {
   status: CertificateStatus;
   errorMessage: string | null;
   acmeEmail: string | null;
+  // Live log appended during each LE request — lets the UI show the full play-by-play of
+  // account creation / challenge / finalize so the operator can self-diagnose failures
+  // (DNS not propagated, port 80 unreachable, rate limit, …).
+  requestLog: CertificateLogEntry[];
   createdAt: string;
   updatedAt: string;
 }

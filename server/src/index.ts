@@ -45,6 +45,23 @@ async function main() {
   // Clean up old containers left from self-updates
   await dockerService.cleanupOldSelfContainers();
 
+  // Ensure the shared `proxy` bridge network exists on the local engine. Failsafe in case a
+  // `docker compose down` (or a fresh install where it wasn't created yet) left it missing —
+  // we want the proxy<->managed-stacks routing to "just work" without ops intervention.
+  await dockerService.ensureProxyNetwork(null);
+  // Fan out the same check across every enabled remote engine in the background. Doesn't block
+  // boot; failures are logged. Each managed stack deploy also re-asserts the network on its
+  // target engine, so this is just a courtesy for the operator browsing networks early on.
+  (async () => {
+    try {
+      const { engineService } = await import('./services/engine.service');
+      const engines = await engineService.getAll();
+      for (const e of engines.filter(eng => eng.enabled && !eng.isDefault)) {
+        void dockerService.ensureProxyNetwork(e.id);
+      }
+    } catch { /* non-critical */ }
+  })();
+
   // If we were restarted mid-self-deploy, reset the self-stack's status from 'deploying' to 'deployed'.
   // We just booted, so the deploy clearly completed — we're the new instance it spawned.
   try {

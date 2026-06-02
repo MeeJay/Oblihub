@@ -10,13 +10,47 @@ import { logger } from '../utils/logger';
 // Simple mutex for serializing cert requests
 let certMutex: Promise<void> = Promise.resolve();
 
+/**
+ * Append a single entry to the certificate's per-request log + emit to pino. The DB write
+ * is best-effort — a transient failure here must not interrupt the LE provisioning flow,
+ * which is what the operator actually cares about.
+ *
+ * Reading/modifying request_log naively across multiple await points would race; we keep it
+ * simple by reading the current array, appending, writing back — the LE flow is serialised
+ * by the module-level mutex so no concurrent writes for the same cert.
+ */
+async function appendLog(certId: number, level: 'info' | 'warn' | 'error', message: string, extra?: Record<string, unknown>): Promise<void> {
+  logger[level]({ certId, ...extra }, message);
+  try {
+    const row = await db('certificates').where({ id: certId }).select('request_log').first();
+    let arr: Array<{ at: string; level: string; message: string }> = [];
+    const raw = row?.request_log;
+    if (Array.isArray(raw)) arr = raw as Array<{ at: string; level: string; message: string }>;
+    else if (typeof raw === 'string' && raw) { try { arr = JSON.parse(raw); } catch { arr = []; } }
+    arr.push({ at: new Date().toISOString(), level, message });
+    // Cap at 500 entries so a runaway loop doesn't bloat the row.
+    if (arr.length > 500) arr = arr.slice(-500);
+    await db('certificates').where({ id: certId }).update({ request_log: JSON.stringify(arr) });
+  } catch (err) {
+    logger.warn({ certId, err }, 'Failed to append to certificate request_log');
+  }
+}
+
+/** Clear the log at the start of a fresh attempt — keeps the UI focused on the current run. */
+async function resetLog(certId: number): Promise<void> {
+  try {
+    await db('certificates').where({ id: certId }).update({ request_log: JSON.stringify([]) });
+  } catch { /* non-fatal */ }
+}
+
 async function doRequestCertificate(certId: number, domains: string[], email: string): Promise<void> {
     try {
-      logger.info({ certId, domains, email }, 'Starting LE certificate request');
+      await resetLog(certId);
+      await appendLog(certId, 'info', `Starting Let's Encrypt certificate request for ${domains.join(', ')} (${email})`, { domains, email });
       await certificateService.updateStatus(certId, 'pending', undefined, null);
 
       // Create ACME client
-      logger.info({ certId }, 'Creating ACME client...');
+      await appendLog(certId, 'info', 'Creating ACME client (Let\'s Encrypt production directory)');
       const accountKey = await acme.crypto.createPrivateKey();
       const client = new acme.Client({
         directoryUrl: acme.directory.letsencrypt.production,
@@ -24,20 +58,20 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
       });
 
       // Register account
-      logger.info({ certId }, 'Registering ACME account...');
+      await appendLog(certId, 'info', `Registering ACME account (contact: ${email})`);
       await client.createAccount({
         termsOfServiceAgreed: true,
         contact: [`mailto:${email}`],
       });
 
       // Create order
-      logger.info({ certId, domains }, 'Creating ACME order...');
+      await appendLog(certId, 'info', `Creating order for: ${domains.join(', ')}`);
       const order = await client.createOrder({
         identifiers: domains.map(d => ({ type: 'dns', value: d })),
       });
 
       // Process authorizations (HTTP-01 challenge)
-      logger.info({ certId }, 'Processing ACME authorizations...');
+      await appendLog(certId, 'info', 'Fetching authorizations from ACME server');
       const authorizations = await client.getAuthorizations(order);
       const acmeDir = nginxService.getAcmeDir();
 
@@ -45,22 +79,25 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
         const challenge = auth.challenges.find((c: { type: string }) => c.type === 'http-01');
         if (!challenge) throw new Error(`No HTTP-01 challenge for ${auth.identifier.value}`);
 
-        logger.info({ certId, domain: auth.identifier.value, token: challenge.token }, 'Writing ACME challenge...');
+        await appendLog(certId, 'info', `[${auth.identifier.value}] Writing HTTP-01 challenge token (${challenge.token.slice(0, 12)}…) to ${acmeDir}`);
         const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
-
-        // Write challenge file (world-readable for nginx user)
         const challengePath = path.join(acmeDir, challenge.token);
         fs.writeFileSync(challengePath, keyAuthorization, { mode: 0o644 });
 
-        // Verify challenge
-        logger.info({ certId, domain: auth.identifier.value }, 'Completing ACME challenge...');
-        await client.verifyChallenge(auth, challenge);
-        await client.completeChallenge(challenge);
-        await client.waitForValidStatus(challenge);
-        logger.info({ certId, domain: auth.identifier.value }, 'ACME challenge validated');
-
-        // Clean up challenge file
-        try { fs.unlinkSync(challengePath); } catch { /* ignore */ }
+        await appendLog(certId, 'info', `[${auth.identifier.value}] Requesting validation — Let's Encrypt will fetch http://${auth.identifier.value}/.well-known/acme-challenge/${challenge.token}`);
+        try {
+          await client.verifyChallenge(auth, challenge);
+          await client.completeChallenge(challenge);
+          await client.waitForValidStatus(challenge);
+          await appendLog(certId, 'info', `[${auth.identifier.value}] Challenge validated ✓`);
+        } catch (chErr) {
+          const chMsg = chErr instanceof Error ? chErr.message : String(chErr);
+          await appendLog(certId, 'error', `[${auth.identifier.value}] Challenge failed: ${chMsg}`);
+          await appendLog(certId, 'info', `Common causes: port 80 not reachable from internet · DNS not pointing to this server · firewall blocking Let's Encrypt validators · CNAME / Cloudflare proxy in front (try DNS-only / grey cloud)`);
+          throw chErr;
+        } finally {
+          try { fs.unlinkSync(challengePath); } catch { /* ignore */ }
+        }
       }
 
       // Finalize order
@@ -69,8 +106,10 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
         altNames: domains.length > 1 ? domains.slice(1) : undefined,
       });
 
+      await appendLog(certId, 'info', 'All challenges validated — finalizing order');
       await client.finalizeOrder(order, csr);
       const cert = await client.getCertificate(order);
+      await appendLog(certId, 'info', 'Certificate issued by Let\'s Encrypt');
 
       // Split cert and chain
       const certs = cert.split(/(?=-----BEGIN CERTIFICATE-----)/);
@@ -86,14 +125,14 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 90); // LE certs are 90 days
 
-      logger.info({ certId, primaryDomain }, 'Updating cert status to valid...');
+      await appendLog(certId, 'info', `Writing cert files to nginx (primary: ${primaryDomain}) — expires ${expiresAt.toISOString()}`);
       await certificateService.updateStatus(certId, 'valid', {
         cert: certPaths.cert,
         key: certPaths.key,
         chain: certPaths.chain,
         expiresAt,
       }, null);
-      logger.info({ certId, domains, primaryDomain }, 'Let\'s Encrypt certificate obtained and status updated');
+      await appendLog(certId, 'info', 'Certificate installed ✓ Status: valid');
 
       // Regenerate nginx configs to use new cert (non-blocking)
       nginxService.regenerateAndReload().then(() => {
@@ -103,7 +142,7 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
-      logger.error({ certId, err }, 'Failed to obtain Let\'s Encrypt certificate');
+      await appendLog(certId, 'error', `FAILED: ${msg}`);
       await certificateService.updateStatus(certId, 'error', undefined, msg);
       throw err;
     }

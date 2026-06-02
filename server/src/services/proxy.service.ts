@@ -5,6 +5,10 @@ import { logger } from '../utils/logger';
 // ── Helpers ──
 
 function certRow(row: Record<string, unknown>): Certificate {
+  let requestLog: Certificate['requestLog'] = [];
+  const raw = row.request_log;
+  if (Array.isArray(raw)) requestLog = raw as Certificate['requestLog'];
+  else if (typeof raw === 'string' && raw) { try { requestLog = JSON.parse(raw); } catch { /* ignore */ } }
   return {
     id: row.id as number,
     domainNames: (row.domain_names as string[]) || [],
@@ -13,6 +17,7 @@ function certRow(row: Record<string, unknown>): Certificate {
     status: row.status as Certificate['status'],
     errorMessage: (row.error_message as string) || null,
     acmeEmail: (row.acme_email as string) || null,
+    requestLog,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
   };

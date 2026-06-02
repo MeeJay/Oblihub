@@ -42,6 +42,9 @@ export const proxyApi = {
   async deleteCertificate(id: number): Promise<void> {
     await apiClient.delete(`/proxy/certificates/${id}`);
   },
+  async retryCertificate(id: number): Promise<void> {
+    await apiClient.post(`/proxy/certificates/${id}/retry`);
+  },
 
   // Redirections
   async listRedirections(): Promise<RedirectionHost[]> {

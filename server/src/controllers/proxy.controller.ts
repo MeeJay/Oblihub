@@ -125,6 +125,31 @@ export const proxyController = {
     } catch (err) { next(err); }
   },
 
+  /**
+   * Re-trigger a Let's Encrypt request on an existing certificate. The previous request_log
+   * is cleared by the LE flow itself so the UI focuses on the fresh attempt.
+   *
+   * Use case: first attempt failed (DNS not propagated yet, port 80 firewall'd, …) — the
+   * operator fixes the underlying issue and clicks Retry instead of having to delete and
+   * re-create the cert (which would also drop the proxy_host link).
+   */
+  async retryCertificate(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const cert = await certificateService.getById(id);
+      if (!cert) throw new AppError(404, 'Certificate not found');
+      if (cert.provider !== 'letsencrypt') throw new AppError(400, 'Retry is only supported for Let\'s Encrypt certificates');
+      if (!cert.acmeEmail) throw new AppError(400, 'Certificate has no ACME email configured');
+      if (!cert.domainNames?.length) throw new AppError(400, 'Certificate has no domains configured');
+
+      // Fire-and-forget — UI polls /certificates and watches request_log fill up live.
+      letsEncryptService.requestCertificate(id, cert.domainNames, cert.acmeEmail).catch(err => {
+        logger.error({ certId: id, err }, 'Retry of LE provisioning failed');
+      });
+      res.json({ success: true, message: 'Retry started' });
+    } catch (err) { next(err); }
+  },
+
   // ── Redirections ──
 
   async listRedirections(_req: Request, res: Response, next: NextFunction): Promise<void> {
