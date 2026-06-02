@@ -102,17 +102,28 @@ export const proxyApi = {
     const res = await apiClient.post<ApiResponse<AccessList>>('/proxy/access-lists', data);
     return res.data.data!;
   },
+  async updateAccessList(id: number, data: { name?: string; satisfyAny?: boolean; passAuth?: boolean }): Promise<AccessList> {
+    const res = await apiClient.put<ApiResponse<AccessList>>(`/proxy/access-lists/${id}`, data);
+    return res.data.data!;
+  },
   async deleteAccessList(id: number): Promise<void> {
     await apiClient.delete(`/proxy/access-lists/${id}`);
   },
   async addAccessListClient(listId: number, address: string, directive: 'allow' | 'deny'): Promise<void> {
     await apiClient.post(`/proxy/access-lists/${listId}/clients`, { address, directive });
   },
+  async updateAccessListClient(listId: number, clientId: number, data: { address?: string; directive?: 'allow' | 'deny' }): Promise<void> {
+    await apiClient.put(`/proxy/access-lists/${listId}/clients/${clientId}`, data);
+  },
   async removeAccessListClient(listId: number, clientId: number): Promise<void> {
     await apiClient.delete(`/proxy/access-lists/${listId}/clients/${clientId}`);
   },
   async addAccessListAuth(listId: number, username: string, password: string): Promise<void> {
     await apiClient.post(`/proxy/access-lists/${listId}/auth`, { username, password });
+  },
+  /** Update a basic-auth entry. Pass an empty `password` to keep the existing one. */
+  async updateAccessListAuth(listId: number, authId: number, data: { username?: string; password?: string }): Promise<void> {
+    await apiClient.put(`/proxy/access-lists/${listId}/auth/${authId}`, data);
   },
   async removeAccessListAuth(listId: number, authId: number): Promise<void> {
     await apiClient.delete(`/proxy/access-lists/${listId}/auth/${authId}`);

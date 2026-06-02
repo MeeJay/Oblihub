@@ -255,6 +255,17 @@ export const proxyController = {
     } catch (err) { next(err); }
   },
 
+  /** Rename the access list and/or toggle its satisfyAny / passAuth flags. */
+  async updateAccessList(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = req.body as { name?: string; satisfyAny?: boolean; passAuth?: boolean };
+      const updated = await accessListService.update(parseInt(req.params.id, 10), body);
+      if (!updated) throw new AppError(404, 'Access list not found');
+      await nginxService.regenerateAndReload();
+      res.json({ success: true, data: updated });
+    } catch (err) { next(err); }
+  },
+
   async addAccessListClient(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { address, directive } = req.body;
@@ -268,6 +279,16 @@ export const proxyController = {
   async removeAccessListClient(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       await accessListService.removeClient(parseInt(req.params.clientId, 10));
+      await nginxService.regenerateAndReload();
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  /** Edit an existing IP rule in place — change the address and/or allow/deny directive. */
+  async updateAccessListClient(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { address, directive } = req.body as { address?: string; directive?: 'allow' | 'deny' };
+      await accessListService.updateClient(parseInt(req.params.clientId, 10), { address, directive });
       await nginxService.regenerateAndReload();
       res.json({ success: true });
     } catch (err) { next(err); }
@@ -289,6 +310,25 @@ export const proxyController = {
   async removeAccessListAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       await accessListService.removeAuth(parseInt(req.params.authId, 10));
+      await nginxService.regenerateAndReload();
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * Edit a basic-auth entry — rename the user and/or rotate the password. `password` is
+   * optional: omitting it keeps the existing hash so the operator can rename a user without
+   * forcing them to send a new password.
+   */
+  async updateAccessListAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { username, password } = req.body as { username?: string; password?: string };
+      let passwordHash: string | undefined;
+      if (password) {
+        const bcrypt = await import('bcrypt');
+        passwordHash = await bcrypt.hash(password, 10);
+      }
+      await accessListService.updateAuth(parseInt(req.params.authId, 10), { username, passwordHash });
       await nginxService.regenerateAndReload();
       res.json({ success: true });
     } catch (err) { next(err); }

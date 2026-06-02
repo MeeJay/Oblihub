@@ -303,6 +303,12 @@ export interface ProxyHost {
   corsEnabled: boolean;
   customResponseHeaders: { name: string; value: string; action: 'add' | 'remove' }[] | null;
   errorPageId: number | null;
+  // List of all access lists attached to this host. The proxy enforces the UNION of their
+  // allow rules and auth entries — i.e. a visitor is granted if their IP matches ANY list, or
+  // if their basic-auth credentials live in ANY list's htpasswd.
+  // `accessListId` (singular) is kept for backward compat with older API consumers; it shadows
+  // the first id of `accessListIds`. New code should prefer the array.
+  accessListIds: number[];
   wakeContainerId: number | null;
   // Additional containers to wake in parallel when this proxy_host receives a request while
   // the primary target is asleep. Useful for multi-container apps (front + back) where the

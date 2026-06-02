@@ -204,33 +204,59 @@ function sslBlock(certPath: string, keyPath: string, http2: boolean): string {
     ssl_prefer_server_ciphers off;`;
 }
 
-function accessListBlock(listId: number, list?: AccessList): string {
-  if (!list) return '';
-  const hasClients = list.clients.length > 0;
-  const hasAuth = list.auth.length > 0;
-  if (!hasClients && !hasAuth) return ''; // No rules = allow all
+/**
+ * Combined access list block for a proxy host. Takes every access list attached to the host
+ * (via the junction table) and emits a single nginx block that's the UNION of their rules:
+ *
+ *   - Allow IPs: every `allow X` from any list is emitted. Duplicates deduped. If at least one
+ *     `allow` exists across all lists, we append `deny all` to lock out everyone else (standard
+ *     nginx allowlist pattern).
+ *   - Deny IPs: emitted before allows (nginx evaluates in order, first-match-wins).
+ *   - Basic auth: if any list has auth users, we point at a per-host combined htpasswd file
+ *     (`htpasswd/proxy_host_<id>`) written by the regenerate flow. `auth_basic_user_file`
+ *     supports only one path, so we cannot reference multiple list-level files.
+ *   - satisfy: if ANY attached list has satisfyAny=true, the whole host inherits `satisfy any`
+ *     (most permissive interpretation, matches the "stack multiple lists for flexibility" mental
+ *     model). Otherwise `satisfy all`.
+ */
+function combinedAccessListBlock(hostId: number, lists: AccessList[]): string {
+  if (lists.length === 0) return '';
+  const allClients = lists.flatMap(l => l.clients.map(c => ({ ...c, listName: l.name })));
+  const allAuth = lists.flatMap(l => l.auth);
+  if (allClients.length === 0 && allAuth.length === 0) return '';
 
-  let conf = `\n    # Access list: ${list.name}\n`;
+  let conf = `\n    # Access lists (union): ${lists.map(l => l.name).join(', ')}\n`;
 
-  // IP rules first (deny before auth)
-  if (hasClients) {
-    for (const c of list.clients) {
-      conf += `    ${c.directive === 'allow' ? 'allow' : 'deny'} ${c.address.replace(/[;\n\r{}#'"\\]/g, '')};\n`;
+  if (allClients.length > 0) {
+    // Deny rules first so they're evaluated before any explicit allow further down.
+    const seenAllow = new Set<string>();
+    const seenDeny = new Set<string>();
+    for (const c of allClients) {
+      const addr = c.address.replace(/[;\n\r{}#'"\\]/g, '');
+      if (c.directive === 'deny') {
+        if (seenDeny.has(addr)) continue;
+        seenDeny.add(addr);
+        conf += `    deny ${addr};   # from "${c.listName}"\n`;
+      }
     }
-    // Deny all others not explicitly allowed
-    const hasAllow = list.clients.some(c => c.directive === 'allow');
-    if (hasAllow) conf += `    deny all;\n`;
+    for (const c of allClients) {
+      const addr = c.address.replace(/[;\n\r{}#'"\\]/g, '');
+      if (c.directive === 'allow') {
+        if (seenAllow.has(addr)) continue;
+        seenAllow.add(addr);
+        conf += `    allow ${addr};   # from "${c.listName}"\n`;
+      }
+    }
+    if (seenAllow.size > 0) conf += `    deny all;\n`;
   }
 
-  // Basic auth (only if there are auth entries)
-  if (hasAuth) {
-    if (hasClients && !list.satisfyAny) {
-      conf += `    satisfy all;\n`; // Need both IP + auth
-    } else if (hasClients && list.satisfyAny) {
-      conf += `    satisfy any;\n`; // Either IP or auth
+  if (allAuth.length > 0) {
+    const anySatisfyAny = lists.some(l => l.satisfyAny);
+    if (allClients.length > 0) {
+      conf += `    satisfy ${anySatisfyAny ? 'any' : 'all'};\n`;
     }
     conf += `    auth_basic "Restricted";\n`;
-    conf += `    auth_basic_user_file /etc/nginx/htpasswd/access_list_${listId};\n`;
+    conf += `    auth_basic_user_file /etc/nginx/htpasswd/proxy_host_${hostId};\n`;
   }
 
   return conf;
@@ -302,9 +328,15 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += blockExploitsSnippet() + '\n\n';
   }
 
-  if (host.accessListId) {
-    const accessList = accessLists.find(al => al.id === host.accessListId);
-    conf += accessListBlock(host.accessListId, accessList) + '\n\n';
+  // Collect every attached access list — prefer the new array, fall back to the legacy single id.
+  const attachedIds = host.accessListIds && host.accessListIds.length > 0
+    ? host.accessListIds
+    : (host.accessListId ? [host.accessListId] : []);
+  if (attachedIds.length > 0) {
+    const attached = attachedIds
+      .map(id => accessLists.find(al => al.id === id))
+      .filter((al): al is AccessList => !!al);
+    conf += combinedAccessListBlock(host.id, attached) + '\n\n';
   }
 
   if (host.cachingEnabled) {
@@ -707,6 +739,27 @@ export const nginxService = {
       const authRows = await db('access_list_auth').where({ access_list_id: list.id });
       const htpasswdContent = authRows.map((a: { username: string; password_hash: string }) => `${a.username}:${a.password_hash}`).join('\n');
       fs.writeFileSync(path.join(HTPASSWD_DIR, `access_list_${list.id}`), htpasswdContent);
+    }
+
+    // Per-proxy_host combined htpasswd: nginx's `auth_basic_user_file` only accepts one path,
+    // so when a host stacks multiple access lists with auth users we have to write a single
+    // file that's the union. Dedupe by username (last-wins — same as nginx's first-match).
+    for (const host of allProxyHosts) {
+      const attachedIds = host.accessListIds && host.accessListIds.length > 0
+        ? host.accessListIds
+        : (host.accessListId ? [host.accessListId] : []);
+      const path_ = path.join(HTPASSWD_DIR, `proxy_host_${host.id}`);
+      if (attachedIds.length === 0) {
+        try { fs.unlinkSync(path_); } catch { /* not there, fine */ }
+        continue;
+      }
+      const byUser = new Map<string, string>();
+      for (const id of attachedIds) {
+        const rows = await db('access_list_auth').where({ access_list_id: id });
+        for (const r of rows) byUser.set(r.username as string, r.password_hash as string);
+      }
+      const merged = [...byUser.entries()].map(([u, h]) => `${u}:${h}`).join('\n');
+      fs.writeFileSync(path_, merged);
     }
 
     logger.info({ proxyHosts: allProxyHosts.length, redirections: redirections.length, streams: streams.length }, 'Nginx configs regenerated');

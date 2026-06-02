@@ -118,10 +118,18 @@ export function ManagedStacksPage() {
 
   const handleDelete = async (e: React.MouseEvent, s: ManagedStack) => {
     e.stopPropagation();
-    if (!confirm(`Delete "${s.name}"? This will also remove its containers if deployed.`)) return;
+    if (!confirm(`Delete "${s.name}"?\n\nThis stops & removes its containers if deployed.`)) return;
+    // Second prompt for the destructive step — explicit so a typo on the first dialog never
+    // accidentally wipes a database.
+    const wipeVolumes = confirm(
+      `Also remove "${s.name}"'s volumes ?\n\n` +
+      `[OK]     = WIPE all data the stack wrote (databases, uploads, caches…).\n` +
+      `[Cancel] = keep volumes orphaned on the engine (you can ` +
+      `clean them up later from the Volumes page).`
+    );
     try {
-      await managedStacksApi.delete(s.id);
-      toast.success(`${s.name} deleted`);
+      await managedStacksApi.delete(s.id, wipeVolumes);
+      toast.success(wipeVolumes ? `${s.name} purged (containers + volumes)` : `${s.name} deleted (volumes preserved)`);
       load();
     } catch { toast.error('Delete failed'); }
   };

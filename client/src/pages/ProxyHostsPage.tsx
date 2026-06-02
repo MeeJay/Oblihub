@@ -268,14 +268,39 @@ export function ProxyHostsPage() {
                 })}
               </div>
 
-              {/* Access List */}
+              {/* Access lists — multi-select. Visitors are granted if their IP matches ANY
+                  selected list's allow rules, or if their basic-auth creds are in ANY list. */}
               <div>
-                <label className="text-xs font-medium text-text-secondary block mb-1.5">Access List</label>
-                <select value={editing.accessListId || ''} onChange={e => setEditing(h => h ? { ...h, accessListId: parseInt(e.target.value) || null } : null)}
-                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
-                  <option value="">No restriction</option>
-                  {accessLists.map(al => <option key={al.id} value={al.id}>{al.name} ({al.clients.length} rules, {al.auth.length} users)</option>)}
-                </select>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">
+                  Access Lists <span className="text-text-muted">(stackable — union of rules)</span>
+                </label>
+                {accessLists.length === 0 ? (
+                  <div className="text-[11px] text-text-muted italic rounded-lg border border-border bg-bg-tertiary px-3 py-2">
+                    No access lists configured. Create one in the Access Lists page.
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-border bg-bg-tertiary p-2 max-h-40 overflow-y-auto space-y-1">
+                    {accessLists.map(al => {
+                      const selected = (editing.accessListIds || (editing.accessListId ? [editing.accessListId] : [])).includes(al.id);
+                      return (
+                        <label key={al.id} className="flex items-center gap-2 text-xs text-text-primary cursor-pointer hover:bg-bg-secondary px-1 py-0.5 rounded">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={(e) => setEditing(h => {
+                              if (!h) return null;
+                              const cur = h.accessListIds || (h.accessListId ? [h.accessListId] : []);
+                              const next = e.target.checked ? [...cur, al.id] : cur.filter(x => x !== al.id);
+                              return { ...h, accessListIds: next, accessListId: next[0] ?? null };
+                            })}
+                          />
+                          <span className="font-medium">{al.name}</span>
+                          <span className="text-text-muted">({al.clients.length} rule{al.clients.length !== 1 ? 's' : ''}, {al.auth.length} user{al.auth.length !== 1 ? 's' : ''})</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Performance */}

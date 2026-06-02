@@ -18,8 +18,8 @@ export const managedStacksApi = {
     const res = await apiClient.put<ApiResponse<ManagedStack>>(`/managed-stacks/${id}`, data);
     return res.data.data!;
   },
-  async delete(id: number): Promise<void> {
-    await apiClient.delete(`/managed-stacks/${id}`);
+  async delete(id: number, removeVolumes = false): Promise<void> {
+    await apiClient.delete(`/managed-stacks/${id}?volumes=${removeVolumes}`);
   },
   async deploy(id: number): Promise<void> {
     await apiClient.post(`/managed-stacks/${id}/deploy`);

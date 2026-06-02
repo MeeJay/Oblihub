@@ -116,13 +116,19 @@ export const managedStackController = {
       const stack = await managedStackService.getById(id);
       if (!stack) throw new AppError(404, 'Managed stack not found');
       if (await isSelfStack(stack.composeProject)) throw new AppError(403, 'Cannot delete Oblihub\'s own stack');
-      // Down the stack if deployed
+      // `?volumes=true` → also wipe the named volumes (DESTRUCTIVE: deletes all data the stack
+      // wrote to its volumes). Defaults to false so an accidental click doesn't nuke a database.
+      const removeVolumes = req.query.volumes === 'true';
       if (stack.status === 'deployed') {
-        await composeService.down(stack.composeProject, false, stack.engineId);
+        await composeService.down(stack.composeProject, removeVolumes, stack.engineId);
+      } else if (removeVolumes) {
+        // Not deployed but operator asked for volume wipe → run `down -v` anyway to GC any
+        // volumes left from a previous deploy.
+        await composeService.down(stack.composeProject, true, stack.engineId);
       }
       composeService.removeStackFiles(stack.composeProject);
       await managedStackService.delete(id);
-      res.json({ success: true });
+      res.json({ success: true, data: { removedVolumes: removeVolumes } });
     } catch (err) { next(err); }
   },
 

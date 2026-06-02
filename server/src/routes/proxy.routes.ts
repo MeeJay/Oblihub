@@ -53,10 +53,13 @@ router.delete('/dead-hosts/:id', requirePermission('proxy.manage'), proxyControl
 // Access lists
 router.get('/access-lists', requirePermission('proxy.access_lists'), proxyController.listAccessLists);
 router.post('/access-lists', requirePermission('proxy.access_lists'), proxyController.createAccessList);
+router.put('/access-lists/:id', requirePermission('proxy.access_lists'), proxyController.updateAccessList);
 router.delete('/access-lists/:id', requirePermission('proxy.access_lists'), proxyController.deleteAccessList);
 router.post('/access-lists/:id/clients', requirePermission('proxy.access_lists'), proxyController.addAccessListClient);
+router.put('/access-lists/:id/clients/:clientId', requirePermission('proxy.access_lists'), proxyController.updateAccessListClient);
 router.delete('/access-lists/:id/clients/:clientId', requirePermission('proxy.access_lists'), proxyController.removeAccessListClient);
 router.post('/access-lists/:id/auth', requirePermission('proxy.access_lists'), proxyController.addAccessListAuth);
+router.put('/access-lists/:id/auth/:authId', requirePermission('proxy.access_lists'), proxyController.updateAccessListAuth);
 router.delete('/access-lists/:id/auth/:authId', requirePermission('proxy.access_lists'), proxyController.removeAccessListAuth);
 
 // Custom pages

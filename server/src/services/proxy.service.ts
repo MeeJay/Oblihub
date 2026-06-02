@@ -23,7 +23,7 @@ function certRow(row: Record<string, unknown>): Certificate {
   };
 }
 
-function proxyRow(row: Record<string, unknown>, cert?: Certificate | null): ProxyHost {
+function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, accessListIds: number[] = []): ProxyHost {
   return {
     id: row.id as number,
     domainNames: (row.domain_names as string[]) || [],
@@ -38,7 +38,8 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null): Prox
     blockExploits: row.block_exploits as boolean,
     cachingEnabled: row.caching_enabled as boolean,
     websocketSupport: row.websocket_support as boolean,
-    accessListId: (row.access_list_id as number) || null,
+    accessListIds,
+    accessListId: accessListIds[0] ?? ((row.access_list_id as number) || null),
     advancedConfig: (row.advanced_config as string) || null,
     enabled: row.enabled as boolean,
     stackId: (row.stack_id as number) || null,
@@ -125,6 +126,23 @@ async function getCert(id: number | null): Promise<Certificate | null> {
   return row ? certRow(row) : null;
 }
 
+/** Read all access list ids attached to a proxy host via the junction table. */
+async function getAccessListIds(proxyHostId: number): Promise<number[]> {
+  const rows = await db('proxy_host_access_lists').where({ proxy_host_id: proxyHostId }).select('access_list_id');
+  return rows.map(r => r.access_list_id as number);
+}
+
+/** Replace a proxy host's set of attached access lists (deletes existing rows, inserts new). */
+async function setAccessListIds(proxyHostId: number, ids: number[]): Promise<void> {
+  const unique = [...new Set(ids.filter(id => Number.isInteger(id) && id > 0))];
+  await db('proxy_host_access_lists').where({ proxy_host_id: proxyHostId }).delete();
+  if (unique.length > 0) {
+    await db('proxy_host_access_lists').insert(
+      unique.map(access_list_id => ({ proxy_host_id: proxyHostId, access_list_id })),
+    );
+  }
+}
+
 // ── Certificates ──
 
 export const certificateService = {
@@ -168,17 +186,17 @@ export const certificateService = {
 export const proxyHostService = {
   async getAll(): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id))));
   },
 
   async getById(id: number): Promise<ProxyHost | null> {
     const row = await db('proxy_hosts').where({ id }).first();
-    return row ? proxyRow(row, await getCert(row.certificate_id)) : null;
+    return row ? proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id)) : null;
   },
 
   async getByStackId(stackId: number): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').where({ stack_id: stackId }).orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id))));
   },
 
   async create(data: Partial<ProxyHost>): Promise<ProxyHost> {
@@ -215,7 +233,11 @@ export const proxyHostService = {
       waking_page_id: data.wakingPageId || null,
       auto_monitor: data.autoMonitor || false,
     }).returning('*');
-    return proxyRow(row, await getCert(row.certificate_id));
+    // Hydrate the junction from accessListIds[] if provided; otherwise fall back to the
+    // legacy single accessListId so older clients still work.
+    const ids = data.accessListIds ?? (data.accessListId ? [data.accessListId] : []);
+    await setAccessListIds(row.id, ids);
+    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id));
   },
 
   async update(id: number, data: Partial<ProxyHost>): Promise<ProxyHost | null> {
@@ -252,7 +274,15 @@ export const proxyHostService = {
     if (data.wakingPageId !== undefined) update.waking_page_id = data.wakingPageId;
     if (data.autoMonitor !== undefined) update.auto_monitor = data.autoMonitor;
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');
-    return row ? proxyRow(row, await getCert(row.certificate_id)) : null;
+    if (!row) return null;
+    // Sync junction when the caller passed an explicit list (empty array = "clear all").
+    if (data.accessListIds !== undefined) {
+      await setAccessListIds(row.id, data.accessListIds);
+    } else if (data.accessListId !== undefined) {
+      // Legacy single-id path — replace junction with at most one entry.
+      await setAccessListIds(row.id, data.accessListId ? [data.accessListId] : []);
+    }
+    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id));
   },
 
   async delete(id: number): Promise<void> {
@@ -261,7 +291,7 @@ export const proxyHostService = {
 
   async getEnabled(): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').where({ enabled: true }).orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id))));
   },
 };
 
@@ -407,8 +437,28 @@ export const accessListService = {
     return { id: row.id, name: row.name, satisfyAny: row.satisfy_any, passAuth: row.pass_auth, clients: [], auth: [], createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString() };
   },
 
+  /** Update the access list itself (rename + toggle flags). Returns the fresh record or null. */
+  async update(id: number, data: { name?: string; satisfyAny?: boolean; passAuth?: boolean }): Promise<AccessList | null> {
+    const update: Record<string, unknown> = { updated_at: new Date() };
+    if (data.name !== undefined) update.name = data.name;
+    if (data.satisfyAny !== undefined) update.satisfy_any = data.satisfyAny;
+    if (data.passAuth !== undefined) update.pass_auth = data.passAuth;
+    await db('access_lists').where({ id }).update(update);
+    const all = await this.getAll();
+    return all.find(l => l.id === id) || null;
+  },
+
   async addClient(accessListId: number, address: string, directive: 'allow' | 'deny'): Promise<void> {
     await db('access_list_clients').insert({ access_list_id: accessListId, address, directive });
+  },
+
+  /** Update an existing IP rule in place (address and/or directive). */
+  async updateClient(clientId: number, data: { address?: string; directive?: 'allow' | 'deny' }): Promise<void> {
+    const update: Record<string, unknown> = {};
+    if (data.address !== undefined) update.address = data.address;
+    if (data.directive !== undefined) update.directive = data.directive;
+    if (Object.keys(update).length === 0) return;
+    await db('access_list_clients').where({ id: clientId }).update(update);
   },
 
   async removeClient(id: number): Promise<void> {
@@ -417,6 +467,18 @@ export const accessListService = {
 
   async addAuth(accessListId: number, username: string, passwordHash: string): Promise<void> {
     await db('access_list_auth').insert({ access_list_id: accessListId, username, password_hash: passwordHash });
+  },
+
+  /**
+   * Update an existing basic-auth entry. `passwordHash` is optional — omit it to keep the
+   * existing password (e.g. when the operator only wants to rename the user).
+   */
+  async updateAuth(authId: number, data: { username?: string; passwordHash?: string }): Promise<void> {
+    const update: Record<string, unknown> = {};
+    if (data.username !== undefined) update.username = data.username;
+    if (data.passwordHash !== undefined) update.password_hash = data.passwordHash;
+    if (Object.keys(update).length === 0) return;
+    await db('access_list_auth').where({ id: authId }).update(update);
   },
 
   async removeAuth(id: number): Promise<void> {

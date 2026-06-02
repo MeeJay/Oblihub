@@ -386,10 +386,18 @@ export function StackEditorPage() {
 
   const handleDelete = async () => {
     if (!stack) return;
-    if (!confirm('Delete this managed stack? This will also remove its containers if deployed.')) return;
+    if (!confirm(`Delete "${stack.name}"?\n\nThis stops & removes its containers if deployed.`)) return;
+    // Second prompt isolates the destructive volume wipe — answering by mistake on the first
+    // confirm never costs you data.
+    const wipeVolumes = confirm(
+      `Also remove "${stack.name}"'s volumes ?\n\n` +
+      `[OK]     = WIPE all data the stack wrote (databases, uploads, caches…).\n` +
+      `[Cancel] = keep volumes orphaned on the engine (you can ` +
+      `clean them up later from the Volumes page).`
+    );
     try {
-      await managedStacksApi.delete(stack.id);
-      toast.success('Stack deleted');
+      await managedStacksApi.delete(stack.id, wipeVolumes);
+      toast.success(wipeVolumes ? 'Stack purged (containers + volumes)' : 'Stack deleted (volumes preserved)');
       navigate('/managed-stacks');
     } catch { toast.error('Delete failed'); }
   };

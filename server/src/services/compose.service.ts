@@ -270,9 +270,37 @@ export const composeService = {
     return new Promise((resolve) => {
       const startedAt = Date.now();
       const spawnArgs = ['compose', '-p', projectName, '-f', 'docker-compose.yml', ...args];
+      // ⚠ SECURITY-CRITICAL — env scrub.
+      //
+      // Spreading `process.env` into the subprocess used to leak Oblihub's OWN env (admin creds,
+      // session secret, DB password, …) into every managed stack we deploy. Docker Compose
+      // resolves `${VAR}` substitutions from the SHELL ENVIRONMENT first, .env file second.
+      // So a child stack with `DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}` in its
+      // compose received Oblihub's value instead of the operator's intended value — even when
+      // the stack's own .env file said something else. All deployed Obli* templates were
+      // affected because they share Oblihub's env var names.
+      //
+      // Fix: ship only the OS basics + Docker routing the CLI actually needs. Everything else
+      // (secrets, app config) comes from the stack's own .env file at `cwd: stackDir`.
+      const SAFE_PASSTHROUGH = [
+        'PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LANGUAGE',
+        'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES', 'TZ', 'HOSTNAME',
+        'TMPDIR', 'TEMP', 'TMP', 'PWD',
+        'DOCKER_BUILDKIT', 'COMPOSE_DOCKER_CLI_BUILD',
+      ];
+      const childEnv: Record<string, string> = {};
+      for (const k of SAFE_PASSTHROUGH) {
+        const v = process.env[k];
+        if (v !== undefined) childEnv[k] = v;
+      }
+      // Explicit overrides from _resolveEngineEnv (DOCKER_HOST, DOCKER_TLS_VERIFY, HOME for ssh,
+      // etc.) come LAST and are always honored — these are the bits Oblihub legitimately needs
+      // the CLI to see.
+      Object.assign(childEnv, envInjection.env);
+
       const child = spawn('docker', spawnArgs, {
         cwd: stackDir,
-        env: { ...process.env, ...envInjection.env },
+        env: childEnv,
       });
 
       activeProcesses.set(projectName, child);
