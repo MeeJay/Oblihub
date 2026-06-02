@@ -614,7 +614,18 @@ export function StackEditorPage() {
       {stack && (
         <SourcePanel
           stack={stack}
-          onStackUpdated={(updated) => { setStack(updated); setSelectedEngineId(updated.engineId ?? null); }}
+          onStackUpdated={(updated) => {
+            // A ZIP upload / git clone syncs the project's compose + .env into the stack record
+            // server-side — reflect that in the editor so the user sees what was actually
+            // ingested instead of stale/empty textareas.
+            setStack(updated);
+            setSelectedEngineId(updated.engineId ?? null);
+            setComposeContent(updated.composeContent || '');
+            const entries = parseEnvContent(updated.envContent);
+            setEnvEntries(entries);
+            setEnvRaw(updated.envContent || '');
+            setDirty(false);
+          }}
         />
       )}
 

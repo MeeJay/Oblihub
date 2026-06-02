@@ -38,11 +38,49 @@ const execFileP = promisify(execFile);
 let _io: SocketIOServer | null = null;
 export function setSourceManagerIO(io: SocketIOServer): void { _io = io; }
 
-const PRESERVE_FILES = new Set(['.env', 'docker-compose.yml']);
+// Only `.env` is preserved across re-uploads — it holds operator secrets that must not be
+// clobbered by whatever .env the developer happened to zip up. The docker-compose.yml is NOT
+// preserved: for build stacks the uploaded/cloned project's compose is the source of truth, so
+// a re-upload should bring in the latest version.
+const PRESERVE_FILES = new Set(['.env']);
 const PRESERVE_DIRS = new Set(['.oblihub']);
+
+// Candidate compose filenames at the project root, in priority order.
+const COMPOSE_CANDIDATES = ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml'];
 
 function stackDir(composeProject: string): string {
   return path.join(config.stacksDir, composeProject);
+}
+
+/**
+ * After an upload/clone, pull the on-disk docker-compose.yml + .env back into the DB
+ * (compose_content / env_content) so the Oblihub editor reflects what was actually ingested.
+ * Without this the editor would show stale/empty content while the real files sit on disk —
+ * exactly the confusing gap the operator hit.
+ *
+ * The on-disk compose wins (build-stack source of truth). The .env is read too so the editor
+ * shows the env that's actually in play; since .env is preserved across re-uploads, this stays
+ * consistent with operator edits made through the UI.
+ */
+async function syncFromDisk(stackId: number, composeProject: string): Promise<void> {
+  const dir = stackDir(composeProject);
+  const update: Record<string, unknown> = { updated_at: new Date() };
+
+  for (const name of COMPOSE_CANDIDATES) {
+    const p = path.join(dir, name);
+    if (fs.existsSync(p)) {
+      update.compose_content = fs.readFileSync(p, 'utf8');
+      break;
+    }
+  }
+  const envPath = path.join(dir, '.env');
+  if (fs.existsSync(envPath)) {
+    update.env_content = fs.readFileSync(envPath, 'utf8');
+  }
+
+  if (update.compose_content !== undefined || update.env_content !== undefined) {
+    await db('managed_stacks').where({ id: stackId }).update(update);
+  }
 }
 
 /** Atomically wipe `dir` except entries we want to keep across re-uploads. */
@@ -132,7 +170,12 @@ export const sourceManagerService = {
     emitProgress(stack.composeProject, `== Extracted ${count} file(s) ==`);
 
     await markSynced(stackId, { sourceType: 'zip', gitUrl: null, gitBranch: null, gitRef: null });
-    logger.info({ stackId, fileCount: count, dir }, 'ZIP source extracted');
+    await syncFromDisk(stackId, stack.composeProject);
+    const composeFound = COMPOSE_CANDIDATES.some(n => fs.existsSync(path.join(dir, n)));
+    emitProgress(stack.composeProject, composeFound
+      ? '== compose file loaded into editor =='
+      : '⚠ No docker-compose.yml found at project root — editor compose left unchanged');
+    logger.info({ stackId, fileCount: count, dir, composeFound }, 'ZIP source extracted');
   },
 
   /**
@@ -184,7 +227,8 @@ export const sourceManagerService = {
 
     const ref = await this._resolveGitRef(dir);
     await markSynced(stackId, { sourceType: 'git', gitUrl, gitBranch: branch, gitRef: ref });
-    emitProgress(stack.composeProject, `== Cloned at ${ref || '(unknown ref)'} ==`);
+    await syncFromDisk(stackId, stack.composeProject);
+    emitProgress(stack.composeProject, `== Cloned at ${ref || '(unknown ref)'} — compose loaded into editor ==`);
     logger.info({ stackId, gitUrl, branch, ref }, 'Git source cloned');
   },
 
@@ -221,7 +265,8 @@ export const sourceManagerService = {
 
     const ref = await this._resolveGitRef(dir);
     await markSynced(stackId, { gitRef: ref });
-    emitProgress(stack.composeProject, `== Updated to ${ref || '(unknown ref)'} ==`);
+    await syncFromDisk(stackId, stack.composeProject);
+    emitProgress(stack.composeProject, `== Updated to ${ref || '(unknown ref)'} — compose reloaded into editor ==`);
     logger.info({ stackId, ref }, 'Git source pulled');
   },
 
