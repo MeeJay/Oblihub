@@ -84,16 +84,53 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
         const challengePath = path.join(acmeDir, challenge.token);
         fs.writeFileSync(challengePath, keyAuthorization, { mode: 0o644 });
 
-        await appendLog(certId, 'info', `[${auth.identifier.value}] Requesting validation — Let's Encrypt will fetch http://${auth.identifier.value}/.well-known/acme-challenge/${challenge.token}`);
         try {
+          // Self-test from inside the Oblihub server container — fetches the challenge URL
+          // through the public DNS name. If THIS fails, LE definitely won't succeed either.
+          // Helps distinguish "Oblihub serves nothing on port 80" from "internet can't reach us".
+          const challengeUrl = `http://${auth.identifier.value}/.well-known/acme-challenge/${challenge.token}`;
+          await appendLog(certId, 'info', `[${auth.identifier.value}] Local self-test: GET ${challengeUrl} from inside the Oblihub container`);
+          try {
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), 15000);
+            const r = await fetch(challengeUrl, { signal: ctrl.signal, redirect: 'manual' });
+            clearTimeout(to);
+            const body = await r.text();
+            if (r.status === 200 && body.trim() === keyAuthorization.trim()) {
+              await appendLog(certId, 'info', `[${auth.identifier.value}] Self-test passed ✓ (200, body matches)`);
+            } else {
+              await appendLog(certId, 'warn', `[${auth.identifier.value}] Self-test got HTTP ${r.status}${body ? `, body starts: ${body.slice(0, 80)}` : ''} — LE may also fail. Verify nginx serves /.well-known/acme-challenge/ for this hostname on port 80.`);
+            }
+          } catch (selfErr) {
+            const sm = selfErr instanceof Error ? selfErr.message : String(selfErr);
+            await appendLog(certId, 'warn', `[${auth.identifier.value}] Self-test failed (${sm}) — could be DNS not pointing here (split-horizon?), or port 80 not reachable from inside the container. Let's Encrypt will likely fail too.`);
+          }
+
+          await appendLog(certId, 'info', `[${auth.identifier.value}] Notifying Let's Encrypt that challenge is ready — they will fetch from the public internet now`);
           await client.verifyChallenge(auth, challenge);
           await client.completeChallenge(challenge);
-          await client.waitForValidStatus(challenge);
+
+          // Periodic heartbeat while waitForValidStatus polls so the operator doesn't think
+          // the process froze. acme-client polls with backoff up to ~2 min before erroring.
+          const start = Date.now();
+          const tick = setInterval(() => {
+            const elapsed = Math.round((Date.now() - start) / 1000);
+            void appendLog(certId, 'info', `[${auth.identifier.value}] Waiting for Let's Encrypt validation… ${elapsed}s elapsed`);
+          }, 10000);
+          try {
+            await client.waitForValidStatus(challenge);
+          } finally {
+            clearInterval(tick);
+          }
           await appendLog(certId, 'info', `[${auth.identifier.value}] Challenge validated ✓`);
         } catch (chErr) {
           const chMsg = chErr instanceof Error ? chErr.message : String(chErr);
           await appendLog(certId, 'error', `[${auth.identifier.value}] Challenge failed: ${chMsg}`);
-          await appendLog(certId, 'info', `Common causes: port 80 not reachable from internet · DNS not pointing to this server · firewall blocking Let's Encrypt validators · CNAME / Cloudflare proxy in front (try DNS-only / grey cloud)`);
+          await appendLog(certId, 'info', `Diagnostic checklist:`);
+          await appendLog(certId, 'info', `  1. DNS — does ${auth.identifier.value} resolve to this server's public IP from the internet ?`);
+          await appendLog(certId, 'info', `  2. Port 80 — is it open in your firewall + NAT/port-forward + ISP not blocking it ?`);
+          await appendLog(certId, 'info', `  3. Cloudflare / CDN — if you proxy through Cloudflare (orange cloud), HTTP-01 challenges break. Switch to grey cloud (DNS-only) for the validation, OR use Cloudflare's full-strict mode with origin cert.`);
+          await appendLog(certId, 'info', `  4. nginx — verify /etc/nginx/acme-challenge is served at /.well-known/acme-challenge/ for ${auth.identifier.value} on port 80 (no redirect to HTTPS for that path).`);
           throw chErr;
         } finally {
           try { fs.unlinkSync(challengePath); } catch { /* ignore */ }

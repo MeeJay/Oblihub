@@ -181,11 +181,15 @@ export function CertificatesPage() {
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <div className="inline-flex items-center gap-0.5">
-                        {cert.provider === 'letsencrypt' && (cert.status === 'error' || cert.status === 'expired' || cert.status === 'valid') && (
+                        {cert.provider === 'letsencrypt' && (
                           <button
                             onClick={() => handleRetry(cert)}
                             className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-accent"
-                            title={cert.status === 'error' ? 'Retry Let\'s Encrypt request' : 'Renew Let\'s Encrypt cert now'}
+                            title={
+                              cert.status === 'error' ? 'Retry Let\'s Encrypt request'
+                              : cert.status === 'pending' ? 'Re-queue the request — useful when a previous attempt seems stuck'
+                              : 'Renew Let\'s Encrypt cert now'
+                            }
                           >
                             <RotateCw size={14} />
                           </button>
