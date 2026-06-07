@@ -60,7 +60,7 @@ export const managedStackController = {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled. Set ALLOW_STACK=true to enable.');
       const session = req.session as { userId?: number; role?: string };
-      const { name, composeContent, envContent, teamId, engineId } = req.body;
+      const { name, composeContent, envContent, teamId, engineId, registryCredentials } = req.body;
       if (!name || !composeContent) throw new AppError(400, 'Name and compose content are required');
 
       // Non-admin must have a team to create a stack
@@ -74,7 +74,7 @@ export const managedStackController = {
         const isInTeam = userTeams.some(t => t.id === targetTeamId);
         if (!isInTeam) throw new AppError(403, 'You are not a member of this team');
 
-        const stack = await managedStackService.create({ name, composeContent, envContent, engineId });
+        const stack = await managedStackService.create({ name, composeContent, envContent, engineId, registryCredentials });
 
         // Ensure the stack exists in the stacks table and assign to team
         const { db } = await import('../db');
@@ -93,7 +93,7 @@ export const managedStackController = {
         return;
       }
 
-      const stack = await managedStackService.create({ name, composeContent, envContent, engineId });
+      const stack = await managedStackService.create({ name, composeContent, envContent, engineId, registryCredentials });
       res.json({ success: true, data: stack });
     } catch (err) { next(err); }
   },
@@ -102,8 +102,8 @@ export const managedStackController = {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const id = parseInt(req.params.id, 10);
-      const { name, composeContent, envContent, engineId } = req.body;
-      const stack = await managedStackService.update(id, { name, composeContent, envContent, engineId });
+      const { name, composeContent, envContent, engineId, registryCredentials } = req.body;
+      const stack = await managedStackService.update(id, { name, composeContent, envContent, engineId, registryCredentials });
       if (!stack) throw new AppError(404, 'Managed stack not found');
       res.json({ success: true, data: stack });
     } catch (err) { next(err); }

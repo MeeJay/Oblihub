@@ -267,6 +267,10 @@ export const composeService = {
       return { exitCode: 1, stdout: '', stderr: message };
     }
 
+    // Build a per-stack DOCKER_CONFIG with private registry creds. Cleanup runs after compose
+    // exits — no global ~/.docker/config.json pollution across stacks.
+    const registryAuth = await this._resolveStackRegistryAuth(projectName);
+
     logger.info({ projectName, engineId, cmd: cmdString, idleTimeoutMs }, 'Running compose command');
 
     return new Promise((resolve) => {
@@ -299,6 +303,11 @@ export const composeService = {
       // etc.) come LAST and are always honored — these are the bits Oblihub legitimately needs
       // the CLI to see.
       Object.assign(childEnv, envInjection.env);
+      // Per-stack DOCKER_CONFIG — only set when this stack actually has registry credentials.
+      // The docker CLI reads `${DOCKER_CONFIG}/config.json` instead of `~/.docker/config.json`.
+      if (registryAuth.dockerConfigDir) {
+        childEnv.DOCKER_CONFIG = registryAuth.dockerConfigDir;
+      }
 
       const child = spawn('docker', spawnArgs, {
         cwd: stackDir,
@@ -344,6 +353,7 @@ export const composeService = {
         if (idleTimer) clearTimeout(idleTimer);
         activeProcesses.delete(projectName);
         envInjection.cleanup();
+        registryAuth.cleanup();
         const message = err.message;
         _io?.emit(SOCKET_EVENTS.COMPOSE_FINISHED, { projectName, exitCode: 1, durationMs: Date.now() - startedAt });
         logger.warn({ projectName, err: message }, 'Compose spawn error');
@@ -354,6 +364,7 @@ export const composeService = {
         if (idleTimer) clearTimeout(idleTimer);
         activeProcesses.delete(projectName);
         envInjection.cleanup();
+        registryAuth.cleanup();
         const killedByCancel = (child as ChildProcess & { _cancelled?: boolean })._cancelled === true;
         const exitCode = killedByCancel ? 130 : (code ?? (signal ? 1 : 0));
         const durationMs = Date.now() - startedAt;
@@ -645,5 +656,55 @@ ${pullCmd}docker compose -p "${projectName}" up -d --remove-orphans
 
     // We're about to be recreated. Return a synthetic success; the new server instance will take over.
     return { exitCode: 0, stdout: 'Self-stack deploy initiated via helper container', stderr: '' };
+  },
+
+  /**
+   * Build a temp DOCKER_CONFIG directory containing this stack's registry credentials. Each
+   * cred row is decrypted on demand and encoded as base64(`username:password`) under the
+   * canonical `auths.<registry>.auth` key the docker CLI expects.
+   *
+   * Returns the dir path + a cleanup function; the path is null when the stack has no creds
+   * (or the project name doesn't match any stack record — e.g. during preview/test runs) so
+   * the caller can skip setting DOCKER_CONFIG entirely and let the CLI use its defaults.
+   */
+  async _resolveStackRegistryAuth(projectName: string): Promise<{ dockerConfigDir: string | null; cleanup: () => void }> {
+    try {
+      const row = await db('managed_stacks').where({ compose_project: projectName }).select('registry_credentials').first();
+      const raw = row?.registry_credentials;
+      let creds: Array<{ registry?: string; username?: string; password_enc?: string }> = [];
+      if (Array.isArray(raw)) creds = raw as typeof creds;
+      else if (typeof raw === 'string' && raw) { try { creds = JSON.parse(raw); } catch { creds = []; } }
+      const usable = creds.filter(c => c.registry && c.username && c.password_enc);
+      if (usable.length === 0) return { dockerConfigDir: null, cleanup: () => {} };
+
+      const { decryptSecret } = await import('../utils/crypto');
+      const os = await import('node:os');
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `oblihub-dockercfg-${projectName}-`));
+      const auths: Record<string, { auth: string }> = {};
+      for (const c of usable) {
+        try {
+          const pw = decryptSecret(c.password_enc!);
+          auths[c.registry!] = { auth: Buffer.from(`${c.username}:${pw}`).toString('base64') };
+        } catch (err) {
+          logger.warn({ projectName, registry: c.registry, err: err instanceof Error ? err.message : String(err) }, 'Skipping registry cred — decrypt failed');
+        }
+      }
+      // Also fold in the global Docker Hub creds (env-based) so a stack with private + Docker Hub
+      // images uses both transparently. The stack's per-registry entries take precedence on
+      // conflict because they're set last.
+      if (config.dockerHubUsername && config.dockerHubToken && !auths['https://index.docker.io/v1/']) {
+        auths['https://index.docker.io/v1/'] = {
+          auth: Buffer.from(`${config.dockerHubUsername}:${config.dockerHubToken}`).toString('base64'),
+        };
+      }
+      fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ auths }, null, 2), { mode: 0o600 });
+      return {
+        dockerConfigDir: tmpDir,
+        cleanup: () => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ } },
+      };
+    } catch (err) {
+      logger.warn({ projectName, err: err instanceof Error ? err.message : String(err) }, 'Failed to build per-stack DOCKER_CONFIG');
+      return { dockerConfigDir: null, cleanup: () => {} };
+    }
   },
 };

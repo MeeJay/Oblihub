@@ -73,6 +73,9 @@ export function StackEditorPage() {
   const [envMode, setEnvMode] = useState<'kv' | 'raw'>('kv');
   const [envEntries, setEnvEntries] = useState<EnvEntry[]>([]);
   const [envRaw, setEnvRaw] = useState('');
+  // Per-stack private registry credentials. `hasPassword` is the server-side flag — true means
+  // the row already has a stored ciphertext; an empty `password` on save means "keep existing".
+  const [registryCreds, setRegistryCreds] = useState<Array<{ registry: string; username: string; password: string; hasPassword: boolean }>>([]);
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -95,6 +98,7 @@ export function StackEditorPage() {
       setEnvEntries(entries);
       setEnvRaw(s.envContent || '');
       setSelectedEngineId(s.engineId ?? null);
+      setRegistryCreds((s.registryCredentials || []).map(c => ({ registry: c.registry, username: c.username, password: '', hasPassword: c.hasPassword })));
       setDirty(false);
     } catch { toast.error('Failed to load stack'); }
     finally { setLoading(false); }
@@ -298,11 +302,12 @@ export function StackEditorPage() {
     try {
       const envContent = getEnvContent();
       if (isNew) {
-        const created = await managedStacksApi.create({ name, composeContent, envContent, teamId: isAdmin ? selectedTeamId : selectedTeamId!, engineId: selectedEngineId });
+        const created = await managedStacksApi.create({ name, composeContent, envContent, teamId: isAdmin ? selectedTeamId : selectedTeamId!, engineId: selectedEngineId, registryCredentials: registryCreds.map(c => ({ registry: c.registry, username: c.username, password: c.password || undefined })) });
         toast.success('Stack created');
         navigate(`/stack-editor/${created.id}`, { replace: true });
       } else {
-        const updated = await managedStacksApi.update(Number(id), { name, composeContent, envContent, engineId: selectedEngineId });
+        const updated = await managedStacksApi.update(Number(id), { name, composeContent, envContent, engineId: selectedEngineId, registryCredentials: registryCreds.map(c => ({ registry: c.registry, username: c.username, password: c.password || undefined })) });
+        setRegistryCreds(updated.registryCredentials.map(c => ({ registry: c.registry, username: c.username, password: '', hasPassword: c.hasPassword })));
         setStack(updated);
         toast.success('Stack saved');
       }
@@ -716,6 +721,60 @@ export function StackEditorPage() {
               />
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Private registry credentials — per-stack DOCKER_CONFIG injected at compose-subprocess time.
+          Empty password on an existing row preserves the stored ciphertext server-side. */}
+      <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden mb-6">
+        <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
+          <Box size={14} className="text-text-muted" />
+          <h2 className="text-sm font-semibold text-text-secondary">Private registry credentials</h2>
+          <span className="text-[11px] text-text-muted ml-auto">Used for <code className="bg-bg-tertiary px-1 rounded">docker compose pull</code> on this stack only</span>
+        </div>
+        <div className="p-4 space-y-2">
+          {registryCreds.length === 0 && (
+            <p className="text-xs text-text-muted">No credentials. Add one to pull images from a private Gitea, GHCR, GitLab, Quay, Harbor…</p>
+          )}
+          {registryCreds.map((c, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={c.registry}
+                onChange={e => { const v = e.target.value; setRegistryCreds(arr => arr.map((x, j) => j === i ? { ...x, registry: v } : x)); setDirty(true); }}
+                placeholder="gitea.example.com"
+                className="flex-1 min-w-[180px] rounded-md border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <input
+                type="text"
+                value={c.username}
+                onChange={e => { const v = e.target.value; setRegistryCreds(arr => arr.map((x, j) => j === i ? { ...x, username: v } : x)); setDirty(true); }}
+                placeholder="username"
+                className="w-40 rounded-md border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <input
+                type="password"
+                value={c.password}
+                onChange={e => { const v = e.target.value; setRegistryCreds(arr => arr.map((x, j) => j === i ? { ...x, password: v } : x)); setDirty(true); }}
+                placeholder={c.hasPassword ? '••••••• (unchanged)' : 'password or token'}
+                autoComplete="new-password"
+                className="w-56 rounded-md border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <button
+                onClick={() => { setRegistryCreds(arr => arr.filter((_, j) => j !== i)); setDirty(true); }}
+                className="p-1 text-text-muted hover:text-status-down"
+                title="Remove credential"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => { setRegistryCreds(arr => [...arr, { registry: '', username: '', password: '', hasPassword: false }]); setDirty(true); }}
+            className="flex items-center gap-1 text-xs text-accent hover:text-accent-hover mt-1"
+          >
+            <Plus size={12} /> Add credential
+          </button>
         </div>
       </div>
 

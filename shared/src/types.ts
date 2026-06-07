@@ -193,6 +193,17 @@ export type ManagedStackStatus = 'draft' | 'deploying' | 'deployed' | 'stopped' 
  */
 export type ManagedStackSourceType = 'compose-only' | 'zip' | 'git';
 
+/**
+ * Per-stack credentials for a container registry. The API never returns the password / token in
+ * cleartext — only the `hasPassword` flag so the UI can render "(set)" / "(empty)" without
+ * shipping the secret to the browser. To set/rotate, send a non-empty `password` on update.
+ */
+export interface RegistryCredential {
+  registry: string;          // e.g. "gitea.example.com" or "ghcr.io"
+  username: string;
+  hasPassword: boolean;
+}
+
 export interface ManagedStack {
   id: number;
   name: string;
@@ -209,6 +220,11 @@ export interface ManagedStack {
   gitBranch: string | null;
   gitRef: string | null;
   lastSourceSyncAt: string | null;
+  // Per-stack registry auth. Used at deploy time to populate a temp DOCKER_CONFIG so the
+  // `docker compose pull` running in this stack's directory can authenticate against private
+  // registries (Gitea, GHCR, GitLab, Quay, Harbor, …) without touching the host-level
+  // ~/.docker/config.json. Passwords are stored AES-256-GCM encrypted server-side.
+  registryCredentials: RegistryCredential[];
   createdAt: string;
   updatedAt: string;
 }
