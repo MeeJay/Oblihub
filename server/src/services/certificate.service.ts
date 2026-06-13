@@ -169,6 +169,11 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
         chain: certPaths.chain,
         expiresAt,
       }, null);
+      // Reset notification throttles so a future failure/expiry triggers alerts again.
+      await db('certificates').where({ id: certId }).update({
+        last_renewal_failed_notified_at: null,
+        last_expiry_warning_at: null,
+      });
       await appendLog(certId, 'info', 'Certificate installed ✓ Status: valid');
 
       // Regenerate nginx configs to use new cert (non-blocking)
@@ -264,24 +269,94 @@ export const letsEncryptService = {
     }
   },
 
-  /** Check for certificates expiring within 30 days and auto-renew */
+  /**
+   * Check for LE certs that need renewal and trigger them.
+   *
+   * Picks up:
+   *   - status='valid' AND expires_at < J+30   → normal renewal window
+   *   - status='error'                          → previously failed; keep retrying every tick
+   *     so a transient failure (Cloudflare blip, DNS not propagated, port-80 reroute, etc.)
+   *     recovers on the next 12h pass instead of staying broken until manual intervention
+   *   - any expired cert regardless of status   → safety net, same reasoning
+   *
+   * Also dispatches two notification events:
+   *   - cert_renewal_failed: when a renewal we just attempted ended in status='error', stamped
+   *     into `last_renewal_failed_notified_at` so a single failure produces ONE alert (not one
+   *     every 12h until fixed). Cleared on successful renewal.
+   *   - cert_expiring_soon: when a cert is < 14 days from expiry and we couldn't (or didn't)
+   *     auto-renew it on this tick. Throttled to one alert per 7 days via `last_expiry_warning_at`.
+   */
   async checkRenewals(): Promise<void> {
     try {
-      const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const now = Date.now();
+      const thirtyDaysFromNow = new Date(now + 30 * 24 * 60 * 60 * 1000);
+      const fourteenDaysFromNow = new Date(now + 14 * 24 * 60 * 60 * 1000);
+      const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+
       const certs = await db('certificates')
-        .where({ provider: 'letsencrypt', status: 'valid' })
+        .where({ provider: 'letsencrypt' })
+        .whereIn('status', ['valid', 'error'])
         .whereNotNull('expires_at')
         .where('expires_at', '<', thirtyDaysFromNow);
+
+      const { notificationService } = await import('./notification.service');
 
       for (const cert of certs) {
         const domains = cert.domain_names as string[];
         const email = cert.acme_email as string;
-        if (domains?.length && email) {
-          logger.info({ certId: cert.id, domains, expiresAt: cert.expires_at }, 'Auto-renewing LE certificate');
-          this.requestCertificate(cert.id, domains, email).catch(err => {
-            logger.error({ certId: cert.id, err }, 'Auto-renewal failed');
+        const primaryDomain = domains?.[0] || `cert-${cert.id}`;
+        if (!domains?.length || !email) continue;
+
+        logger.info({ certId: cert.id, domains, expiresAt: cert.expires_at, status: cert.status }, 'Auto-renewing LE certificate');
+
+        // Run the request inline so we can react to success/failure on THIS tick — kicking off
+        // .then/.catch on a fire-and-forget would mean a failure detected by the next tick
+        // (12h later) instead of right now.
+        try {
+          await this.requestCertificate(cert.id, domains, email);
+          // Renewal succeeded — clear any prior failure flag so the next failure (if any) alerts
+          // again, and clear the expiry warning since the cert is fresh.
+          await db('certificates').where({ id: cert.id }).update({
+            last_renewal_failed_notified_at: null,
+            last_expiry_warning_at: null,
           });
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          logger.error({ certId: cert.id, err: errMsg }, 'Auto-renewal failed');
+
+          // Notify ONCE per failure transition — if we've already alerted on this stuck cert,
+          // skip until either the cert renews or the operator deletes/recreates it.
+          if (!cert.last_renewal_failed_notified_at) {
+            notificationService.sendForStack(null, primaryDomain, {
+              stackName: primaryDomain,
+              eventType: 'cert_renewal_failed',
+              message: `Let's Encrypt renewal failed for ${domains.join(', ')}: ${errMsg}`,
+              timestamp: new Date().toISOString(),
+            }).catch(e => logger.warn({ certId: cert.id, err: e }, 'cert_renewal_failed notify failed'));
+            await db('certificates').where({ id: cert.id }).update({ last_renewal_failed_notified_at: new Date() });
+          }
         }
+      }
+
+      // Expiry warning sweep — independent from the renewal loop above so we still alert on
+      // certs that are about to expire even when the LE auto-renew is somehow not picking
+      // them up (manual cert, missing email, DNS-only domain, etc.).
+      const expiringSoon = await db('certificates')
+        .whereNotNull('expires_at')
+        .where('expires_at', '<', fourteenDaysFromNow)
+        .where(qb => qb.whereNull('last_expiry_warning_at').orWhere('last_expiry_warning_at', '<', sevenDaysAgo));
+
+      for (const cert of expiringSoon) {
+        const domains = (cert.domain_names as string[]) || [];
+        const primaryDomain = domains[0] || `cert-${cert.id}`;
+        const daysLeft = Math.max(0, Math.round((new Date(cert.expires_at).getTime() - now) / (24 * 60 * 60 * 1000)));
+        notificationService.sendForStack(null, primaryDomain, {
+          stackName: primaryDomain,
+          eventType: 'cert_expiring_soon',
+          message: `Certificate for ${domains.join(', ') || primaryDomain} expires in ${daysLeft} day(s) (status: ${cert.status}).`,
+          timestamp: new Date().toISOString(),
+        }).catch(e => logger.warn({ certId: cert.id, err: e }, 'cert_expiring_soon notify failed'));
+        await db('certificates').where({ id: cert.id }).update({ last_expiry_warning_at: new Date() });
       }
     } catch (err) {
       logger.error({ err }, 'Certificate renewal check failed');

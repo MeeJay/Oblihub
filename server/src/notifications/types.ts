@@ -4,7 +4,7 @@ export interface NotificationPayload {
   image?: string;
   oldDigest?: string;
   newDigest?: string;
-  eventType: 'update_available' | 'update_applied' | 'update_failed' | 'test';
+  eventType: 'update_available' | 'update_applied' | 'update_failed' | 'cert_renewal_failed' | 'cert_expiring_soon' | 'test';
   message?: string;
   timestamp: string;
   appName?: string;

@@ -4,6 +4,8 @@ const ICONS: Record<string, string> = {
   update_available: '\uD83D\uDD04',
   update_applied: '\u2705',
   update_failed: '\u274C',
+  cert_renewal_failed: '\uD83D\uDD12',
+  cert_expiring_soon: '\u23F3',
   test: '\uD83D\uDD14',
 };
 
@@ -16,6 +18,8 @@ export function formatTitle(payload: NotificationPayload): string {
     update_available: 'Update available',
     update_applied: 'Update applied',
     update_failed: 'Update failed',
+    cert_renewal_failed: 'Certificate renewal failed',
+    cert_expiring_soon: 'Certificate expiring soon',
   };
   return `${icon} ${app} — ${labels[payload.eventType] || payload.eventType}: ${target}`;
 }
