@@ -286,9 +286,13 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     listen [::]:80;
     server_name ${domains};
 
-    # ACME challenge
+    # ACME challenge — must bypass server-level access list (IP allow/deny + auth_basic)
+    # so Let's Encrypt's HTTP-01 validator can always reach the token regardless of what
+    # the operator has gated the host with.
     location /.well-known/acme-challenge/ {
         alias /etc/nginx/acme-challenge/;
+        allow all;
+        auth_basic off;
     }
 
     location / {
@@ -315,9 +319,13 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
 
   conf += `    server_name ${domains};\n\n`;
 
-  // ACME challenge (always serve)
+  // ACME challenge (always serve) — `allow all` + `auth_basic off` are critical: without them
+  // any attached access list (IP allowlist or basic auth) on the host would 403 the Let's
+  // Encrypt validator and break renewals silently for the lifetime of the cert.
   conf += `    location /.well-known/acme-challenge/ {
         alias /etc/nginx/acme-challenge/;
+        allow all;
+        auth_basic off;
     }\n\n`;
 
   if (host.hstsEnabled && hasCert) {
@@ -583,6 +591,8 @@ ${rateLimitZones ? `    # Rate limit zones\n${rateLimitZones}\n` : ''}    # WebS
 
         location /.well-known/acme-challenge/ {
             alias /etc/nginx/acme-challenge/;
+            allow all;
+            auth_basic off;
         }
 
         location / {
