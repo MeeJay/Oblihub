@@ -36,15 +36,15 @@
   --c-status-critical:       224 58 58;
   --c-status-critical-bg:    44 14 18;
 
-  /* Oblihub brand — bleu profond #2d4ec9 / hover #5a78e8 / dark #1e389e */
-  --c-accent:                45 78 201;
-  --c-accent-hover:          90 120 232;
-  --c-accent-dark:           30 56 158;
-  --c-primary:               45 78 201;
+  /* Oblihub brand — teal officiel du logo #56cdc6 / hover #92e8ec / dark #3dc2b4 */
+  --c-accent:                86 205 198;
+  --c-accent-hover:          146 232 236;
+  --c-accent-dark:           61 194 180;
+  --c-primary:               86 205 198;
 }
 
 /* ── Obli Daylight — light companion to Obli Operator: soft-white bg, slate-900 text,
-       depth via shadow instead of borders. Accent tuned per app (Oblihub = blue-600).
+       depth via shadow instead of borders. Accent = Oblihub brand teal (#3dc2b4 on white).
        Spec: D:\Obligate\docs\obli-daylight-theme.md ──────────────────────────── */
 [data-theme="obli-daylight"] {
   --c-bg-primary:      250 251 253;
@@ -71,12 +71,12 @@
   --c-status-critical: 220 38 38;
   --c-status-critical-bg: 254 226 226;
 
-  /* Oblihub — blue-600 per the shared per-app accent table */
-  --c-accent:          37 99 235;
-  --c-accent-hover:    59 130 246;
-  --c-accent-dark:     30 64 175;
+  /* Oblihub brand teal, tuned deeper (#3dc2b4) so it reads on white without looking neon. */
+  --c-accent:          61 194 180;
+  --c-accent-hover:    86 205 198;
+  --c-accent-dark:     42 156 143;
   --c-accent-text:     255 255 255;
-  --c-primary:         37 99 235;
+  --c-primary:         61 194 180;
 
   --shadow-card: 0 1px 2px 0 rgba(15,23,42,0.04), 0 6px 24px -12px rgba(15,23,42,0.10);
   --shadow-glow: 0 0 0 1px rgb(var(--c-accent) / 0.18) inset, 0 8px 32px -12px rgb(var(--c-accent) / 0.22);
@@ -113,10 +113,11 @@
   --c-status-critical:       248 81 73;
   --c-status-critical-bg:    58 18 22;
 
-  --c-accent:                30 56 158;
-  --c-accent-hover:          60 90 200;
-  --c-accent-dark:           20 40 120;
-  --c-primary:               30 56 158;
+  /* Same brand teal, plain (no glow), for the Modern skin. */
+  --c-accent:                86 205 198;
+  --c-accent-hover:          146 232 236;
+  --c-accent-dark:           61 194 180;
+  --c-primary:               86 205 198;
 }
 
 /* ── Neon UI — fonds neutres très sombres + accent bleu électrique avec glow ──── */
@@ -145,10 +146,11 @@
   --c-status-critical:       255 56 96;
   --c-status-critical-bg:    40 0 14;
 
-  --c-accent:                64 130 255;
-  --c-accent-hover:          110 165 255;
-  --c-accent-dark:           30 90 220;
-  --c-primary:               64 130 255;
+  /* Neon skin: brand teal, brightest stop of the gradient works best under the glow filters. */
+  --c-accent:                146 232 236;
+  --c-accent-hover:          146 232 236;
+  --c-accent-dark:           86 205 198;
+  --c-primary:               146 232 236;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
