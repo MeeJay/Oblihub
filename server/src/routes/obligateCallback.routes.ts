@@ -68,7 +68,7 @@ router.get('/callback', async (req, res) => {
       const prefs = assertion.preferences as { profilePhotoUrl?: string | null; preferredTheme?: string };
       const colUpdate: Record<string, unknown> = {};
       if (prefs.profilePhotoUrl !== undefined) colUpdate.avatar = prefs.profilePhotoUrl;
-      if (prefs.preferredTheme && ['obli-operator', 'modern', 'neon'].includes(prefs.preferredTheme)) {
+      if (prefs.preferredTheme && ['obli-operator', 'obli-daylight', 'modern', 'neon'].includes(prefs.preferredTheme)) {
         const existing = await db('users').where({ id: localUserId }).select('preferences').first() as { preferences: unknown } | undefined;
         const existingPrefs = (typeof existing?.preferences === 'string' ? JSON.parse(existing.preferences) : existing?.preferences) ?? {};
         colUpdate.preferences = JSON.stringify({ ...existingPrefs, preferredTheme: prefs.preferredTheme });

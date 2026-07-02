@@ -62,6 +62,58 @@ function OperatorPreviewSvg() {
   );
 }
 
+function DaylightPreviewSvg() {
+  // Obli Daylight : light companion to Operator — soft white bg, slate text, blue-600 accent.
+  return (
+    <svg viewBox="0 0 280 170" xmlns="http://www.w3.org/2000/svg" className="w-full rounded-md">
+      <rect width="280" height="170" fill="#fafbfd" rx="6" />
+      <rect x="0" y="0" width="60" height="170" fill="#ffffff" rx="6" />
+      <rect x="60" y="0" width="1" height="170" fill="#e4e8ef" />
+      <rect x="10" y="12" width="16" height="16" rx="3" fill="#2563eb" />
+      <rect x="31" y="15" width="22" height="5" rx="2" fill="#94a3b8" />
+      {[40, 62, 84, 106].map((y, i) => (
+        <g key={y}>
+          <rect x="7" y={y} width="46" height="16" rx="3"
+            fill={i === 0 ? 'rgba(37,99,235,0.10)' : 'transparent'} />
+          <rect x="13" y={y + 4} width="8" height="8" rx="2"
+            fill={i === 0 ? '#2563eb' : '#94a3b8'} />
+          <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
+            fill={i === 0 ? '#0f172a' : '#475569'} />
+        </g>
+      ))}
+      <rect x="61" y="0" width="219" height="28" fill="#ffffff" />
+      <rect x="61" y="28" width="219" height="1" fill="#e4e8ef" />
+      <rect x="70" y="8" width="50" height="12" rx="3" fill="#f3f5f9" />
+      <rect x="230" y="9" width="44" height="10" rx="4" fill="#f3f5f9" />
+      {[0, 1, 2, 3].map((i) => {
+        const colors = ['#10a360', '#2563eb', '#d97706', '#3b82f6'];
+        const labels = [68, 4, 2, 8];
+        const x = 70 + i * 52;
+        return (
+          <g key={i}>
+            <rect x={x} y="36" width="44" height="24" rx="4" fill="#ffffff" />
+            <rect x={x + 4} y="41" width="6" height="6" rx="3" fill={colors[i]} />
+            <rect x={x + 12} y="41" width={labels[i]} height="4" rx="2" fill={colors[i]} opacity="0.7" />
+            <rect x={x + 12} y="48" width="20" height="3" rx="2" fill="#94a3b8" />
+          </g>
+        );
+      })}
+      <rect x="70" y="68" width="200" height="58" rx="4" fill="#ffffff" />
+      <rect x="78" y="76" width="50" height="5" rx="2" fill="#0f172a" />
+      <rect x="78" y="86" width="184" height="3" rx="1.5" fill="#f3f5f9" />
+      <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#2563eb" />
+      <rect x="78" y="96" width="184" height="3" rx="1.5" fill="#f3f5f9" />
+      <rect x="78" y="96" width="80" height="3" rx="1.5" fill="#10a360" />
+      <rect x="78" y="106" width="184" height="3" rx="1.5" fill="#f3f5f9" />
+      <rect x="78" y="106" width="55" height="3" rx="1.5" fill="#d97706" />
+      <rect x="70" y="132" width="200" height="30" rx="4" fill="#ffffff" />
+      <rect x="78" y="140" width="35" height="4" rx="2" fill="#0f172a" />
+      <rect x="78" y="150" width="90" height="3" rx="1.5" fill="#f3f5f9" />
+      <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#2563eb" />
+    </svg>
+  );
+}
+
 function ModernPreviewSvg() {
   // Modern UI : fond très sombre, teinte bleue ultra-subtile (couleur app)
   return (
@@ -217,6 +269,7 @@ function NeonPreviewSvg() {
 
 const THEMES: { id: AppTheme; label: string; Preview: () => JSX.Element }[] = [
   { id: 'obli-operator', label: 'Obli Operator', Preview: OperatorPreviewSvg },
+  { id: 'obli-daylight', label: 'Obli Daylight', Preview: DaylightPreviewSvg },
   { id: 'modern',        label: 'Modern UI',     Preview: ModernPreviewSvg },
   { id: 'neon',          label: 'Neon UI',       Preview: NeonPreviewSvg },
 ];

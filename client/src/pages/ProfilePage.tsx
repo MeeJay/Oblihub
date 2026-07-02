@@ -134,13 +134,6 @@ export function ProfilePage() {
           </a>
         </div>
 
-        <div className="rounded-xl border border-border bg-bg-secondary p-5">
-          <h2 className="text-sm font-semibold text-text-primary mb-1 flex items-center gap-2">
-            <Palette size={14} /> Appearance
-          </h2>
-          <p className="text-xs text-text-muted mb-4">Theme is also synced from Obligate on login. Pick another to override locally.</p>
-          <ThemePicker value={preferredTheme} onChange={handleThemeChange} />
-        </div>
       </div>
     );
   }
