@@ -1,7 +1,7 @@
 // ── User types ──
 export type UserRole = 'admin' | 'user';
 
-export type AppTheme = 'obli-operator' | 'modern' | 'neon';
+export type AppTheme = 'obli-operator' | 'obli-daylight' | 'modern' | 'neon';
 
 export interface UserPreferences {
   preferredTheme?: AppTheme;

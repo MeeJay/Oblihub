@@ -8,6 +8,25 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <title>Oblihub</title>
+    <script>
+      // FOUC guard: set data-theme from localStorage BEFORE React boots so the first paint
+      // matches the user's saved theme. STORAGE_KEY must stay in sync with utils/theme.ts.
+      try {
+        var t = localStorage.getItem('oh-theme');
+        if (t === 'obli-operator' || t === 'obli-daylight' || t === 'modern' || t === 'neon') {
+          document.documentElement.dataset.theme = t;
+        } else {
+          document.documentElement.dataset.theme = 'obli-operator';
+        }
+      } catch (e) {
+        document.documentElement.dataset.theme = 'obli-operator';
+      }
+    </script>
+    <style>
+      /* Pre-Tailwind body bg for light theme so the initial paint isn't dark
+         while stylesheets are still loading. */
+      [data-theme="obli-daylight"] body { background: #fafbfd; }
+    </style>
   </head>
   <body class="bg-bg-primary text-text-primary">
     <div id="root"></div>

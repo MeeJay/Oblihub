@@ -43,6 +43,50 @@
   --c-primary:               45 78 201;
 }
 
+/* ── Obli Daylight — light companion to Obli Operator: soft-white bg, slate-900 text,
+       depth via shadow instead of borders. Accent tuned per app (Oblihub = blue-600).
+       Spec: D:\Obligate\docs\obli-daylight-theme.md ──────────────────────────── */
+[data-theme="obli-daylight"] {
+  --c-bg-primary:      250 251 253;
+  --c-bg-secondary:    255 255 255;
+  --c-bg-tertiary:     243 245 249;
+  --c-bg-hover:        15 23 42 / 0.04;
+  --c-bg-active:       15 23 42 / 0.07;
+
+  --c-border:          15 23 42 / 0.08;
+  --c-border-light:    15 23 42 / 0.12;
+
+  --c-text-primary:    15 23 42;
+  --c-text-secondary:  71 85 105;
+  --c-text-muted:      148 163 184;
+
+  --c-status-up:       16 163 96;
+  --c-status-up-bg:    220 252 231;
+  --c-status-down:     148 163 184;
+  --c-status-down-bg:  241 245 249;
+  --c-status-pending:  37 99 235;
+  --c-status-pending-bg: 219 234 254;
+  --c-status-warning:  217 119 6;
+  --c-status-warning-bg: 254 243 199;
+  --c-status-critical: 220 38 38;
+  --c-status-critical-bg: 254 226 226;
+
+  /* Oblihub — blue-600 per the shared per-app accent table */
+  --c-accent:          37 99 235;
+  --c-accent-hover:    59 130 246;
+  --c-accent-dark:     30 64 175;
+  --c-accent-text:     255 255 255;
+  --c-primary:         37 99 235;
+
+  --shadow-card: 0 1px 2px 0 rgba(15,23,42,0.04), 0 6px 24px -12px rgba(15,23,42,0.10);
+  --shadow-glow: 0 0 0 1px rgb(var(--c-accent) / 0.18) inset, 0 8px 32px -12px rgb(var(--c-accent) / 0.22);
+}
+
+[data-theme="obli-daylight"] body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #fafbfd;
+}
+
 /* ── Modern UI — fond très sombre, teinte bleue ultra-subtile (couleur app) ── */
 [data-theme="modern"] {
   --c-bg-primary:            11 12 18;
