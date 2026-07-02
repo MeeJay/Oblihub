@@ -225,7 +225,19 @@ router.get('/connected-apps', async (req, res) => {
     if (!req.session?.userId) { res.status(401).json({ success: false }); return; }
     const raw = await appConfigService.getObligateRaw();
     if (!raw.url || !raw.apiKey) { res.json({ success: true, data: [] }); return; }
-    const r = await fetch(`${raw.url}/api/apps/connected`, { headers: { 'Authorization': `Bearer ${raw.apiKey}` } });
+    // Scope the app switcher to the caller's Obligate entitlements. Without
+    // the userId, Obligate returns EVERY connected app, so the header would
+    // show apps the user has no access to. Local (non-SSO) users have no
+    // Obligate id → unfiltered fallback.
+    const row = await db('users')
+      .where({ id: req.session.userId })
+      .select('foreign_source', 'foreign_id')
+      .first() as { foreign_source: string | null; foreign_id: number | null } | undefined;
+    const obligateUserId = row?.foreign_source === 'obligate' && row.foreign_id ? row.foreign_id : null;
+    const connectedUrl = obligateUserId
+      ? `${raw.url}/api/apps/connected?userId=${encodeURIComponent(obligateUserId)}`
+      : `${raw.url}/api/apps/connected`;
+    const r = await fetch(connectedUrl, { headers: { 'Authorization': `Bearer ${raw.apiKey}` } });
     if (!r.ok) { res.json({ success: true, data: [] }); return; }
     const data = await r.json() as { success: boolean; data?: unknown[] };
     res.json({ success: true, data: data.data ?? [] });
