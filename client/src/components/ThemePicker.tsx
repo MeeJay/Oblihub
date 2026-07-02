@@ -15,14 +15,14 @@ function OperatorPreviewSvg() {
     <svg viewBox="0 0 280 170" xmlns="http://www.w3.org/2000/svg" className="w-full rounded-md">
       <rect width="280" height="170" fill="#0b0d1a" rx="6" />
       <rect x="0" y="0" width="60" height="170" fill="#0f1220" rx="6" />
-      <rect x="10" y="12" width="16" height="16" rx="3" fill="#56cdc6" />
+      <rect x="10" y="12" width="16" height="16" rx="3" fill="#1678cd" />
       <rect x="31" y="15" width="22" height="5" rx="2" fill="#8c93b6" />
       {[40, 62, 84, 106].map((y, i) => (
         <g key={y}>
           <rect x="7" y={y} width="46" height="16" rx="3"
-            fill={i === 0 ? 'rgba(86,205,198,0.18)' : 'transparent'} />
+            fill={i === 0 ? 'rgba(22,120,205,0.18)' : 'transparent'} />
           <rect x="13" y={y + 4} width="8" height="8" rx="2"
-            fill={i === 0 ? '#92e8ec' : '#4b5273'} />
+            fill={i === 0 ? '#488fec' : '#4b5273'} />
           <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
             fill={i === 0 ? '#e8ecf5' : '#8c93b6'} />
         </g>
@@ -31,7 +31,7 @@ function OperatorPreviewSvg() {
       <rect x="70" y="8" width="50" height="12" rx="3" fill="#131728" />
       <rect x="230" y="9" width="44" height="10" rx="4" fill="#131728" />
       {[0, 1, 2, 3].map((i) => {
-        const colors = ['#1edd8a', '#56cdc6', '#f5a623', '#92e8ec'];
+        const colors = ['#1edd8a', '#1678cd', '#f5a623', '#488fec'];
         const labels = [68, 4, 2, 8];
         const x = 70 + i * 52;
         return (
@@ -49,7 +49,7 @@ function OperatorPreviewSvg() {
       <rect x="70" y="68" width="200" height="58" rx="4" fill="#131728" />
       <rect x="78" y="76" width="50" height="5" rx="2" fill="#e8ecf5" />
       <rect x="78" y="86" width="184" height="3" rx="1.5" fill="#181c30" />
-      <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#56cdc6" />
+      <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#1678cd" />
       <rect x="78" y="96" width="184" height="3" rx="1.5" fill="#181c30" />
       <rect x="78" y="96" width="80" height="3" rx="1.5" fill="#1edd8a" />
       <rect x="78" y="106" width="184" height="3" rx="1.5" fill="#181c30" />
@@ -57,7 +57,7 @@ function OperatorPreviewSvg() {
       <rect x="70" y="132" width="200" height="30" rx="4" fill="#131728" />
       <rect x="78" y="140" width="35" height="4" rx="2" fill="#e8ecf5" />
       <rect x="78" y="150" width="90" height="3" rx="1.5" fill="#181c30" />
-      <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#56cdc6" />
+      <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#1678cd" />
     </svg>
   );
 }
@@ -69,14 +69,14 @@ function DaylightPreviewSvg() {
       <rect width="280" height="170" fill="#fafbfd" rx="6" />
       <rect x="0" y="0" width="60" height="170" fill="#ffffff" rx="6" />
       <rect x="60" y="0" width="1" height="170" fill="#e4e8ef" />
-      <rect x="10" y="12" width="16" height="16" rx="3" fill="#3dc2b4" />
+      <rect x="10" y="12" width="16" height="16" rx="3" fill="#0071c2" />
       <rect x="31" y="15" width="22" height="5" rx="2" fill="#94a3b8" />
       {[40, 62, 84, 106].map((y, i) => (
         <g key={y}>
           <rect x="7" y={y} width="46" height="16" rx="3"
             fill={i === 0 ? 'rgba(37,99,235,0.10)' : 'transparent'} />
           <rect x="13" y={y + 4} width="8" height="8" rx="2"
-            fill={i === 0 ? '#3dc2b4' : '#94a3b8'} />
+            fill={i === 0 ? '#0071c2' : '#94a3b8'} />
           <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
             fill={i === 0 ? '#0f172a' : '#475569'} />
         </g>
@@ -86,7 +86,7 @@ function DaylightPreviewSvg() {
       <rect x="70" y="8" width="50" height="12" rx="3" fill="#f3f5f9" />
       <rect x="230" y="9" width="44" height="10" rx="4" fill="#f3f5f9" />
       {[0, 1, 2, 3].map((i) => {
-        const colors = ['#10a360', '#3dc2b4', '#d97706', '#56cdc6'];
+        const colors = ['#10a360', '#0071c2', '#d97706', '#1678cd'];
         const labels = [68, 4, 2, 8];
         const x = 70 + i * 52;
         return (
@@ -101,7 +101,7 @@ function DaylightPreviewSvg() {
       <rect x="70" y="68" width="200" height="58" rx="4" fill="#ffffff" />
       <rect x="78" y="76" width="50" height="5" rx="2" fill="#0f172a" />
       <rect x="78" y="86" width="184" height="3" rx="1.5" fill="#f3f5f9" />
-      <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#3dc2b4" />
+      <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#0071c2" />
       <rect x="78" y="96" width="184" height="3" rx="1.5" fill="#f3f5f9" />
       <rect x="78" y="96" width="80" height="3" rx="1.5" fill="#10a360" />
       <rect x="78" y="106" width="184" height="3" rx="1.5" fill="#f3f5f9" />
@@ -109,7 +109,7 @@ function DaylightPreviewSvg() {
       <rect x="70" y="132" width="200" height="30" rx="4" fill="#ffffff" />
       <rect x="78" y="140" width="35" height="4" rx="2" fill="#0f172a" />
       <rect x="78" y="150" width="90" height="3" rx="1.5" fill="#f3f5f9" />
-      <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#3dc2b4" />
+      <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#0071c2" />
     </svg>
   );
 }
@@ -121,14 +121,14 @@ function ModernPreviewSvg() {
       <rect width="280" height="170" fill="#0b0c12" rx="6" />
       <rect x="0" y="0" width="60" height="170" fill="#11131c" rx="6" />
       <rect x="60" y="0" width="1" height="170" fill="#30384e" />
-      <rect x="10" y="12" width="16" height="16" rx="3" fill="#56cdc6" opacity="0.95" />
+      <rect x="10" y="12" width="16" height="16" rx="3" fill="#1678cd" opacity="0.95" />
       <rect x="31" y="15" width="22" height="5" rx="2" fill="#88899c" />
       {[40, 62, 84, 106].map((y, i) => (
         <g key={y}>
           <rect x="7" y={y} width="46" height="16" rx="3"
             fill={i === 0 ? '#23283f' : 'transparent'} />
           <rect x="13" y={y + 4} width="8" height="8" rx="2"
-            fill={i === 0 ? '#56cdc6' : '#6b7385'} />
+            fill={i === 0 ? '#1678cd' : '#6b7385'} />
           <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
             fill={i === 0 ? '#e6ebf5' : '#88899c'} />
         </g>
@@ -138,7 +138,7 @@ function ModernPreviewSvg() {
       <rect x="70" y="8" width="50" height="12" rx="3" fill="#0b0c12" />
       <rect x="230" y="9" width="44" height="10" rx="4" fill="#171a25" stroke="#30384e" strokeWidth="0.5" />
       {[0, 1, 2, 3].map((i) => {
-        const colors = ['#2ea043', '#56cdc6', '#d29922', '#92e8ec'];
+        const colors = ['#2ea043', '#1678cd', '#d29922', '#488fec'];
         const labels = [68, 4, 2, 8];
         const x = 70 + i * 52;
         return (
@@ -169,9 +169,9 @@ function ModernPreviewSvg() {
       <rect x="78" y="132" width="5" height="5" rx="2.5" fill="#2ea043" />
       <rect x="87" y="133" width="35" height="4" rx="2" fill="#e6ebf5" />
       <rect x="78" y="143" width="90" height="3" rx="2" fill="#171a25" />
-      <rect x="78" y="143" width="55" height="3" rx="2" fill="#56cdc6" opacity="0.9" />
+      <rect x="78" y="143" width="55" height="3" rx="2" fill="#1678cd" opacity="0.9" />
       <rect x="175" y="143" width="88" height="3" rx="2" fill="#171a25" />
-      <rect x="175" y="143" width="40" height="3" rx="2" fill="#56cdc6" opacity="0.9" />
+      <rect x="175" y="143" width="40" height="3" rx="2" fill="#1678cd" opacity="0.9" />
     </svg>
   );
 }
@@ -195,30 +195,30 @@ function NeonPreviewSvg() {
         </filter>
         <linearGradient id="oh-headerGlow" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="transparent" />
-          <stop offset="30%" stopColor="rgba(146,232,236,0.15)" />
-          <stop offset="50%" stopColor="rgba(146,232,236,0.8)" />
-          <stop offset="70%" stopColor="rgba(146,232,236,0.15)" />
+          <stop offset="30%" stopColor="rgba(72,143,236,0.15)" />
+          <stop offset="50%" stopColor="rgba(72,143,236,0.8)" />
+          <stop offset="70%" stopColor="rgba(72,143,236,0.15)" />
           <stop offset="100%" stopColor="transparent" />
         </linearGradient>
       </defs>
       <rect width="280" height="170" fill="#07080a" rx="6" />
       <rect x="0" y="0" width="60" height="170" fill="#0d0e11" rx="6" />
       <line x1="60" y1="0" x2="60" y2="170" stroke="#323339" strokeWidth="1" />
-      <rect x="10" y="12" width="16" height="16" rx="3" fill="#92e8ec" opacity="0.95" filter="url(#oh-glow-blue)" />
+      <rect x="10" y="12" width="16" height="16" rx="3" fill="#488fec" opacity="0.95" filter="url(#oh-glow-blue)" />
       <rect x="31" y="15" width="22" height="5" rx="2" fill="#8a90b0" />
       {[40, 62, 84, 106].map((y, i) => (
         <g key={y}>
           {i === 0 && (
             <rect x="7" y={y} width="3" height="16" rx="1.5"
-              fill="#92e8ec" filter="url(#oh-glow-blue)" />
+              fill="#488fec" filter="url(#oh-glow-blue)" />
           )}
           <rect x="10" y={y} width="43" height="16" rx="3"
-            fill={i === 0 ? 'rgba(146,232,236,0.12)' : 'transparent'} />
+            fill={i === 0 ? 'rgba(72,143,236,0.12)' : 'transparent'} />
           <rect x="13" y={y + 4} width="8" height="8" rx="2"
-            fill={i === 0 ? '#92e8ec' : '#5b6080'}
+            fill={i === 0 ? '#488fec' : '#5b6080'}
             filter={i === 0 ? 'url(#oh-glow-blue)' : undefined} />
           <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
-            fill={i === 0 ? '#92e8ec' : '#5b6080'}
+            fill={i === 0 ? '#488fec' : '#5b6080'}
             filter={i === 0 ? 'url(#oh-glow-blue)' : undefined} />
         </g>
       ))}
@@ -227,7 +227,7 @@ function NeonPreviewSvg() {
       <rect x="70" y="8" width="50" height="12" rx="3" fill="#07080a" />
       <rect x="230" y="9" width="44" height="10" rx="4" fill="#13141a" stroke="#323339" strokeWidth="0.5" />
       {[0, 1, 2, 3].map((i) => {
-        const colors  = ['#00dc6e', '#ff3860', '#ffbe00', '#92e8ec'];
+        const colors  = ['#00dc6e', '#ff3860', '#ffbe00', '#488fec'];
         const filters = ['url(#oh-glow-green)', 'url(#oh-glow-red)', undefined, 'url(#oh-glow-blue)'];
         const labels  = [68, 4, 2, 8];
         const x = 70 + i * 52;
@@ -260,9 +260,9 @@ function NeonPreviewSvg() {
       <rect x="78" y="132" width="5" height="5" rx="2.5" fill="#00dc6e" filter="url(#oh-glow-green)" />
       <rect x="87" y="133" width="35" height="4" rx="2" fill="#ebf0fa" />
       <rect x="78" y="143" width="90" height="3" rx="2" fill="#13141a" />
-      <rect x="78" y="143" width="55" height="3" rx="2" fill="#92e8ec" opacity="0.95" filter="url(#oh-glow-blue)" />
+      <rect x="78" y="143" width="55" height="3" rx="2" fill="#488fec" opacity="0.95" filter="url(#oh-glow-blue)" />
       <rect x="175" y="143" width="88" height="3" rx="2" fill="#13141a" />
-      <rect x="175" y="143" width="40" height="3" rx="2" fill="#92e8ec" opacity="0.9" filter="url(#oh-glow-blue)" />
+      <rect x="175" y="143" width="40" height="3" rx="2" fill="#488fec" opacity="0.9" filter="url(#oh-glow-blue)" />
     </svg>
   );
 }

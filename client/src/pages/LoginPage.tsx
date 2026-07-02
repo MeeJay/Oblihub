@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
+import { Logo } from '@/components/common/Logo';
 import toast from 'react-hot-toast';
 
 /**
@@ -103,13 +104,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-bg-primary p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          {/* Theme-aware wordmark: the "hub" glyph is white in dark themes and black in daylight,
-              so read data-theme off <html> and pick the matching asset. Falls back to dark. */}
-          {(() => {
-            const isDaylight = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'obli-daylight';
-            const src = isDaylight ? '/logo-wordmark-daylight.svg' : '/logo-wordmark.svg';
-            return <img src={src} alt="Oblihub" className="mx-auto h-16 w-auto mb-3" />;
-          })()}
+          <Logo className="mx-auto h-16 w-auto mb-3" />
           <p className="mt-2 text-sm text-text-secondary">Sign in to continue</p>
         </div>
         {ssoState === 'unavailable' && (

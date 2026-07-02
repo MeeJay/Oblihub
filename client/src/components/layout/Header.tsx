@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { LogOut, Bell } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { cn } from '@/utils/cn';
+import { Logo } from '@/components/common/Logo';
 
 // App switcher — fixed order across the suite. Per obli-design-system.md §1 + §4.1.
 type AppType = 'obliview' | 'obliguard' | 'oblimap' | 'obliance' | 'obliplan' | 'oblihub';
@@ -63,12 +64,9 @@ export function Header() {
       className="flex shrink-0 items-center gap-3 bg-bg-secondary px-4"
       style={{ height: 52 }}
     >
-      {/* Logo block */}
-      <Link to="/" className="flex items-center gap-2 shrink-0">
-        <img src="/logo.svg" alt="Oblihub" className="h-7 w-7 rounded-md" />
-        <span className="font-display text-[19px] font-semibold tracking-wide text-text-primary">
-          Oblihub
-        </span>
+      {/* Logo — theme-aware wordmark, no text label (Obliance-style: the wordmark is the label). */}
+      <Link to="/" className="flex items-center shrink-0">
+        <Logo className="h-8 w-auto max-w-[160px] object-contain" />
       </Link>
 
       {/* App switcher pills (§4.1) — only show apps the user can access (current + connected). */}
