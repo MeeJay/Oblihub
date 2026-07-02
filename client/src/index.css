@@ -43,27 +43,31 @@
   --c-primary:               22 120 205;
 }
 
-/* ── Obli Daylight — light companion to Obli Operator: soft-white bg, slate-900 text,
-       depth via shadow instead of borders. Accent = Oblihub brand blue (#0071c2 on white).
+/* ── Obli Daylight — Nordic Mist revision. Cushioned blue-gray Snow Storm surface,
+       Polar Night text, subtle depth via soft shadows. Accent stays identical to
+       Operator (Oblihub brand blue) — only surfaces flip.
+       CRITICAL: bg-hover, bg-active, border, border-light must be PLAIN RGB triplets
+       (no `R G B / A`). Tailwind emits `rgb(var(--x) / <alpha>)`; a stored alpha
+       makes the rule invalid and the browser falls back to thick black borders.
        Spec: D:\Obligate\docs\obli-daylight-theme.md ──────────────────────────── */
 [data-theme="obli-daylight"] {
-  --c-bg-primary:      250 251 253;
-  --c-bg-secondary:    255 255 255;
-  --c-bg-tertiary:     243 245 249;
-  --c-bg-hover:        15 23 42 / 0.04;
-  --c-bg-active:       15 23 42 / 0.07;
+  --c-bg-primary:      229 233 240;   /* #e5e9f0 — Snow Storm */
+  --c-bg-secondary:    236 239 244;   /* #eceff4 */
+  --c-bg-tertiary:     216 222 233;   /* #d8dee9 */
+  --c-bg-hover:        222 227 236;
+  --c-bg-active:       210 217 229;
 
-  --c-border:          15 23 42 / 0.08;
-  --c-border-light:    15 23 42 / 0.12;
+  --c-border:          212 220 231;
+  --c-border-light:    224 230 240;
 
-  --c-text-primary:    15 23 42;
-  --c-text-secondary:  71 85 105;
-  --c-text-muted:      148 163 184;
+  --c-text-primary:    46 52 64;      /* #2e3440 — Polar Night */
+  --c-text-secondary:  76 86 106;     /* #4c566a */
+  --c-text-muted:      129 141 161;   /* #818da1 */
 
   --c-status-up:       16 163 96;
   --c-status-up-bg:    220 252 231;
   --c-status-down:     148 163 184;
-  --c-status-down-bg:  241 245 249;
+  --c-status-down-bg:  216 222 233;
   --c-status-pending:  37 99 235;
   --c-status-pending-bg: 219 234 254;
   --c-status-warning:  217 119 6;
@@ -71,20 +75,20 @@
   --c-status-critical: 220 38 38;
   --c-status-critical-bg: 254 226 226;
 
-  /* Oblihub brand blue, deep stop (#0071c2) — reads on white without looking neon. */
-  --c-accent:          0 113 194;
-  --c-accent-hover:    22 120 205;
-  --c-accent-dark:     0 74 128;
+  /* Same brand blue as Operator — Daylight only re-tones surfaces, not identity. */
+  --c-accent:          22 120 205;
+  --c-accent-hover:    72 143 236;
+  --c-accent-dark:     0 113 194;
   --c-accent-text:     255 255 255;
-  --c-primary:         0 113 194;
+  --c-primary:         22 120 205;
 
-  --shadow-card: 0 1px 2px 0 rgba(15,23,42,0.04), 0 6px 24px -12px rgba(15,23,42,0.10);
+  --shadow-card: 0 1px 2px 0 rgba(46,52,64,0.03), 0 6px 24px -12px rgba(46,52,64,0.08);
   --shadow-glow: 0 0 0 1px rgb(var(--c-accent) / 0.18) inset, 0 8px 32px -12px rgb(var(--c-accent) / 0.22);
 }
 
 [data-theme="obli-daylight"] body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #fafbfd;
+  background: #e5e9f0;
 }
 
 /* ── Modern UI — fond très sombre, teinte bleue ultra-subtile (couleur app) ── */

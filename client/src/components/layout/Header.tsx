@@ -21,7 +21,7 @@ const APP_ORDER: AppEntry[] = [
   { type: 'oblimap',   label: 'Oblimap',   color: '#1edd8a' },
   { type: 'obliance',  label: 'Obliance',  color: '#e03a3a' },
   { type: 'obliplan',  label: 'Obliplan',  color: '#7c6cff' },
-  { type: 'oblihub',   label: 'Oblihub',   color: '#2d4ec9' },
+  { type: 'oblihub',   label: 'Oblihub',   color: '#1678cd' },
 ];
 
 const CURRENT_APP: AppType = 'oblihub';
@@ -69,8 +69,10 @@ export function Header() {
         <Logo className="h-8 w-auto max-w-[160px] object-contain" />
       </Link>
 
-      {/* App switcher pills (§4.1) — only show apps the user can access (current + connected). */}
-      <nav className="flex items-center gap-1 ml-2">
+      {/* App switcher — container-wrapped pill group (Daylight spec §4). Uses bg-hover for
+          the frame so it visually matches the user pill on the right; inner pills are
+          rounded-md, active pill is a raised white-card look (bg-secondary + subtle shadow). */}
+      <nav className="ml-2 flex items-center gap-1 rounded-lg bg-bg-hover p-1">
         {APP_ORDER.filter(app => reachable.has(app.type)).map(app => {
           const isCurrent = app.type === CURRENT_APP;
           return (
@@ -79,23 +81,14 @@ export function Header() {
               type="button"
               onClick={() => goApp(app)}
               className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors',
+                'flex items-center gap-2 rounded-md px-3 py-1.5 text-[12.5px] transition-colors',
                 isCurrent
-                  ? 'text-[color:var(--app-current)]'
-                  : 'text-text-muted hover:bg-bg-hover hover:text-text-primary',
+                  ? 'bg-bg-secondary font-semibold text-text-primary shadow-[0_1px_3px_rgb(46_52_64_/_0.1)]'
+                  : 'font-medium text-text-secondary hover:bg-bg-active hover:text-text-primary',
               )}
-              style={isCurrent
-                ? ({ '--app-current': app.color, backgroundColor: hexA(app.color, 0.12) } as React.CSSProperties)
-                : undefined}
               title={app.label}
             >
-              <span
-                className="w-1.5 h-1.5 rounded-full shrink-0"
-                style={{
-                  background: app.color,
-                  boxShadow: isCurrent ? `0 0 8px ${app.color}` : undefined,
-                }}
-              />
+              <span className="h-2 w-2 rounded-full shrink-0" style={{ background: app.color }} />
               {app.label}
             </button>
           );
@@ -114,7 +107,13 @@ export function Header() {
 
         {user && (
           <>
-            <div className="flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full bg-bg-hover">
+            {/* User pill — same bg-hover surface as the switcher container so both frames
+                stay coherent across every theme. Avatar disc keeps rounded-full inside. */}
+            <Link
+              to="/profile"
+              className="flex items-center gap-2 rounded-lg bg-bg-hover py-1 pl-1.5 pr-3 transition-colors hover:bg-bg-active"
+              title="Profile"
+            >
               {user.avatar ? (
                 <img
                   src={user.avatar}
@@ -124,7 +123,7 @@ export function Header() {
               ) : (
                 <div
                   className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold text-white"
-                  style={{ background: 'linear-gradient(135deg, rgba(45,78,201,0.8), rgba(90,120,232,0.5))' }}
+                  style={{ background: 'linear-gradient(135deg, rgb(22 120 205 / 0.8), rgb(72 143 236 / 0.5))' }}
                 >
                   {(cleanName[0] ?? '?').toUpperCase()}
                 </div>
@@ -135,7 +134,7 @@ export function Header() {
                   {user.role}
                 </span>
               )}
-            </div>
+            </Link>
             <button
               onClick={handleLogout}
               title="Sign out"
@@ -148,13 +147,4 @@ export function Header() {
       </div>
     </header>
   );
-}
-
-function hexA(hex: string, alpha: number): string {
-  const m = hex.replace('#', '');
-  const n = m.length === 3 ? m.split('').map(c => c + c).join('') : m;
-  const r = parseInt(n.slice(0, 2), 16);
-  const g = parseInt(n.slice(2, 4), 16);
-  const b = parseInt(n.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
