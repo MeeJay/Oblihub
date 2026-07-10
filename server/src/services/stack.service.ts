@@ -136,11 +136,22 @@ export const stackService = {
       if (project) {
         let stack = await db<StackRow>('stacks').where({ compose_project: project, engine_id: engineId }).first();
         if (!stack) {
-          const [newStack] = await db<StackRow>('stacks')
-            .insert({ name: project, compose_project: project, engine_id: engineId })
-            .returning('*');
-          stack = newStack;
-          logger.info({ project, stackId: stack.id, engineId }, 'New stack discovered');
+          // Adopt an orphan row before creating a fresh one — an orphan is a `stacks` entry
+          // for this compose_project with `engine_id=null` (typically a pre-created row from
+          // the non-admin create flow before engine_id propagation was fixed). Adopting keeps
+          // the team_id/errorMessage/etc. and lets the row now serve as the discovered stack.
+          const orphan = await db<StackRow>('stacks').where({ compose_project: project }).whereNull('engine_id').first();
+          if (orphan) {
+            await db('stacks').where({ id: orphan.id }).update({ engine_id: engineId });
+            stack = { ...orphan, engine_id: engineId };
+            logger.info({ project, stackId: stack.id, engineId }, 'Adopted orphan stack row (was engine_id=null)');
+          } else {
+            const [newStack] = await db<StackRow>('stacks')
+              .insert({ name: project, compose_project: project, engine_id: engineId })
+              .returning('*');
+            stack = newStack;
+            logger.info({ project, stackId: stack.id, engineId }, 'New stack discovered');
+          }
         }
         stackId = stack.id;
       } else {

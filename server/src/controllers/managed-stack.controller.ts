@@ -76,12 +76,16 @@ export const managedStackController = {
 
         const stack = await managedStackService.create({ name, composeContent, envContent, engineId, registryCredentials });
 
-        // Ensure the stack exists in the stacks table and assign to team
+        // Ensure the stack exists in the stacks table and assign to team.
+        // Scope the lookup + pre-create by (compose_project, engine_id) — a project name is
+        // unique only within an engine, and syncWithDocker joins on the same pair. Missing
+        // engine_id here was creating orphan rows that then failed the discovery INSERT with
+        // "duplicate key" once the container actually came up on a specific engine.
         const { db } = await import('../db');
-        let discoveredStack = await db('stacks').where({ compose_project: stack.composeProject }).first();
+        const engineIdForRow = stack.engineId ?? null;
+        let discoveredStack = await db('stacks').where({ compose_project: stack.composeProject, engine_id: engineIdForRow }).first();
         if (!discoveredStack) {
-          // Pre-create the stack entry so team assignment works immediately
-          const [newStack] = await db('stacks').insert({ name: stack.name, compose_project: stack.composeProject, team_id: targetTeamId }).returning('*');
+          const [newStack] = await db('stacks').insert({ name: stack.name, compose_project: stack.composeProject, engine_id: engineIdForRow, team_id: targetTeamId }).returning('*');
           discoveredStack = newStack;
         } else {
           await db('stacks').where({ id: discoveredStack.id }).update({ team_id: targetTeamId });
