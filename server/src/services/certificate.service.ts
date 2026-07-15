@@ -84,41 +84,86 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
         const challengePath = path.join(acmeDir, challenge.token);
         fs.writeFileSync(challengePath, keyAuthorization, { mode: 0o644 });
 
+        // Self-test hits the internal nginx container directly (via docker DNS on the shared
+        // `proxy` network) with the target Host header — this is exactly what LE will hit
+        // after traversing the WAN, minus the round-trip. Bypasses hairpin NAT and public DNS
+        // so we test what actually matters: is nginx configured to serve the challenge for
+        // THIS server_name. Falls back to a public-DNS probe only if the internal path fails
+        // (e.g. proxy container unreachable), and downgrades that probe's failure to info
+        // instead of warn because hairpin NAT is broken in a LOT of setups without blocking LE.
         try {
-          // Self-test from inside the Oblihub server container — fetches the challenge URL
-          // through the public DNS name. If THIS fails, LE definitely won't succeed either.
-          // Helps distinguish "Oblihub serves nothing on port 80" from "internet can't reach us".
-          const challengeUrl = `http://${auth.identifier.value}/.well-known/acme-challenge/${challenge.token}`;
-          await appendLog(certId, 'info', `[${auth.identifier.value}] Local self-test: GET ${challengeUrl} from inside the Oblihub container`);
+          const path = `/.well-known/acme-challenge/${challenge.token}`;
+          const host = auth.identifier.value;
+          const target = `http://proxy${path}`;
+          await appendLog(certId, 'info', `[${host}] Self-test: GET ${target} with Host: ${host} (internal nginx via docker network)`);
+          let internalOk = false;
           try {
             const ctrl = new AbortController();
-            const to = setTimeout(() => ctrl.abort(), 15000);
-            const r = await fetch(challengeUrl, { signal: ctrl.signal, redirect: 'manual' });
+            const to = setTimeout(() => ctrl.abort(), 5000);
+            const r = await fetch(target, { signal: ctrl.signal, redirect: 'manual', headers: { Host: host } });
             clearTimeout(to);
             const body = await r.text();
             if (r.status === 200 && body.trim() === keyAuthorization.trim()) {
-              await appendLog(certId, 'info', `[${auth.identifier.value}] Self-test passed ✓ (200, body matches)`);
+              await appendLog(certId, 'info', `[${host}] Self-test passed ✓ (200 from internal nginx, body matches) — LE should succeed`);
+              internalOk = true;
             } else {
-              await appendLog(certId, 'warn', `[${auth.identifier.value}] Self-test got HTTP ${r.status}${body ? `, body starts: ${body.slice(0, 80)}` : ''} — LE may also fail. Verify nginx serves /.well-known/acme-challenge/ for this hostname on port 80.`);
+              await appendLog(certId, 'warn', `[${host}] Internal nginx returned HTTP ${r.status}${body ? `, body starts: ${body.slice(0, 80)}` : ''} — check the proxy_host config for ${host}, ACME location may be missing or shadowed`);
             }
           } catch (selfErr) {
             const sm = selfErr instanceof Error ? selfErr.message : String(selfErr);
-            await appendLog(certId, 'warn', `[${auth.identifier.value}] Self-test failed (${sm}) — could be DNS not pointing here (split-horizon?), or port 80 not reachable from inside the container. Let's Encrypt will likely fail too.`);
+            await appendLog(certId, 'warn', `[${host}] Internal self-test failed (${sm}) — the proxy container may not be on the shared "proxy" network. Falling back to public probe.`);
           }
 
-          await appendLog(certId, 'info', `[${auth.identifier.value}] Notifying Let's Encrypt that challenge is ready — they will fetch from the public internet now`);
-          await client.verifyChallenge(auth, challenge);
-          await client.completeChallenge(challenge);
+          // Only bother with the public probe when internal didn't confirm — it's noisy in
+          // hairpin-broken setups and would spam the operator with warnings that don't matter.
+          if (!internalOk) {
+            const publicUrl = `http://${host}${path}`;
+            try {
+              const ctrl = new AbortController();
+              const to = setTimeout(() => ctrl.abort(), 10000);
+              const r = await fetch(publicUrl, { signal: ctrl.signal, redirect: 'manual' });
+              clearTimeout(to);
+              const body = await r.text();
+              if (r.status === 200 && body.trim() === keyAuthorization.trim()) {
+                await appendLog(certId, 'info', `[${host}] Public self-test passed ✓`);
+              } else {
+                await appendLog(certId, 'info', `[${host}] Public probe returned HTTP ${r.status} — hairpin NAT often breaks this from inside the container. Only a concern if LE ALSO fails; internet path is what matters.`);
+              }
+            } catch (pubErr) {
+              const pm = pubErr instanceof Error ? pubErr.message : String(pubErr);
+              await appendLog(certId, 'info', `[${host}] Public probe failed (${pm}) — likely hairpin NAT; ignore if LE succeeds from the internet.`);
+            }
+          }
+        } catch { /* self-test is best-effort; a failure here must not abort the LE flow */ }
 
-          // Periodic heartbeat while waitForValidStatus polls so the operator doesn't think
-          // the process froze. acme-client polls with backoff up to ~2 min before erroring.
+        try {
+          await appendLog(certId, 'info', `[${auth.identifier.value}] Notifying Let's Encrypt that challenge is ready — they will fetch from the public internet now`);
+
+          // Heartbeat set up BEFORE any acme-client await so the operator sees activity even
+          // if the library call stalls. acme-client's own verifyChallenge does an unbounded
+          // axios.get to the public FQDN (no timeout option), which black-holes forever on
+          // hairpin-NAT setups — that's why we skip it entirely. Our own self-test above
+          // already covers local reachability with proper AbortController timeouts, and
+          // Let's Encrypt performs the authoritative fetch regardless (RFC 8555 §8.3).
           const start = Date.now();
           const tick = setInterval(() => {
             const elapsed = Math.round((Date.now() - start) / 1000);
             void appendLog(certId, 'info', `[${auth.identifier.value}] Waiting for Let's Encrypt validation… ${elapsed}s elapsed`);
           }, 10000);
           try {
-            await client.waitForValidStatus(challenge);
+            // Hard timeout floor — if LE can't validate in 3 min, something is wrong (normal
+            // turnaround is < 30s). Prevents forever-hangs when the network path to LE is
+            // blocked and the library polling never gets a decisive response.
+            const HARD_TIMEOUT_MS = 180_000;
+            const withTimeout = <T>(p: Promise<T>, label: string) => Promise.race<T>([
+              p,
+              new Promise<T>((_, rej) => setTimeout(
+                () => rej(new Error(`${label} timed out after ${HARD_TIMEOUT_MS / 1000}s — network path to Let's Encrypt likely blocked`)),
+                HARD_TIMEOUT_MS,
+              )),
+            ]);
+            await withTimeout(client.completeChallenge(challenge), 'completeChallenge');
+            await withTimeout(client.waitForValidStatus(challenge), 'waitForValidStatus');
           } finally {
             clearInterval(tick);
           }
