@@ -491,6 +491,11 @@ function generateRedirectionConfig(host: RedirectionHost): string {
   conf += `    listen 80;\n    listen [::]:80;\n`;
   conf += `    server_name ${domains};\n\n`;
 
+  // ACME challenge — MUST come before the redirect. Otherwise `location /` catches
+  // /.well-known/acme-challenge/ first and emits a 301, breaking cert issuance/renewal for
+  // any domain that has a Redirection entry alongside a proxy_host requesting LE.
+  conf += `    location /.well-known/acme-challenge/ {\n        alias /etc/nginx/acme-challenge/;\n        allow all;\n        auth_basic off;\n    }\n\n`;
+
   const redirect = host.preservePath ? `${target}$request_uri` : target;
   conf += `    location / {\n        return 301 ${redirect};\n    }\n`;
   conf += `}\n`;
@@ -506,7 +511,10 @@ function generateDeadHostConfig(host: DeadHost): string {
   let conf = `# 404 Host ${host.id} - ${domains}\nserver {\n`;
   conf += `    listen 80;\n    listen [::]:80;\n`;
   conf += `    server_name ${domains};\n`;
-  conf += `    return 404;\n`;
+  // Same rationale as Redirection: serve ACME even on a dead host so its domain can still
+  // be certified (useful when a domain is temporarily parked but must keep a valid cert).
+  conf += `    location /.well-known/acme-challenge/ {\n        alias /etc/nginx/acme-challenge/;\n        allow all;\n        auth_basic off;\n    }\n`;
+  conf += `    location / { return 404; }\n`;
   conf += `}\n`;
 
   return conf;
