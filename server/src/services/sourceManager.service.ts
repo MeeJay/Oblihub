@@ -68,7 +68,7 @@ async function syncFromDisk(stackId: number, composeProject: string): Promise<vo
 
   // Explicit compose_path (Trame-style: `stack/docker-compose.yml`) wins over the root-only
   // legacy scan. Falls back to the candidate list when unset so pre-Trame stacks keep working.
-  const stackRow = await db('managed_stacks').where({ id: stackId }).select('compose_path').first();
+  const stackRow = await db('managed_stacks').where({ id: stackId }).select('compose_path', 'env_content', 'env_content_enc').first();
   const explicitPath = (stackRow?.compose_path as string) || null;
   const composeCandidates = explicitPath ? [explicitPath] : COMPOSE_CANDIDATES;
 
@@ -82,10 +82,35 @@ async function syncFromDisk(stackId: number, composeProject: string): Promise<vo
   // .env lookup follows the compose file — if compose is at `stack/`, look for `stack/.env`
   // first, then fall back to the repo-root `.env` so pre-Trame stacks keep working.
   const envDir = explicitPath ? path.dirname(path.join(dir, explicitPath)) : dir;
+  let foundRealEnv = false;
   for (const candidate of [path.join(envDir, '.env'), path.join(dir, '.env')]) {
     if (fs.existsSync(candidate)) {
       update.env_content = fs.readFileSync(candidate, 'utf8');
+      foundRealEnv = true;
       break;
+    }
+  }
+  // Fallback preload from a committed template (`.env.example` / `.env.dist` / `.env.sample`
+  // / `.env.template`) ONLY when we didn't find a real .env AND the stack has never had any
+  // env content saved yet. This handles the Trame-style flow where the operator clones a repo
+  // whose `.env` is gitignored — instead of forcing them to copy-paste the template manually,
+  // we drop it into the editor pre-filled. Re-clones of an already-configured stack skip this
+  // because `hasExistingEnv` is true, so their saved secrets are never clobbered by placeholders.
+  if (!foundRealEnv) {
+    const hasExistingEnv = !!(stackRow?.env_content_enc || stackRow?.env_content);
+    if (!hasExistingEnv) {
+      const templateNames = ['.env.example', '.env.dist', '.env.sample', '.env.template'];
+      outer: for (const tmpl of templateNames) {
+        for (const baseDir of [envDir, dir]) {
+          const p = path.join(baseDir, tmpl);
+          if (fs.existsSync(p)) {
+            update.env_content = fs.readFileSync(p, 'utf8');
+            emitProgress(composeProject, `== Preloaded env from ${path.relative(dir, p).replace(/\\/g, '/')} — replace placeholder values before deploying ==`);
+            logger.info({ stackId, template: tmpl }, 'Preloaded env from template');
+            break outer;
+          }
+        }
+      }
     }
   }
 

@@ -99,16 +99,24 @@ export function ProxyHostsPage() {
         editing.http2Support = true;
       }
       if (editId) {
-        await proxyApi.updateHost(editId, editing);
+        // Optimistic merge — the server returns the fresh row, splice it back into `hosts` so
+        // reopening the editor immediately (before `load()` finishes) sees the new values. The
+        // previous `load()` was fire-and-forget, causing a race where startEdit copied a stale
+        // entry from the not-yet-refreshed list.
+        const updated = await proxyApi.updateHost(editId, editing);
+        setHosts(prev => prev.map(h => h.id === editId ? updated : h));
         toast.success('Proxy host updated');
       } else {
-        await proxyApi.createHost(editing);
+        const created = await proxyApi.createHost(editing);
+        setHosts(prev => [...prev, created]);
         toast.success('Proxy host created');
       }
       setEditing(null);
       setEditId(null);
       setCertMode('none');
-      load();
+      // Full reload (certs, access lists, containers) — awaited so any subsequent user action
+      // sees the fresh state, not a version between two ticks.
+      await load();
     } catch { toast.error('Failed to save proxy host'); }
   };
 
@@ -116,16 +124,20 @@ export function ProxyHostsPage() {
     if (!confirm('Delete this proxy host?')) return;
     try {
       await proxyApi.deleteHost(id);
+      // Optimistic removal so the row disappears from the list even if load() races.
+      setHosts(prev => prev.filter(h => h.id !== id));
       toast.success('Proxy host deleted');
-      load();
+      await load();
     } catch { toast.error('Failed to delete'); }
   };
 
   const handleToggle = async (id: number) => {
     try {
       const result = await proxyApi.toggleHost(id);
+      // Reflect the toggle immediately in the list to keep hover/click UX consistent.
+      setHosts(prev => prev.map(h => h.id === id ? { ...h, enabled: result.enabled } : h));
       toast.success(result.enabled ? 'Enabled' : 'Disabled');
-      load();
+      await load();
     } catch { toast.error('Failed to toggle'); }
   };
 
@@ -138,6 +150,22 @@ export function ProxyHostsPage() {
         <div className="flex gap-2">
           <button onClick={startCreate} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover">
             <Plus size={14} /> Add Proxy Host
+          </button>
+          <button
+            onClick={async () => {
+              if (!confirm('Reconcile the proxy network across all deployed managed stacks?\n\nUse this after an Oblihub update if front-ends went dark because the shared network was recreated. Idempotent — safe to click anytime.')) return;
+              try {
+                await proxyApi.restoreNetworks();
+                toast.success('Proxy network membership restored');
+                await load();
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : 'Restore failed');
+              }
+            }}
+            title="Re-attach every managed-stack service that a proxy host targets. Recovery button for the case where the shared proxy network got recreated."
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover"
+          >
+            Restore networks
           </button>
           <button onClick={load} className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover">
             <RefreshCw size={14} />

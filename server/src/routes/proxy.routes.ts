@@ -25,6 +25,7 @@ router.post('/hosts', requirePermission('proxy.manage'), proxyController.createP
 router.put('/hosts/:id', requirePermission('proxy.manage'), proxyController.updateProxyHost);
 router.delete('/hosts/:id', requirePermission('proxy.manage'), proxyController.deleteProxyHost);
 router.post('/hosts/:id/toggle', requirePermission('proxy.manage'), proxyController.toggleProxyHost);
+router.post('/restore-networks', requirePermission('proxy.manage'), proxyController.restoreProxyNetworks);
 
 // Certificates
 router.get('/certificates', requirePermission('proxy.certificates'), proxyController.listCertificates);

@@ -126,13 +126,24 @@ services:
       retries: 3
 
 networks:
-  # Shared bridge network for the Oblihub proxy + every managed stack it deploys. Other
-  # stacks reference this from their own compose as:
+  # Shared bridge network for the Oblihub proxy + every managed stack it deploys.
+  #
+  # Marked EXTERNAL so Compose never touches it: without `external: true` any subsequent
+  # `docker compose up -d` on Oblihub (e.g. an image bump) can decide to recreate the network,
+  # which detaches every container from every OTHER stack that had joined it. All front-ends
+  # served via oblihub-proxy would go dark until manually re-attached.
+  #
+  # Bootstrap is handled by the server on boot via `ensureProxyNetwork` (docker.service.ts) —
+  # `docker network inspect proxy || docker network create proxy`. So a fresh install works
+  # without any pre-step; Compose simply refuses to start if the network is missing, at which
+  # point the operator either runs `docker network create proxy` or lets the server create it
+  # (start server manually first, then start proxy).
+  #
+  # Other stacks reference this from their own compose as:
   #   networks: { proxy: { external: true, name: proxy } }
-  # The server boot also runs `docker network inspect proxy || docker network create proxy`
-  # as a failsafe so the network always exists even if compose `down` removed it.
   proxy:
     name: proxy
+    external: true
 
 volumes:
   postgres_data:

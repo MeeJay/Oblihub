@@ -85,6 +85,21 @@ export const proxyController = {
     }
   },
 
+  /**
+   * Manual "Restore proxy connections" — awaits the same reconciliation the internal handlers
+   * call fire-and-forget. Meant for the recovery flow after the proxy network gets recreated
+   * (e.g. `docker compose up -d` on Oblihub recreates the network when config drifted), which
+   * detaches all foreign-stack containers. Reattaches everything based on the current
+   * proxy_hosts config. Idempotent — safe to click anytime.
+   */
+  async restoreProxyNetworks(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { composeService } = await import('../services/compose.service');
+      await composeService.refreshProxyNetworksForAllStacks();
+      res.json({ success: true, message: 'Proxy network membership reconciled across all deployed stacks' });
+    } catch (err) { next(err); }
+  },
+
   async toggleProxyHost(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = parseInt(req.params.id, 10);

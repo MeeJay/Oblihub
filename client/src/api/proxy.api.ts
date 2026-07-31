@@ -15,6 +15,9 @@ export const proxyApi = {
     const res = await apiClient.post<ApiResponse<ProxyHost>>('/proxy/hosts', data);
     return res.data.data!;
   },
+  async restoreNetworks(): Promise<void> {
+    await apiClient.post('/proxy/restore-networks');
+  },
   async updateHost(id: number, data: Partial<ProxyHost>): Promise<ProxyHost> {
     const res = await apiClient.put<ApiResponse<ProxyHost>>(`/proxy/hosts/${id}`, data);
     return res.data.data!;

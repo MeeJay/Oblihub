@@ -33,21 +33,47 @@ function getStackDir(projectName: string): string {
 }
 
 export const composeService = {
-  /** Write compose + env files to disk */
-  writeStackFiles(projectName: string, composeContent: string, envContent: string | null): string {
+  /**
+   * Write compose + env files to disk. Aware of `compose_path`: when the managed_stack has a
+   * subpath (e.g. `stack/docker-compose.yml`), the compose file, the `.env`, and any override
+   * are written **inside that subdir** — not at the stackDir root. Getting this wrong was the
+   * cause of Docker Compose reporting "POSTGRES_PASSWORD not set" despite the operator having
+   * filled the env editor: the CLI's cwd is `stackDir/stack/`, so it looked for `.env` there,
+   * but we were writing to `stackDir/.env` which it never sees.
+   *
+   * Legacy stacks (compose_path null) keep the previous root-only behavior.
+   */
+  async writeStackFiles(projectName: string, composeContent: string, envContent: string | null): Promise<string> {
     ensureStacksDir();
     const stackDir = getStackDir(projectName);
     if (!fs.existsSync(stackDir)) {
       fs.mkdirSync(stackDir, { recursive: true });
     }
-    fs.writeFileSync(path.join(stackDir, 'docker-compose.yml'), composeContent, 'utf8');
+    // Resolve the actual dir the compose CLI will run in — same logic as runCompose so both
+    // sides always agree on where `.env` and the compose file live.
+    const composePath = await this._resolveComposePath(projectName);
+    const targetDir = composePath ? path.join(stackDir, path.dirname(composePath)) : stackDir;
+    const composeFile = composePath ? path.basename(composePath) : 'docker-compose.yml';
+    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(path.join(targetDir, composeFile), composeContent, 'utf8');
+    const envPath = path.join(targetDir, '.env');
     if (envContent) {
-      fs.writeFileSync(path.join(stackDir, '.env'), envContent, 'utf8');
-    } else {
-      const envPath = path.join(stackDir, '.env');
-      if (fs.existsSync(envPath)) fs.unlinkSync(envPath);
+      fs.writeFileSync(envPath, envContent, 'utf8');
+      // Chmod 0o600 — the .env decrypts operator secrets to disk for the compose subprocess.
+      // Best-effort: the mount may not honor mode changes (windowsfilesystems, etc.).
+      try { fs.chmodSync(envPath, 0o600); } catch { /* ignore */ }
+    } else if (fs.existsSync(envPath)) {
+      fs.unlinkSync(envPath);
     }
     return stackDir;
+  },
+
+  /** Look up compose_path from DB — null when the stack is root-based or unknown. */
+  async _resolveComposePath(projectName: string): Promise<string | null> {
+    try {
+      const row = await db('managed_stacks').where({ compose_project: projectName }).select('compose_path').first();
+      return (row?.compose_path as string) || null;
+    } catch { return null; }
   },
 
   /** Remove stack files from disk */
@@ -416,7 +442,7 @@ export const composeService = {
 
   /** Deploy a stack (up -d) — no timeout, user cancels via UI. */
   async deploy(projectName: string, composeContent: string, envContent: string | null, engineId: number | null = null): Promise<ComposeResult> {
-    this.writeStackFiles(projectName, composeContent, envContent);
+    await this.writeStackFiles(projectName, composeContent, envContent);
     // Make sure the shared `proxy` network exists on the target engine BEFORE compose up — if
     // the user's compose declares `networks: proxy: external: true` (the manual opt-in), compose
     // would error out without it. Idempotent: no-op if the network already exists.
@@ -448,7 +474,13 @@ export const composeService = {
    * advanced setup), we skip the override entirely and let them own the wiring.
    */
   async _writeProxyOverride(projectName: string, composeContent: string): Promise<void> {
-    const stackDir = getStackDir(projectName);
+    const baseStackDir = getStackDir(projectName);
+    // Override must live NEXT to the compose file, not at the repo root — Docker Compose only
+    // auto-discovers `docker-compose.override.yml` in the same directory as the file passed to
+    // `-f` (or its cwd). Writing to the root when compose_path is set was a silent no-op — the
+    // proxy network wiring never got applied on Trame-style stacks.
+    const composePath = await this._resolveComposePath(projectName);
+    const stackDir = composePath ? path.join(baseStackDir, path.dirname(composePath)) : baseStackDir;
     const overridePath = path.join(stackDir, 'docker-compose.override.yml');
     try {
       const targets = await this._detectProxiedServices(projectName, composeContent);
@@ -598,7 +630,7 @@ export const composeService = {
   /** Redeploy: pull + up. When build_enabled is set on the stack, adds `--build` and skips the
    *  pull step (build-from-source stacks have no registry to pull from for build-only services). */
   async redeploy(projectName: string, composeContent: string, envContent: string | null, engineId: number | null = null): Promise<ComposeResult> {
-    this.writeStackFiles(projectName, composeContent, envContent);
+    await this.writeStackFiles(projectName, composeContent, envContent);
     const upArgs = await this._buildAwareUpArgs(projectName);
     // Skip pull for build-enabled stacks — pull would try to fetch build-only services from
     // the registry and fail. Pure-image stacks still get the pull → up cycle unchanged.
@@ -648,7 +680,7 @@ export const composeService = {
     const hostStacksDir = stacksMount.Source;
 
     // Write new compose content to /data/stacks/<project>/ (accessible via the volume host path).
-    this.writeStackFiles(projectName, composeContent, envContent);
+    await this.writeStackFiles(projectName, composeContent, envContent);
 
     // Ensure docker:cli is available before we hand off.
     try { await docker.getImage('docker:cli').inspect(); }
