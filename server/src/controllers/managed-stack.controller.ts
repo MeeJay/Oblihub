@@ -60,7 +60,7 @@ export const managedStackController = {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled. Set ALLOW_STACK=true to enable.');
       const session = req.session as { userId?: number; role?: string };
-      const { name, composeContent, envContent, teamId, engineId, registryCredentials } = req.body;
+      const { name, composeContent, envContent, teamId, engineId, registryCredentials, gitUsername, gitToken, composePath, buildEnabled, pollGitIntervalS } = req.body;
       if (!name || !composeContent) throw new AppError(400, 'Name and compose content are required');
 
       // Non-admin must have a team to create a stack
@@ -74,7 +74,7 @@ export const managedStackController = {
         const isInTeam = userTeams.some(t => t.id === targetTeamId);
         if (!isInTeam) throw new AppError(403, 'You are not a member of this team');
 
-        const stack = await managedStackService.create({ name, composeContent, envContent, engineId, registryCredentials });
+        const stack = await managedStackService.create({ name, composeContent, envContent, engineId, registryCredentials, gitUsername, gitToken, composePath, buildEnabled, pollGitIntervalS });
 
         // Ensure the stack exists in the stacks table and assign to team.
         // Scope the lookup + pre-create by (compose_project, engine_id) — a project name is
@@ -97,7 +97,7 @@ export const managedStackController = {
         return;
       }
 
-      const stack = await managedStackService.create({ name, composeContent, envContent, engineId, registryCredentials });
+      const stack = await managedStackService.create({ name, composeContent, envContent, engineId, registryCredentials, gitUsername, gitToken, composePath, buildEnabled, pollGitIntervalS });
       res.json({ success: true, data: stack });
     } catch (err) { next(err); }
   },
@@ -106,8 +106,8 @@ export const managedStackController = {
     try {
       if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
       const id = parseInt(req.params.id, 10);
-      const { name, composeContent, envContent, engineId, registryCredentials } = req.body;
-      const stack = await managedStackService.update(id, { name, composeContent, envContent, engineId, registryCredentials });
+      const { name, composeContent, envContent, engineId, registryCredentials, gitUsername, gitToken, composePath, buildEnabled, pollGitIntervalS } = req.body;
+      const stack = await managedStackService.update(id, { name, composeContent, envContent, engineId, registryCredentials, gitUsername, gitToken, composePath, buildEnabled, pollGitIntervalS });
       if (!stack) throw new AppError(404, 'Managed stack not found');
       res.json({ success: true, data: stack });
     } catch (err) { next(err); }
@@ -169,6 +169,7 @@ export const managedStackController = {
       res.json({ success: true, message: 'Deploy started' });
 
       // Run in background
+      const sessionForDeploy = req.session as { userId?: number };
       (async () => {
         try {
           const result = await composeService.deploy(stack.composeProject, stack.composeContent, stack.envContent, stack.engineId);
@@ -180,10 +181,27 @@ export const managedStackController = {
             await managedStackService.setStatus(id, 'deployed', output || null);
             logger.info({ projectName: stack.composeProject }, 'Stack deployed');
           }
+          await managedStackService.recordDeployHistory({
+            managedStackId: id,
+            sourceType: stack.sourceType,
+            gitUrl: stack.gitUrl,
+            gitBranch: stack.gitBranch,
+            gitRef: stack.gitRef,
+            composePath: stack.composePath,
+            buildEnabled: stack.buildEnabled,
+            success: result.exitCode === 0,
+            notes: 'Manual deploy',
+            deployedByUserId: sessionForDeploy.userId ?? null,
+          });
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Unknown error';
           await managedStackService.setStatus(id, 'error', msg);
           logger.error({ projectName: stack.composeProject, err }, 'Compose deploy error');
+          await managedStackService.recordDeployHistory({
+            managedStackId: id, sourceType: stack.sourceType, gitUrl: stack.gitUrl, gitBranch: stack.gitBranch,
+            gitRef: stack.gitRef, composePath: stack.composePath, buildEnabled: stack.buildEnabled,
+            success: false, notes: `Failed: ${msg}`, deployedByUserId: sessionForDeploy.userId ?? null,
+          });
         }
       })();
     } catch (err) { next(err); }
@@ -290,6 +308,7 @@ export const managedStackController = {
 
       res.json({ success: true, message: 'Redeploy started' });
 
+      const sessionForRedeploy = req.session as { userId?: number };
       (async () => {
         try {
           const result = await composeService.redeploy(stack.composeProject, stack.composeContent, stack.envContent, stack.engineId);
@@ -299,9 +318,20 @@ export const managedStackController = {
           } else {
             await managedStackService.setStatus(id, 'deployed', output || null);
           }
+          await managedStackService.recordDeployHistory({
+            managedStackId: id, sourceType: stack.sourceType, gitUrl: stack.gitUrl, gitBranch: stack.gitBranch,
+            gitRef: stack.gitRef, composePath: stack.composePath, buildEnabled: stack.buildEnabled,
+            success: result.exitCode === 0, notes: 'Manual redeploy',
+            deployedByUserId: sessionForRedeploy.userId ?? null,
+          });
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Unknown error';
           await managedStackService.setStatus(id, 'error', msg);
+          await managedStackService.recordDeployHistory({
+            managedStackId: id, sourceType: stack.sourceType, gitUrl: stack.gitUrl, gitBranch: stack.gitBranch,
+            gitRef: stack.gitRef, composePath: stack.composePath, buildEnabled: stack.buildEnabled,
+            success: false, notes: `Failed: ${msg}`, deployedByUserId: sessionForRedeploy.userId ?? null,
+          });
         }
       })();
     } catch (err) { next(err); }
@@ -395,15 +425,69 @@ export const managedStackController = {
     } catch (err) { next(err); }
   },
 
-  /** Configure / replace the git source for this stack. */
+  /** Configure / replace the git source for this stack. Body accepts optional deploy-token
+   *  auth (`gitUsername` + `gitToken`) and `composePath` (compose file at a subpath in the
+   *  repo, e.g. `stack/docker-compose.yml`). `gitToken`: omit to keep the stored token,
+   *  send an empty string to clear it, send a non-empty string to replace it. */
   async setGit(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = parseInt(req.params.id, 10);
-      const { gitUrl, gitBranch } = req.body as { gitUrl?: string; gitBranch?: string };
+      const { gitUrl, gitBranch, gitUsername, gitToken, composePath } = req.body as {
+        gitUrl?: string; gitBranch?: string; gitUsername?: string | null; gitToken?: string | null; composePath?: string | null;
+      };
       if (!gitUrl) throw new AppError(400, 'gitUrl required');
-      await sourceManagerService.setGitSource(id, gitUrl, gitBranch || 'main');
+      await sourceManagerService.setGitSource(id, gitUrl, gitBranch || 'main', {
+        username: gitUsername,
+        token: gitToken,
+        composePath,
+      });
       const stack = await managedStackService.getById(id);
       res.json({ success: true, data: stack });
+    } catch (err) { next(err); }
+  },
+
+  /** Deploy history for a managed stack — one row per past deploy, for the rollback UI. */
+  async getDeployHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const limit = Math.min(parseInt((req.query.limit as string) || '50', 10) || 50, 200);
+      const history = await managedStackService.listDeployHistory(id, limit);
+      res.json({ success: true, data: history });
+    } catch (err) { next(err); }
+  },
+
+  /** Rollback: check out a prior git_ref (from a history entry) and redeploy with --build if
+   *  the stack has build_enabled. No-op for non-git sources. */
+  async rollback(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!config.allowStack) throw new AppError(403, 'Stack management is disabled');
+      const id = parseInt(req.params.id, 10);
+      const { gitRef } = req.body as { gitRef?: string };
+      if (!gitRef) throw new AppError(400, 'gitRef required');
+      const stack = await managedStackService.getById(id);
+      if (!stack) throw new AppError(404, 'Stack not found');
+      if (stack.sourceType !== 'git' || !stack.gitUrl) throw new AppError(400, 'Stack is not git-sourced — rollback only supports git stacks');
+
+      const { sourceManagerService } = await import('../services/sourceManager.service');
+      const { composeService } = await import('../services/compose.service');
+      await sourceManagerService.checkoutGitRef(id, gitRef);
+      const refreshed = await managedStackService.getById(id);
+      if (!refreshed) throw new AppError(404, 'Stack disappeared during rollback');
+      const result = await composeService.redeploy(refreshed.composeProject, refreshed.composeContent, refreshed.envContent, refreshed.engineId);
+      const session = req.session as { userId?: number };
+      await managedStackService.recordDeployHistory({
+        managedStackId: id,
+        sourceType: refreshed.sourceType,
+        gitUrl: refreshed.gitUrl,
+        gitBranch: refreshed.gitBranch,
+        gitRef: refreshed.gitRef,
+        composePath: refreshed.composePath,
+        buildEnabled: refreshed.buildEnabled,
+        success: result.exitCode === 0,
+        notes: `Rollback to ${gitRef}`,
+        deployedByUserId: session.userId ?? null,
+      });
+      res.json({ success: true, data: { stack: await managedStackService.getById(id), result } });
     } catch (err) { next(err); }
   },
 

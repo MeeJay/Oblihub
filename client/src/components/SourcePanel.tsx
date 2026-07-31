@@ -19,6 +19,11 @@ export function SourcePanel({ stack, onStackUpdated }: { stack: ManagedStack; on
   const [sourceType, setSourceType] = useState(stack.sourceType);
   const [gitUrl, setGitUrl] = useState(stack.gitUrl || '');
   const [gitBranch, setGitBranch] = useState(stack.gitBranch || 'main');
+  const [gitUsername, setGitUsername] = useState(stack.gitUsername || '');
+  const [gitToken, setGitToken] = useState('');
+  const [composePath, setComposePath] = useState(stack.composePath || '');
+  const [buildEnabled, setBuildEnabled] = useState(stack.buildEnabled);
+  const [pollGitIntervalS, setPollGitIntervalS] = useState(stack.pollGitIntervalS);
   const [busy, setBusy] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
   const [files, setFiles] = useState<{ path: string; size: number; isDir: boolean }[]>([]);
@@ -29,7 +34,32 @@ export function SourcePanel({ stack, onStackUpdated }: { stack: ManagedStack; on
     setSourceType(stack.sourceType);
     setGitUrl(stack.gitUrl || '');
     setGitBranch(stack.gitBranch || 'main');
-  }, [stack.id, stack.sourceType, stack.gitUrl, stack.gitBranch]);
+    setGitUsername(stack.gitUsername || '');
+    setComposePath(stack.composePath || '');
+    setBuildEnabled(stack.buildEnabled);
+    setPollGitIntervalS(stack.pollGitIntervalS);
+    // Never rehydrate the token from the server — it's write-only and stored encrypted.
+    setGitToken('');
+  }, [stack.id, stack.sourceType, stack.gitUrl, stack.gitBranch, stack.gitUsername, stack.composePath, stack.buildEnabled, stack.pollGitIntervalS]);
+
+  /** Persist build_enabled + poll_git_interval_s via the standard managed-stack update. Separate
+   *  from the git source flow (setGit) so the operator can flip the build toggle without needing
+   *  to re-clone the repo. */
+  const handleSaveBuildSettings = async () => {
+    setBusy(true);
+    try {
+      const updated = await managedStacksApi.update(stack.id, {
+        buildEnabled,
+        pollGitIntervalS,
+      });
+      toast.success('Build settings saved');
+      onStackUpdated(updated);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Save failed');
+    } finally { setBusy(false); }
+  };
+
+  const buildDirty = buildEnabled !== stack.buildEnabled || pollGitIntervalS !== stack.pollGitIntervalS;
 
   const handleZipChosen = async (file: File) => {
     if (!file.name.toLowerCase().endsWith('.zip')) {
@@ -55,7 +85,15 @@ export function SourcePanel({ stack, onStackUpdated }: { stack: ManagedStack; on
     if (!gitUrl.trim()) { toast.error('Git URL is required'); return; }
     setBusy(true);
     try {
-      const updated = await managedStacksApi.setGitSource(stack.id, gitUrl.trim(), gitBranch.trim() || 'main');
+      const updated = await managedStacksApi.setGitSource(stack.id, {
+        gitUrl: gitUrl.trim(),
+        gitBranch: gitBranch.trim() || 'main',
+        gitUsername: gitUsername.trim() || null,
+        // Empty token when the operator already has one stored = "keep existing". Only send
+        // the token value when they typed a new one to (re)set it.
+        gitToken: gitToken ? gitToken : (stack.hasGitToken ? undefined : null),
+        composePath: composePath.trim() || null,
+      });
       toast.success('Repo cloned');
       onStackUpdated(updated);
       if (showFiles) void loadFiles();
@@ -180,6 +218,34 @@ export function SourcePanel({ stack, onStackUpdated }: { stack: ManagedStack; on
                 className="rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
+            {/* Optional private-repo auth (Gitea deploy token, GitHub PAT, GitLab access token).
+                Token stored AES-GCM at rest, never returned by the API. Leave blank to keep the
+                stored value when re-cloning. */}
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={gitUsername}
+                onChange={e => setGitUsername(e.target.value)}
+                placeholder="git username (private repos only)"
+                autoComplete="off"
+                className="rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <input
+                type="password"
+                value={gitToken}
+                onChange={e => setGitToken(e.target.value)}
+                placeholder={stack.hasGitToken ? '••••••• (unchanged — type to replace)' : 'git deploy token (private repos only)'}
+                autoComplete="new-password"
+                className="rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+            <input
+              type="text"
+              value={composePath}
+              onChange={e => setComposePath(e.target.value)}
+              placeholder="compose path in repo (leave blank for root — e.g. stack/docker-compose.yml)"
+              className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+            />
             <div className="flex items-center gap-2">
               <button
                 onClick={() => void handleGitSet()}
@@ -198,6 +264,51 @@ export function SourcePanel({ stack, onStackUpdated }: { stack: ManagedStack; on
                 </button>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Build + poll settings — visible for zip/git sources. Build applies to both (Dockerfiles
+            in the source get rebuilt). Poll only applies to git. Save is separate from the git
+            source flow so toggling doesn't re-clone. */}
+        {sourceType !== 'compose-only' && (
+          <div className="border-t border-border pt-3 space-y-2">
+            <label className="flex items-center gap-2 text-xs text-text-secondary">
+              <input
+                type="checkbox"
+                checked={buildEnabled}
+                onChange={e => setBuildEnabled(e.target.checked)}
+                className="rounded border-border"
+              />
+              <span>
+                <strong>Build on deploy</strong> — run{' '}
+                <code className="bg-bg-tertiary px-1 rounded">docker compose up -d --build</code>{' '}
+                so Dockerfiles in the source are rebuilt each time (skips the registry pull step).
+              </span>
+            </label>
+            {sourceType === 'git' && (
+              <div className="flex items-center gap-2 text-xs text-text-secondary">
+                <label className="whitespace-nowrap">
+                  <strong>Auto-pull</strong> git every
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={pollGitIntervalS}
+                  onChange={e => setPollGitIntervalS(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  className="w-24 rounded border border-border bg-bg-tertiary px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <span>seconds (0 = disabled). Poll-only, no ingress webhook — works behind NAT.</span>
+              </div>
+            )}
+            {buildDirty && (
+              <button
+                onClick={() => void handleSaveBuildSettings()}
+                disabled={busy}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50"
+              >
+                Save build settings
+              </button>
+            )}
           </div>
         )}
 

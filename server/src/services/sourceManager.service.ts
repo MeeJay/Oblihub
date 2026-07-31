@@ -66,16 +66,27 @@ async function syncFromDisk(stackId: number, composeProject: string): Promise<vo
   const dir = stackDir(composeProject);
   const update: Record<string, unknown> = { updated_at: new Date() };
 
-  for (const name of COMPOSE_CANDIDATES) {
+  // Explicit compose_path (Trame-style: `stack/docker-compose.yml`) wins over the root-only
+  // legacy scan. Falls back to the candidate list when unset so pre-Trame stacks keep working.
+  const stackRow = await db('managed_stacks').where({ id: stackId }).select('compose_path').first();
+  const explicitPath = (stackRow?.compose_path as string) || null;
+  const composeCandidates = explicitPath ? [explicitPath] : COMPOSE_CANDIDATES;
+
+  for (const name of composeCandidates) {
     const p = path.join(dir, name);
     if (fs.existsSync(p)) {
       update.compose_content = fs.readFileSync(p, 'utf8');
       break;
     }
   }
-  const envPath = path.join(dir, '.env');
-  if (fs.existsSync(envPath)) {
-    update.env_content = fs.readFileSync(envPath, 'utf8');
+  // .env lookup follows the compose file — if compose is at `stack/`, look for `stack/.env`
+  // first, then fall back to the repo-root `.env` so pre-Trame stacks keep working.
+  const envDir = explicitPath ? path.dirname(path.join(dir, explicitPath)) : dir;
+  for (const candidate of [path.join(envDir, '.env'), path.join(dir, '.env')]) {
+    if (fs.existsSync(candidate)) {
+      update.env_content = fs.readFileSync(candidate, 'utf8');
+      break;
+    }
   }
 
   if (update.compose_content !== undefined || update.env_content !== undefined) {
@@ -182,8 +193,27 @@ export const sourceManagerService = {
    * Set or change the git source for this stack: clones into the stack dir on first call,
    * resets to the requested branch on subsequent calls. Preserves the operator's .env across
    * the clone wipe.
+   *
+   * Auth: when the stack has git_username + git_token_enc set (e.g. Gitea deploy token, GitHub
+   * PAT), the URL is rewritten `https://<user>:<token>@host/path.git` for this single git
+   * invocation. Never touched globally, never logged, never persisted on disk (git remote
+   * still stores the ORIGINAL URL, so subsequent gitPull calls re-inject the token fresh).
    */
-  async setGitSource(stackId: number, gitUrl: string, branch: string): Promise<void> {
+  async setGitSource(
+    stackId: number,
+    gitUrl: string,
+    branch: string,
+    opts: { username?: string | null; token?: string | null; composePath?: string | null } = {},
+  ): Promise<void> {
+    // Persist auth + compose_path BEFORE the clone so _buildAuthenticatedUrl picks them up.
+    // token: undefined = keep existing, '' = clear, non-empty = store encrypted.
+    if (opts.username !== undefined || opts.token !== undefined || opts.composePath !== undefined) {
+      await managedStackService.update(stackId, {
+        gitUsername: opts.username,
+        gitToken: opts.token,
+        composePath: opts.composePath,
+      });
+    }
     const stack = await managedStackService.getById(stackId);
     if (!stack) throw new AppError(404, 'Stack not found');
     if (!gitUrl.trim()) throw new AppError(400, 'gitUrl required');
@@ -199,14 +229,24 @@ export const sourceManagerService = {
     const tmpClone = path.join(dir, '.oblihub_clone_tmp');
     if (fs.existsSync(tmpClone)) fs.rmSync(tmpClone, { recursive: true, force: true });
     try {
+      const authenticatedUrl = await this._buildAuthenticatedUrl(stackId, gitUrl);
       const { stdout, stderr } = await execFileP('git', [
-        'clone', '--depth', '1', '--branch', branch, gitUrl, tmpClone,
+        // Reset origin URL to the un-authenticated form immediately after clone so the token
+        // isn't stored on disk in .git/config. (--config core.askpass=/bin/true would prompt-fail
+        // instead of hanging if the URL didn't already carry credentials.)
+        '-c', 'credential.helper=', '-c', 'core.askpass=echo',
+        'clone', '--depth', '1', '--branch', branch, authenticatedUrl, tmpClone,
       ], { timeout: 5 * 60 * 1000 });
+      // Immediately scrub the token out of .git/config by resetting origin.
+      try {
+        await execFileP('git', ['-C', tmpClone, 'remote', 'set-url', 'origin', gitUrl], { timeout: 5000 });
+      } catch { /* best-effort scrub — the token would only be readable by the container's root */ }
       if (stdout) emitProgress(stack.composeProject, stdout);
-      if (stderr) emitProgress(stack.composeProject, stderr);
+      if (stderr) emitProgress(stack.composeProject, this._scrubTokenFromLog(stderr, gitUrl));
     } catch (err) {
       fs.rmSync(tmpClone, { recursive: true, force: true });
-      throw new AppError(400, `git clone failed: ${err instanceof Error ? err.message : String(err)}`);
+      const scrubbed = err instanceof Error ? this._scrubTokenFromLog(err.message, gitUrl) : String(err);
+      throw new AppError(400, `git clone failed: ${scrubbed}`);
     }
 
     // Move tmp contents up, respecting preserved files
@@ -254,13 +294,27 @@ export const sourceManagerService = {
 
     emitProgress(stack.composeProject, `== git pull (${stack.gitBranch}) ==`);
     try {
-      const { stdout, stderr } = await execFileP('git', [
-        '-C', dir, 'pull', '--ff-only', 'origin', stack.gitBranch || 'main',
-      ], { timeout: 5 * 60 * 1000 });
-      if (stdout) emitProgress(stack.composeProject, stdout);
-      if (stderr) emitProgress(stack.composeProject, stderr);
+      // Re-inject the auth token as a per-call remote override. `git pull -c http.extraheader=...`
+      // would only work for the fetch step; using `set-url` before + reset after is simpler and
+      // works for both HTTPS Basic (Gitea deploy tokens) and PAT auth.
+      const authUrl = await this._buildAuthenticatedUrl(stackId, stack.gitUrl);
+      let restored = false;
+      try {
+        await execFileP('git', ['-C', dir, 'remote', 'set-url', 'origin', authUrl], { timeout: 5000 });
+        const { stdout, stderr } = await execFileP('git', [
+          '-C', dir, '-c', 'credential.helper=', '-c', 'core.askpass=echo',
+          'pull', '--ff-only', 'origin', stack.gitBranch || 'main',
+        ], { timeout: 5 * 60 * 1000 });
+        if (stdout) emitProgress(stack.composeProject, stdout);
+        if (stderr) emitProgress(stack.composeProject, this._scrubTokenFromLog(stderr, stack.gitUrl));
+      } finally {
+        // Scrub the token back out no matter what happens above.
+        try { await execFileP('git', ['-C', dir, 'remote', 'set-url', 'origin', stack.gitUrl], { timeout: 5000 }); restored = true; } catch { /* ignore */ }
+      }
+      if (!restored) logger.warn({ stackId }, 'Failed to scrub auth token from git remote after pull — token still in .git/config');
     } catch (err) {
-      throw new AppError(400, `git pull failed: ${err instanceof Error ? err.message : String(err)}`);
+      const scrubbed = err instanceof Error ? this._scrubTokenFromLog(err.message, stack.gitUrl) : String(err);
+      throw new AppError(400, `git pull failed: ${scrubbed}`);
     }
 
     const ref = await this._resolveGitRef(dir);
@@ -270,12 +324,113 @@ export const sourceManagerService = {
     logger.info({ stackId, ref }, 'Git source pulled');
   },
 
+  /**
+   * Roll a git-sourced stack back (or forward) to a specific ref — commit SHA, tag or
+   * branch name. Uses `git fetch --depth=1 origin <ref>` so we don't need a full history
+   * (the initial clone was shallow) and `checkout FETCH_HEAD` so the working tree lands
+   * on the requested state without polluting local branches. Records the resolved short
+   * SHA on the row so the deploy history shows what actually got deployed.
+   */
+  async checkoutGitRef(stackId: number, gitRef: string): Promise<void> {
+    const stack = await managedStackService.getById(stackId);
+    if (!stack) throw new AppError(404, 'Stack not found');
+    if (stack.sourceType !== 'git' || !stack.gitUrl) throw new AppError(400, 'Stack is not git-sourced');
+    if (!gitRef.trim()) throw new AppError(400, 'gitRef required');
+
+    const dir = stackDir(stack.composeProject);
+    if (!fs.existsSync(path.join(dir, '.git'))) {
+      logger.warn({ stackId }, '.git missing for rollback — re-cloning at target ref');
+      await this.setGitSource(stackId, stack.gitUrl, gitRef);
+      return;
+    }
+    emitProgress(stack.composeProject, `== git checkout ${gitRef} ==`);
+    try {
+      const authUrl = await this._buildAuthenticatedUrl(stackId, stack.gitUrl);
+      try {
+        await execFileP('git', ['-C', dir, 'remote', 'set-url', 'origin', authUrl], { timeout: 5000 });
+        await execFileP('git', ['-C', dir, '-c', 'credential.helper=', '-c', 'core.askpass=echo',
+          'fetch', '--depth', '1', 'origin', gitRef], { timeout: 5 * 60 * 1000 });
+        await execFileP('git', ['-C', dir, 'checkout', '--force', 'FETCH_HEAD'], { timeout: 60_000 });
+      } finally {
+        try { await execFileP('git', ['-C', dir, 'remote', 'set-url', 'origin', stack.gitUrl], { timeout: 5000 }); } catch { /* ignore */ }
+      }
+    } catch (err) {
+      const scrubbed = err instanceof Error ? this._scrubTokenFromLog(err.message, stack.gitUrl) : String(err);
+      throw new AppError(400, `git checkout ${gitRef} failed: ${scrubbed}`);
+    }
+    const ref = await this._resolveGitRef(dir);
+    await markSynced(stackId, { gitRef: ref });
+    await syncFromDisk(stackId, stack.composeProject);
+    emitProgress(stack.composeProject, `== Checked out ${ref || gitRef} — compose reloaded into editor ==`);
+    logger.info({ stackId, gitRef, ref }, 'Git ref checked out (rollback)');
+  },
+
   /** Best-effort short SHA of HEAD; returns null when not a git repo. */
   async _resolveGitRef(dir: string): Promise<string | null> {
     try {
       const { stdout } = await execFileP('git', ['-C', dir, 'rev-parse', '--short', 'HEAD'], { timeout: 5000 });
       return stdout.trim() || null;
     } catch { return null; }
+  },
+
+  /**
+   * If the stack has git_username + git_token stored, rewrite the URL to
+   * `https://<user>:<token>@host/path`. Only HTTPS URLs are augmented — ssh:// URLs go
+   * unmodified (SSH auth is a separate feature we don't ship yet). Public repos with no
+   * credentials also pass through as-is.
+   */
+  async _buildAuthenticatedUrl(stackId: number, gitUrl: string): Promise<string> {
+    const stack = await managedStackService.getById(stackId);
+    if (!stack?.gitUsername || !stack.hasGitToken) return gitUrl;
+    if (!/^https?:\/\//i.test(gitUrl)) return gitUrl;
+    const token = await managedStackService.getGitToken(stackId);
+    if (!token) return gitUrl;
+    try {
+      const u = new URL(gitUrl);
+      u.username = encodeURIComponent(stack.gitUsername);
+      u.password = encodeURIComponent(token);
+      return u.toString();
+    } catch {
+      // Malformed URL — hand back the original, the git command will surface a proper error.
+      return gitUrl;
+    }
+  },
+
+  /**
+   * Best-effort scrub of the token from any git error/log output before it hits the operator
+   * console. Handles both `https://user:token@host` and the encoded form we inject.
+   */
+  _scrubTokenFromLog(log: string, gitUrl: string): string {
+    try {
+      const u = new URL(gitUrl);
+      // Only rewrite if the original URL was clean — if the operator pasted a URL that already
+      // contained credentials, we don't try to guess the shape.
+      if (u.username || u.password) return log;
+      const hostPart = `${u.protocol}//${u.host}`;
+      return log.replace(new RegExp(`${hostPart.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}[^@\\s]*@`, 'g'), `${hostPart}//***@`);
+    } catch { return log; }
+  },
+
+  /**
+   * Peek at the remote HEAD SHA without cloning — used by the git-poller worker to decide if
+   * a pull+rebuild is needed. Applies auth the same way as clone/pull. Returns null on any
+   * failure (network, auth, unknown branch) so the poller can just try again next tick.
+   */
+  async remoteHeadRef(stackId: number, gitUrl: string, branch: string): Promise<string | null> {
+    try {
+      const authUrl = await this._buildAuthenticatedUrl(stackId, gitUrl);
+      const { stdout } = await execFileP('git', [
+        '-c', 'credential.helper=', '-c', 'core.askpass=echo',
+        'ls-remote', '--exit-code', authUrl, `refs/heads/${branch}`,
+      ], { timeout: 30_000 });
+      // Output shape: "<full-sha>\trefs/heads/<branch>\n"
+      const sha = stdout.split(/\s+/)[0]?.trim();
+      // Match the short-SHA format used by _resolveGitRef so comparisons are apples-to-apples.
+      return sha ? sha.substring(0, 7) : null;
+    } catch (err) {
+      logger.debug({ stackId, err: err instanceof Error ? err.message : String(err) }, 'remoteHeadRef failed');
+      return null;
+    }
   },
 
   /** List the files in the stack dir, for the future "what got uploaded" UI. */

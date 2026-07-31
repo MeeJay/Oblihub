@@ -10,11 +10,11 @@ export const managedStacksApi = {
     const res = await apiClient.get<ApiResponse<ManagedStack>>(`/managed-stacks/${id}`);
     return res.data.data!;
   },
-  async create(data: { name: string; composeContent: string; envContent?: string | null; teamId?: number | null; engineId?: number | null; registryCredentials?: Array<{ registry: string; username: string; password?: string }> }): Promise<ManagedStack> {
+  async create(data: { name: string; composeContent: string; envContent?: string | null; teamId?: number | null; engineId?: number | null; registryCredentials?: Array<{ registry: string; username: string; password?: string }>; gitUsername?: string | null; gitToken?: string | null; composePath?: string | null; buildEnabled?: boolean; pollGitIntervalS?: number }): Promise<ManagedStack> {
     const res = await apiClient.post<ApiResponse<ManagedStack>>('/managed-stacks', data);
     return res.data.data!;
   },
-  async update(id: number, data: { name?: string; composeContent?: string; envContent?: string | null; engineId?: number | null; registryCredentials?: Array<{ registry: string; username: string; password?: string }> }): Promise<ManagedStack> {
+  async update(id: number, data: { name?: string; composeContent?: string; envContent?: string | null; engineId?: number | null; registryCredentials?: Array<{ registry: string; username: string; password?: string }>; gitUsername?: string | null; gitToken?: string | null; composePath?: string | null; buildEnabled?: boolean; pollGitIntervalS?: number }): Promise<ManagedStack> {
     const res = await apiClient.put<ApiResponse<ManagedStack>>(`/managed-stacks/${id}`, data);
     return res.data.data!;
   },
@@ -55,9 +55,17 @@ export const managedStacksApi = {
     });
     return res.data.data!;
   },
-  async setGitSource(id: number, gitUrl: string, gitBranch?: string): Promise<ManagedStack> {
-    const res = await apiClient.post<ApiResponse<ManagedStack>>(`/managed-stacks/${id}/source/git`, { gitUrl, gitBranch });
+  async setGitSource(id: number, args: { gitUrl: string; gitBranch?: string; gitUsername?: string | null; gitToken?: string | null; composePath?: string | null }): Promise<ManagedStack> {
+    const res = await apiClient.post<ApiResponse<ManagedStack>>(`/managed-stacks/${id}/source/git`, args);
     return res.data.data!;
+  },
+  async getDeployHistory(id: number, limit = 50): Promise<Array<import('@oblihub/shared').ManagedStackDeployHistoryEntry>> {
+    const res = await apiClient.get<ApiResponse<Array<import('@oblihub/shared').ManagedStackDeployHistoryEntry>>>(`/managed-stacks/${id}/deploy-history?limit=${limit}`);
+    return res.data.data!;
+  },
+  async rollback(id: number, gitRef: string): Promise<ManagedStack> {
+    const res = await apiClient.post<ApiResponse<{ stack: ManagedStack }>>(`/managed-stacks/${id}/rollback`, { gitRef });
+    return res.data.data!.stack;
   },
   async gitPull(id: number): Promise<ManagedStack> {
     const res = await apiClient.post<ApiResponse<ManagedStack>>(`/managed-stacks/${id}/source/git-pull`);

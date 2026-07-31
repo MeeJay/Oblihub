@@ -9,6 +9,7 @@ import { useSocket } from '@/hooks/useSocket';
 import type { Team } from '@oblihub/shared';
 import { ComposePreview, extractHostPort, type PortConflict } from '@/components/ComposePreview';
 import { SourcePanel } from '@/components/SourcePanel';
+import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import yaml from 'js-yaml';
 import { SOCKET_EVENTS, type ManagedStack, type ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -640,6 +641,25 @@ export function StackEditorPage() {
             setDirty(false);
           }}
         />
+      )}
+
+      {/* Deploy history / rollback — only meaningful once the stack has an id + a deploy. Rendered
+          for all source types (shows a stub for non-git) so operators discover the feature; the
+          rollback action itself is gated to git-sourced stacks server-side. */}
+      {stack && !isNew && (
+        <div className="mt-4">
+          <DeployHistoryPanel
+            stack={stack}
+            onStackUpdated={(updated) => {
+              setStack(updated);
+              setComposeContent(updated.composeContent || '');
+              const entries = parseEnvContent(updated.envContent);
+              setEnvEntries(entries);
+              setEnvRaw(updated.envContent || '');
+              setDirty(false);
+            }}
+          />
+        </div>
       )}
 
       {/* Compose + Env side by side */}

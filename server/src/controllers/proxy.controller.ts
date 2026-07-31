@@ -33,7 +33,7 @@ export const proxyController = {
       await nginxService.regenerateAndReload();
       // Re-evaluate which managed stack services need the shared `proxy` network — a new
       // forward_host may now match a compose service that wasn't proxied before.
-      void this._refreshProxyNetworks();
+      void proxyController._refreshProxyNetworks();
       // Auto-create uptime monitor if requested
       if (host.autoMonitor && host.domainNames[0]) {
         const { rescheduleMonitor } = await import('../workers/UptimeWorker');
@@ -60,7 +60,7 @@ export const proxyController = {
       if (!host) throw new AppError(404, 'Proxy host not found');
       await nginxService.regenerateAndReload();
       // forward_host may have changed → re-evaluate proxy network membership.
-      void this._refreshProxyNetworks();
+      void proxyController._refreshProxyNetworks();
       res.json({ success: true, data: host });
     } catch (err) { next(err); }
   },
@@ -70,7 +70,7 @@ export const proxyController = {
       await proxyHostService.delete(parseInt(req.params.id, 10));
       await nginxService.regenerateAndReload();
       // Deleted host means the target service may no longer need to be on `proxy`.
-      void this._refreshProxyNetworks();
+      void proxyController._refreshProxyNetworks();
       res.json({ success: true });
     } catch (err) { next(err); }
   },

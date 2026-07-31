@@ -11,6 +11,7 @@ import { setComposeServiceIO } from './services/compose.service';
 import { setSourceManagerIO } from './services/sourceManager.service';
 import { setVolumeMigrationIO } from './services/volumeMigration.service';
 import { startDiscoveryWorker, stopDiscoveryWorker } from './workers/DiscoveryWorker';
+import { startGitPollWorker, stopGitPollWorker } from './workers/GitPollWorker';
 import { startStatsWorker, stopStatsWorker, cleanupOldStats } from './workers/StatsWorker';
 import { startUptimeWorker, stopUptimeWorker } from './workers/UptimeWorker';
 import { startSleepWorker, stopSleepWorker } from './workers/SleepWorker';
@@ -101,6 +102,10 @@ async function main() {
   // Start Docker discovery worker
   startDiscoveryWorker(io);
 
+  // Start git-poll worker — checks git-sourced stacks with poll_git_interval_s>0 for new
+  // commits and auto pull+redeploy. Poll-out only (no ingress webhook by design).
+  startGitPollWorker();
+
   // Start per-stack check scheduler
   await schedulerService.startAll();
 
@@ -140,6 +145,7 @@ async function main() {
   const shutdown = () => {
     logger.info('Shutting down...');
     stopDiscoveryWorker();
+    stopGitPollWorker();
     stopStatsWorker();
     stopUptimeWorker();
     stopSleepWorker();

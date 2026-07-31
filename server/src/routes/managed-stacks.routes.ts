@@ -43,4 +43,8 @@ router.get('/:id/source/files', managedStackController.listSourceFiles);
 router.get('/:id/migration-preview', managedStackController.previewMigration);
 router.post('/:id/migrate-engine', managedStackController.migrateEngine);
 
+// Deploy history + rollback (Git-sourced stacks)
+router.get('/:id/deploy-history', managedStackController.getDeployHistory);
+router.post('/:id/rollback', managedStackController.rollback);
+
 export default router;

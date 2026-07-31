@@ -220,6 +220,22 @@ export interface ManagedStack {
   gitBranch: string | null;
   gitRef: string | null;
   lastSourceSyncAt: string | null;
+  // Git deploy-token auth (Gitea / GitHub / GitLab). Injected at clone/pull time via URL
+  // rewrite `https://<user>:<token>@host/...`. Only `hasGitToken` is returned by the API
+  // (mirrors the SSH key + registry cred pattern) — the actual token is AES-GCM at rest.
+  gitUsername: string | null;
+  hasGitToken: boolean;
+  // Path to the compose file INSIDE the repo/upload — e.g. `stack/docker-compose.yml`. When
+  // set, both the source sync and the compose invocation use it, with the compose parent dir
+  // becoming the working dir so relative build.context paths (`./api`) resolve correctly.
+  composePath: string | null;
+  // When true, deploy/redeploy run `docker compose up -d --build` so Dockerfiles in the source
+  // are rebuilt. Off by default — pure-image stacks keep their fast pull-only redeploy.
+  buildEnabled: boolean;
+  // Poll the git remote every N seconds; if the branch HEAD moved, trigger pull + rebuild.
+  // 0 = disabled (operator triggers manually). Uses the same worker pattern as registry checks.
+  pollGitIntervalS: number;
+  lastGitPollAt: string | null;
   // Per-stack registry auth. Used at deploy time to populate a temp DOCKER_CONFIG so the
   // `docker compose pull` running in this stack's directory can authenticate against private
   // registries (Gitea, GHCR, GitLab, Quay, Harbor, …) without touching the host-level
@@ -227,6 +243,22 @@ export interface ManagedStack {
   registryCredentials: RegistryCredential[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** Rollback timeline — one entry per successful deploy for a managed stack. */
+export interface ManagedStackDeployHistoryEntry {
+  id: number;
+  managedStackId: number;
+  sourceType: ManagedStackSourceType;
+  gitUrl: string | null;
+  gitBranch: string | null;
+  gitRef: string | null;
+  composePath: string | null;
+  buildEnabled: boolean;
+  success: boolean;
+  notes: string | null;
+  deployedAt: string;
+  deployedByUserId: number | null;
 }
 
 // ── Docker resource types ──

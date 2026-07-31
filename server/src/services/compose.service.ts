@@ -254,8 +254,16 @@ export const composeService = {
     idleTimeoutMs = 0,
     engineId: number | null = null,
   ): Promise<ComposeResult> {
-    const stackDir = getStackDir(projectName);
-    const cmdString = `docker compose -p "${projectName}" -f docker-compose.yml ${args.join(' ')}`;
+    const baseStackDir = getStackDir(projectName);
+    // Look up compose_path — set when the compose file lives at a subpath inside the source
+    // (Trame-style: `stack/docker-compose.yml`). When set, we use `-f <fullPath>` AND cwd to
+    // the compose file's parent directory so relative build.context paths (`./api`) resolve.
+    // NULL / empty falls back to the legacy behavior (compose file at repo root).
+    const stackRow = await db('managed_stacks').where({ compose_project: projectName }).select('compose_path').first();
+    const composePath = (stackRow?.compose_path as string) || null;
+    const composeFileArg = composePath ? path.basename(composePath) : 'docker-compose.yml';
+    const stackDir = composePath ? path.join(baseStackDir, path.dirname(composePath)) : baseStackDir;
+    const cmdString = `docker compose -p "${projectName}" -f ${composeFileArg} ${args.join(' ')}`;
 
     let envInjection: { env: Record<string, string>; cleanup: () => void };
     try {
@@ -275,7 +283,7 @@ export const composeService = {
 
     return new Promise((resolve) => {
       const startedAt = Date.now();
-      const spawnArgs = ['compose', '-p', projectName, '-f', 'docker-compose.yml', ...args];
+      const spawnArgs = ['compose', '-p', projectName, '-f', composeFileArg, ...args];
       // ⚠ SECURITY-CRITICAL — env scrub.
       //
       // Spreading `process.env` into the subprocess used to leak Oblihub's OWN env (admin creds,
@@ -419,7 +427,8 @@ export const composeService = {
     // (instead of post-deploy `docker network connect`) keeps membership visible to the operator
     // AND survives compose down/up correctly.
     await this._writeProxyOverride(projectName, composeContent);
-    const result = await this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 0, engineId);
+    const upArgs = await this._buildAwareUpArgs(projectName);
+    const result = await this.runCompose(projectName, upArgs, 0, engineId);
     // After a successful up, reconcile: anything currently on `proxy` that ISN'T a targeted
     // service gets disconnected. Cleans up the legacy "everything attached" behaviour.
     if (result.exitCode === 0) {
@@ -586,12 +595,32 @@ export const composeService = {
     return this.runCompose(projectName, ['ps', '--format', 'json'], 60 * 1000, engineId);
   },
 
-  /** Redeploy: pull + up — both with no timeout. */
+  /** Redeploy: pull + up. When build_enabled is set on the stack, adds `--build` and skips the
+   *  pull step (build-from-source stacks have no registry to pull from for build-only services). */
   async redeploy(projectName: string, composeContent: string, envContent: string | null, engineId: number | null = null): Promise<ComposeResult> {
     this.writeStackFiles(projectName, composeContent, envContent);
-    const pullResult = await this.runCompose(projectName, ['pull'], 0, engineId);
-    if (pullResult.exitCode !== 0) return pullResult;
-    return this.runCompose(projectName, ['up', '-d', '--remove-orphans'], 0, engineId);
+    const upArgs = await this._buildAwareUpArgs(projectName);
+    // Skip pull for build-enabled stacks — pull would try to fetch build-only services from
+    // the registry and fail. Pure-image stacks still get the pull → up cycle unchanged.
+    if (!upArgs.includes('--build')) {
+      const pullResult = await this.runCompose(projectName, ['pull'], 0, engineId);
+      if (pullResult.exitCode !== 0) return pullResult;
+    }
+    return this.runCompose(projectName, upArgs, 0, engineId);
+  },
+
+  /**
+   * Assemble the `up -d` argument list, tacking on `--build` when the managed_stack has
+   * build_enabled=true (Git/ZIP source with Dockerfiles). Falls back to the legacy pull-only
+   * arg list for pre-existing stacks that have no build_enabled column value.
+   */
+  async _buildAwareUpArgs(projectName: string): Promise<string[]> {
+    const args = ['up', '-d', '--remove-orphans'];
+    try {
+      const row = await db('managed_stacks').where({ compose_project: projectName }).select('build_enabled').first();
+      if (row?.build_enabled) args.push('--build');
+    } catch { /* fall through to pull-only */ }
+    return args;
   },
 
   /**
