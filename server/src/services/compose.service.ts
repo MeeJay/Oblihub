@@ -563,6 +563,14 @@ export const composeService = {
         envMap[m[1]] = v;
       }
     }
+    // CRITICAL: Docker Compose's `-p <name>` CLI flag always wins over any COMPOSE_PROJECT_NAME
+    // from the .env — that's how compose's own variable substitution behaves at runtime, so the
+    // container name compose actually creates is derived from `projectName` (what we invoke `-p`
+    // with), not from whatever the operator wrote in their .env. If we let the operator env
+    // overwrite this, our alias resolution ends up pointing at a container name that no real
+    // container matches, and forward_host lookups silently fail. Force it back AFTER the env
+    // merge so we mirror compose's runtime behavior exactly.
+    envMap.COMPOSE_PROJECT_NAME = projectName;
     // Resolve `${VAR}` / `${VAR:-default}` / `${VAR-default}` / `${VAR:?err}` / `${VAR?err}`.
     // Supports one level of nesting (default value can be another ${...}) which covers all
     // realistic compose patterns.
