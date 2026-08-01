@@ -512,12 +512,22 @@ export const composeService = {
   },
 
   /**
-   * Parse the user's compose, query proxy_hosts, return the list of compose service names
-   * that should be on the proxy network. A service is "targeted" if any proxy_host's
-   * `forward_host` exactly matches its compose service name.
+   * Given a stack's compose_project and its compose YAML, return the list of compose SERVICE
+   * NAMES whose containers should be on the shared `proxy` network.
    *
-   * Also returns whether the user already manages the `proxy` network themselves — in which
-   * case we don't write the override.
+   * Matching rule: for a proxy_host to target a service in THIS stack, its `forward_host`
+   * must match either
+   *   - the compose service name (`web`), OR
+   *   - the container_name that compose will assign to that service — either the operator's
+   *     explicit `container_name: foo` value, or the compose-default `<project>-<svc>-<n>` /
+   *     `<project>_<svc>_<n>` form.
+   *
+   * Scoping: the proxy_host's `stack_id` (via `stacks.compose_project`) is used to filter
+   * OUT proxy_hosts belonging to other stacks. Without this, a proxy_host targeting a `web`
+   * service in stack A would also incorrectly target a `web` service in stack B (or any
+   * container of another stack that happens to share a name), breaking every multi-stack
+   * deployment. Unlinked proxy_hosts (stack_id null) fall back to global matching — legacy
+   * behavior kept for backward compat.
    */
   async _detectProxiedServices(projectName: string, composeContent: string): Promise<{ services: string[]; userOwnsProxyNetwork: boolean }> {
     let parsed: { services?: Record<string, unknown>; networks?: Record<string, unknown> } = {};
@@ -528,20 +538,46 @@ export const composeService = {
       return { services: [], userOwnsProxyNetwork: false };
     }
     const userOwnsProxyNetwork = !!(parsed.networks && Object.prototype.hasOwnProperty.call(parsed.networks, 'proxy'));
-    const serviceNames = Object.keys(parsed.services || {});
+    const rawServices = parsed.services || {};
+    const serviceNames = Object.keys(rawServices);
     if (serviceNames.length === 0) return { services: [], userOwnsProxyNetwork };
 
-    // proxy_hosts.forward_host is a free-form string. We treat a host as targeting one of this
-    // stack's services if forward_host EXACTLY matches a service name. Container-name fallback
-    // is intentionally NOT done — it's brittle and rarely what the operator means.
+    // Build service → set of names this service is reachable as (compose service + explicit
+    // container_name + defaults). Any of these can match a proxy_host's forward_host.
+    // Compose v2 default container_name = <project>-<svc>-<n>; v1 used underscores. We
+    // generate BOTH forms so both compose runtimes work.
+    const serviceAliases = new Map<string, Set<string>>();
+    for (const svc of serviceNames) {
+      const aliases = new Set<string>([svc]);
+      const svcDef = rawServices[svc] as { container_name?: string } | null;
+      if (svcDef?.container_name) aliases.add(svcDef.container_name);
+      aliases.add(`${projectName}-${svc}-1`);
+      aliases.add(`${projectName}_${svc}_1`);
+      serviceAliases.set(svc, aliases);
+    }
+
+    // Resolve which stacks (from the discovery `stacks` table) belong to THIS managed_stack.
+    // Filter only proxy_hosts whose stack_id points here — or those without a stack (global).
+    const localStacks = await db('stacks').where({ compose_project: projectName }).select('id');
+    const localStackIds = new Set<number>(localStacks.map(s => s.id as number));
+
     const proxyHosts = await db('proxy_hosts').select('forward_host', 'enabled', 'stack_id');
-    const forwardHosts = new Set(
+    const relevantForwardHosts = new Set(
       proxyHosts
         .filter(h => h.enabled !== false)
+        .filter(h => h.stack_id == null || localStackIds.has(h.stack_id as number))
         .map(h => (h.forward_host as string) || '')
         .filter(Boolean)
     );
-    const targeted = serviceNames.filter(svc => forwardHosts.has(svc));
+
+    const targeted = serviceNames.filter(svc => {
+      const aliases = serviceAliases.get(svc);
+      if (!aliases) return false;
+      for (const alias of aliases) {
+        if (relevantForwardHosts.has(alias)) return true;
+      }
+      return false;
+    });
     return { services: targeted, userOwnsProxyNetwork };
   },
 

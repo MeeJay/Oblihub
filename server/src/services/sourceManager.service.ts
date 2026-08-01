@@ -319,19 +319,36 @@ export const sourceManagerService = {
 
     emitProgress(stack.composeProject, `== git pull (${stack.gitBranch}) ==`);
     try {
-      // Re-inject the auth token as a per-call remote override. `git pull -c http.extraheader=...`
-      // would only work for the fetch step; using `set-url` before + reset after is simpler and
-      // works for both HTTPS Basic (Gitea deploy tokens) and PAT auth.
+      const branch = stack.gitBranch || 'main';
+      // Fetch + hard-reset instead of `pull --ff-only`. Rationale:
+      //   - Oblihub's own writeStackFiles rewrites `docker-compose.yml` at deploy time from the
+      //     DB copy. Even if the content matches HEAD byte-for-byte, YAML round-trips through
+      //     the editor can subtly change quoting / whitespace, leaving the working tree "dirty"
+      //     in git's eyes. Vanilla `pull --ff-only` then refuses with "your local changes would
+      //     be overwritten" and returns 400 — which is exactly what the operator was hitting.
+      //   - The Oblihub model treats git as the source of truth for compose; local disk is a
+      //     regeneratable runtime cache. Discarding tracked-file working-tree edits on pull is
+      //     the correct semantic. Untracked files (.env, docker-compose.override.yml, any
+      //     operator-added file) are NOT touched — no `git clean`.
+      //   - Bonus: `fetch + reset --hard origin/<branch>` also recovers cleanly from a partial
+      //     merge state or a diverged history that ff-only would refuse.
       const authUrl = await this._buildAuthenticatedUrl(stackId, stack.gitUrl);
       let restored = false;
       try {
         await execFileP('git', ['-C', dir, 'remote', 'set-url', 'origin', authUrl], { timeout: 5000 });
-        const { stdout, stderr } = await execFileP('git', [
+        // Fetch with auth in place.
+        const { stdout: fetchOut, stderr: fetchErr } = await execFileP('git', [
           '-C', dir, '-c', 'credential.helper=', '-c', 'core.askpass=echo',
-          'pull', '--ff-only', 'origin', stack.gitBranch || 'main',
+          'fetch', '--depth', '1', 'origin', branch,
         ], { timeout: 5 * 60 * 1000 });
-        if (stdout) emitProgress(stack.composeProject, stdout);
-        if (stderr) emitProgress(stack.composeProject, this._scrubTokenFromLog(stderr, stack.gitUrl));
+        if (fetchOut) emitProgress(stack.composeProject, fetchOut);
+        if (fetchErr) emitProgress(stack.composeProject, this._scrubTokenFromLog(fetchErr, stack.gitUrl));
+        // Hard reset the working tree to the fetched ref. Doesn't need auth (local operation).
+        const { stdout: resetOut, stderr: resetErr } = await execFileP('git', [
+          '-C', dir, 'reset', '--hard', 'FETCH_HEAD',
+        ], { timeout: 60_000 });
+        if (resetOut) emitProgress(stack.composeProject, resetOut);
+        if (resetErr) emitProgress(stack.composeProject, resetErr);
       } finally {
         // Scrub the token back out no matter what happens above.
         try { await execFileP('git', ['-C', dir, 'remote', 'set-url', 'origin', stack.gitUrl], { timeout: 5000 }); restored = true; } catch { /* ignore */ }

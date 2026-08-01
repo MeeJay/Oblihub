@@ -15,7 +15,7 @@ export function NetworksPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [createForm, setCreateForm] = useState({ name: '', driver: 'bridge', subnet: '', gateway: '', internal: false, attachable: true });
-  const [connectForm, setConnectForm] = useState<{ networkId: string; engineId: number | null; selectedContainers: Set<string> } | null>(null);
+  const [connectForm, setConnectForm] = useState<{ networkId: string; networkName: string; engineId: number | null; selectedContainers: Set<string> } | null>(null);
   const [stacks, setStacks] = useState<Stack[]>([]);
   const [pruneOpen, setPruneOpen] = useState(false);
 
@@ -219,8 +219,31 @@ export function NetworksPage() {
       {connectForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConnectForm(null)}>
           <div className="rounded-xl border border-border bg-bg-primary p-6 w-[480px] max-h-[70vh] overflow-auto shadow-xl" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-text-primary mb-1">Connect Containers to Network</h3>
+            <h3 className="text-sm font-semibold text-text-primary mb-1">
+              Connect Containers to <code className="font-mono text-accent">{connectForm.networkName}</code>
+            </h3>
             <p className="text-xs text-text-muted mb-4">Select stacks or individual containers</p>
+            {/* Warn specifically when the operator targets Oblihub's shared `proxy` network:
+                a manual attach here is transient (any container recreate = attach lost) and
+                doesn't produce a docker-compose.override.yml. Persistent proxy wiring goes
+                through the Proxy Hosts page — Oblihub then writes the override on deploy. */}
+            {connectForm.networkName === 'proxy' && (
+              <div className="mb-4 rounded-lg border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-[11px] text-status-warning">
+                <div className="font-semibold mb-1">⚠️ Manual attach — not persistent</div>
+                <div className="text-status-warning/90 leading-relaxed">
+                  Connecting here works right now, but is <strong>lost on the next container
+                  recreation</strong> (rebuild, redeploy, docker restart). For a permanent
+                  attach, create a <strong>Proxy Host</strong> targeting the service — Oblihub
+                  auto-generates a compose override that survives every rebuild.
+                </div>
+                <a
+                  href="/proxy"
+                  className="inline-block mt-2 px-2 py-1 rounded bg-status-warning text-bg-primary font-medium hover:opacity-90"
+                >
+                  Go to Proxy Hosts →
+                </a>
+              </div>
+            )}
             <div className="space-y-2 mb-4">
               {stacks.filter(s => s.containers.length > 0).map(s => {
                 const allSelected = s.containers.every(c => connectForm.selectedContainers.has(c.dockerId));
@@ -291,7 +314,7 @@ export function NetworksPage() {
               </div>
               {!isSystemNetwork(net.name) && (
                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => setConnectForm({ networkId: net.id, engineId: net.engineId ?? null, selectedContainers: new Set() })} className="p-1.5 rounded-md text-text-muted hover:text-accent hover:bg-bg-hover" title="Connect container">
+                  <button onClick={() => setConnectForm({ networkId: net.id, networkName: net.name, engineId: net.engineId ?? null, selectedContainers: new Set() })} className="p-1.5 rounded-md text-text-muted hover:text-accent hover:bg-bg-hover" title="Connect container">
                     <Link size={14} />
                   </button>
                   <button onClick={() => handleRemove(net)} className="p-1.5 rounded-md text-text-muted hover:text-status-down hover:bg-bg-hover" title={`Remove on ${net.engineName}`}>
