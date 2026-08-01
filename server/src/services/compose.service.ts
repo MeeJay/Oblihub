@@ -542,15 +542,51 @@ export const composeService = {
     const serviceNames = Object.keys(rawServices);
     if (serviceNames.length === 0) return { services: [], userOwnsProxyNetwork };
 
+    // Load the stack's env for `${VAR}` substitution in container_name. Compose resolves
+    // interpolations at runtime; a naive YAML parse leaves us with literal strings like
+    // `${COMPOSE_PROJECT_NAME:-trameplm}-web` that won't match anything on disk.
+    // COMPOSE_PROJECT_NAME defaults to the stack's compose_project when not explicitly set,
+    // which mirrors compose's own behavior when invoked via `-p`.
+    const stackRow = await db('managed_stacks').where({ compose_project: projectName }).select('env_content', 'env_content_enc').first();
+    const envMap: Record<string, string> = { COMPOSE_PROJECT_NAME: projectName };
+    let envText: string | null = null;
+    if (stackRow?.env_content_enc) {
+      try { const { decryptSecret } = await import('../utils/crypto'); envText = decryptSecret(stackRow.env_content_enc as string); } catch { /* ignore */ }
+    }
+    if (!envText && stackRow?.env_content) envText = stackRow.env_content as string;
+    if (envText) {
+      for (const line of envText.split(/\r?\n/)) {
+        const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
+        if (!m) continue;
+        let v = m[2];
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+        envMap[m[1]] = v;
+      }
+    }
+    // Resolve `${VAR}` / `${VAR:-default}` / `${VAR-default}` / `${VAR:?err}` / `${VAR?err}`.
+    // Supports one level of nesting (default value can be another ${...}) which covers all
+    // realistic compose patterns.
+    const resolveVars = (str: string): string => {
+      return str.replace(/\$\{([A-Z_][A-Z0-9_]*)(:?[-?])?([^}]*)\}/g, (_full, name, sep, rest) => {
+        const val = envMap[name];
+        if (val !== undefined && val !== '') return val;
+        if (val === '' && sep === '-') return val; // `${VAR-default}` treats empty as set
+        if (sep === ':-' || sep === '-') return rest; // default value
+        return val ?? ''; // `${VAR:?err}` etc — no value, best-effort empty for detection
+      });
+    };
+
     // Build service → set of names this service is reachable as (compose service + explicit
-    // container_name + defaults). Any of these can match a proxy_host's forward_host.
-    // Compose v2 default container_name = <project>-<svc>-<n>; v1 used underscores. We
-    // generate BOTH forms so both compose runtimes work.
+    // container_name resolved + compose-default forms). Any of these matching a proxy_host's
+    // forward_host means the service is targeted.
     const serviceAliases = new Map<string, Set<string>>();
     for (const svc of serviceNames) {
       const aliases = new Set<string>([svc]);
       const svcDef = rawServices[svc] as { container_name?: string } | null;
-      if (svcDef?.container_name) aliases.add(svcDef.container_name);
+      if (svcDef?.container_name) {
+        aliases.add(svcDef.container_name);
+        aliases.add(resolveVars(svcDef.container_name));
+      }
       aliases.add(`${projectName}-${svc}-1`);
       aliases.add(`${projectName}_${svc}_1`);
       serviceAliases.set(svc, aliases);
