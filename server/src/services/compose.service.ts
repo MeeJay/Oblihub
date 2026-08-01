@@ -289,7 +289,17 @@ export const composeService = {
     const composePath = (stackRow?.compose_path as string) || null;
     const composeFileArg = composePath ? path.basename(composePath) : 'docker-compose.yml';
     const stackDir = composePath ? path.join(baseStackDir, path.dirname(composePath)) : baseStackDir;
-    const cmdString = `docker compose -p "${projectName}" -f ${composeFileArg} ${args.join(' ')}`;
+    // Auto-discovery of `docker-compose.override.yml` by Compose ONLY kicks in when the primary
+    // file is one of the standard names (compose.yml / docker-compose.yml). For custom names
+    // like `docker-compose.prod.yml` we HAVE to pass the override explicitly with `-f` or
+    // Compose ignores it entirely — which silently drops Oblihub's proxy-network attachment
+    // for every non-standard-name stack. Detect + include when present.
+    const overridePath = path.join(stackDir, 'docker-compose.override.yml');
+    const includeOverride = composeFileArg !== 'docker-compose.yml' && composeFileArg !== 'compose.yml' && fs.existsSync(overridePath);
+    const composeFileArgs = includeOverride
+      ? ['-f', composeFileArg, '-f', 'docker-compose.override.yml']
+      : ['-f', composeFileArg];
+    const cmdString = `docker compose -p "${projectName}" ${composeFileArgs.join(' ')} ${args.join(' ')}`;
 
     let envInjection: { env: Record<string, string>; cleanup: () => void };
     try {
@@ -309,7 +319,7 @@ export const composeService = {
 
     return new Promise((resolve) => {
       const startedAt = Date.now();
-      const spawnArgs = ['compose', '-p', projectName, '-f', composeFileArg, ...args];
+      const spawnArgs = ['compose', '-p', projectName, ...composeFileArgs, ...args];
       // ⚠ SECURITY-CRITICAL — env scrub.
       //
       // Spreading `process.env` into the subprocess used to leak Oblihub's OWN env (admin creds,
