@@ -38,6 +38,8 @@ router.post('/:id/source/zip', upload.single('file'), managedStackController.upl
 router.post('/:id/source/git', managedStackController.setGit);
 router.post('/:id/source/git-pull', managedStackController.gitPull);
 router.get('/:id/source/files', managedStackController.listSourceFiles);
+router.get('/:id/source/generated', managedStackController.getGeneratedFiles);
+router.get('/:id/effective-config', managedStackController.getEffectiveConfig);
 
 // Engine migration
 router.get('/:id/migration-preview', managedStackController.previewMigration);

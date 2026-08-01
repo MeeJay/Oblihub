@@ -105,8 +105,15 @@ export function SourcePanel({ stack, onStackUpdated }: { stack: ManagedStack; on
   const handleGitPull = async () => {
     setBusy(true);
     try {
-      const updated = await managedStacksApi.gitPull(stack.id);
-      toast.success(`Pulled to ${updated.gitRef || 'latest'}`);
+      const res = await managedStacksApi.gitPull(stack.id);
+      // Server returns { data: stack, redeployStarted: bool }. `data` is what the previous API
+      // shape returned, so we back-compat the toast copy with the flag when present.
+      const updated = res.stack;
+      toast.success(
+        res.redeployStarted
+          ? `Pulled to ${updated.gitRef || 'latest'} — redeploy started`
+          : `Pulled to ${updated.gitRef || 'latest'} (deploy manually to apply)`,
+      );
       onStackUpdated(updated);
       if (showFiles) void loadFiles();
     } catch (err) {
@@ -200,7 +207,7 @@ export function SourcePanel({ stack, onStackUpdated }: { stack: ManagedStack; on
           <div className="space-y-3">
             <p className="text-xs text-text-muted">
               Clone from a git repo. Use a deploy key or HTTPS-with-token URL for private repos. Use{' '}
-              <strong>Pull latest</strong> to refresh without re-typing the URL.
+              <strong>Pull latest</strong> to grab new commits — auto-redeploys when the stack has already been deployed.
             </p>
             <div className="grid grid-cols-[1fr_140px] gap-2">
               <input
@@ -258,6 +265,7 @@ export function SourcePanel({ stack, onStackUpdated }: { stack: ManagedStack; on
                 <button
                   onClick={() => void handleGitPull()}
                   disabled={busy}
+                  title={stack.status === 'draft' ? 'Pull latest commits into the editor (deploy manually to apply)' : 'Pull latest commits and redeploy — same as the auto-pull worker'}
                   className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-border text-text-secondary hover:bg-bg-hover disabled:opacity-50"
                 >
                   <RefreshCw size={13} /> Pull latest

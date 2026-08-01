@@ -67,12 +67,23 @@ export const managedStacksApi = {
     const res = await apiClient.post<ApiResponse<{ stack: ManagedStack }>>(`/managed-stacks/${id}/rollback`, { gitRef });
     return res.data.data!.stack;
   },
-  async gitPull(id: number): Promise<ManagedStack> {
-    const res = await apiClient.post<ApiResponse<ManagedStack>>(`/managed-stacks/${id}/source/git-pull`);
-    return res.data.data!;
+  async gitPull(id: number): Promise<{ stack: ManagedStack; redeployStarted: boolean }> {
+    // Server chains pull → background redeploy when the stack has been deployed at least once.
+    // Callers surface a different toast message depending on `redeployStarted` so the operator
+    // knows if they still need to click Deploy or if the rebuild is already in flight.
+    const res = await apiClient.post<ApiResponse<ManagedStack> & { redeployStarted?: boolean }>(`/managed-stacks/${id}/source/git-pull`);
+    return { stack: res.data.data!, redeployStarted: !!res.data.redeployStarted };
   },
   async listSourceFiles(id: number): Promise<{ path: string; size: number; isDir: boolean }[]> {
     const res = await apiClient.get<ApiResponse<{ path: string; size: number; isDir: boolean }[]>>(`/managed-stacks/${id}/source/files`);
+    return res.data.data!;
+  },
+  async getGeneratedFiles(id: number): Promise<Array<{ name: string; path: string; content: string | null; exists: boolean }>> {
+    const res = await apiClient.get<ApiResponse<Array<{ name: string; path: string; content: string | null; exists: boolean }>>>(`/managed-stacks/${id}/source/generated`);
+    return res.data.data!;
+  },
+  async getEffectiveConfig(id: number): Promise<{ config: string | null; error: string | null; exitCode: number }> {
+    const res = await apiClient.get<ApiResponse<{ config: string | null; error: string | null; exitCode: number }>>(`/managed-stacks/${id}/effective-config`);
     return res.data.data!;
   },
 

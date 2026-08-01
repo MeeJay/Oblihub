@@ -546,16 +546,37 @@ export const composeService = {
   },
 
   /**
-   * Post-deploy cleanup: every container in this stack that is NOT a targeted service but IS
-   * currently on the `proxy` network gets disconnected. Fixes legacy state left by the
-   * previous "attach everything" code, and handles the case where the operator removed a
-   * proxy_host targeting a service.
+   * Attach + optionally detach `proxy` network membership for a stack.
+   *
+   * `allowDetach` gates the destructive path:
+   *   - `deploy()` sets it TRUE — the stack was just brought up fresh, the compose+override on
+   *     disk is the source of truth, and it's safe to remove containers from `proxy` that no
+   *     longer belong there.
+   *   - `refreshProxyNetworksForAllStacks()` (called after any proxy_host CRUD) sets it FALSE
+   *     — attach-only. Detaching from a live stack every time an unrelated proxy_host is
+   *     modified is destructive: a transient parse failure of the compose YAML or a temporarily
+   *     empty forward_host would silently kick every proxy-attached container out. Real
+   *     cleanup happens on the next actual redeploy.
+   *
+   * ALSO: refuse to detach if the compose parse yielded zero services — we can't distinguish
+   * "operator meant to remove all proxy attachments" from "compose has a syntax error and we
+   * blindly nuked the whole stack". Fail-closed.
    */
-  async _reconcileProxyNetworkMembership(projectName: string, composeContent: string, engineId: number | null = null): Promise<void> {
+  async _reconcileProxyNetworkMembership(projectName: string, composeContent: string, engineId: number | null = null, opts: { allowDetach?: boolean } = {}): Promise<void> {
+    const allowDetach = opts.allowDetach !== false; // default true for backward-compat with deploy()
     try {
       const docker = await dockerService.forEngine(engineId);
       const targets = await this._detectProxiedServices(projectName, composeContent);
       const targetedSet = new Set(targets.services);
+      // Safety net: if the compose parse returned no services, we have no ground truth to
+      // decide who should be on `proxy`. Don't detach anything — the operator probably has a
+      // temporary YAML error or an unrelated race, and a mass-detach is way worse than leaving
+      // a stale attachment for one deploy cycle. Attach can still run because it's non-destructive.
+      let composeYieldedServices = true;
+      try {
+        const parsed = yaml.load(composeContent) as { services?: Record<string, unknown> } | null;
+        composeYieldedServices = !!(parsed?.services && Object.keys(parsed.services).length > 0);
+      } catch { composeYieldedServices = false; }
       const containers = await docker.listContainers({
         all: true,
         filters: { label: [`com.docker.compose.project=${projectName}`] },
@@ -567,7 +588,7 @@ export const composeService = {
         if (targetedSet.has(serviceName) && !onProxy) {
           // Compose-side merge should have attached it; if not (race, override missing), do it.
           try { await dockerService.connectToProxyNetwork(c.Id, engineId); } catch { /* ignore */ }
-        } else if (!targetedSet.has(serviceName) && onProxy) {
+        } else if (!targetedSet.has(serviceName) && onProxy && allowDetach && composeYieldedServices) {
           try {
             await docker.getNetwork('proxy').disconnect({ Container: c.Id });
             logger.info({ container: c.Id, serviceName, project: projectName }, 'Detached non-proxied container from proxy network');
@@ -575,6 +596,10 @@ export const composeService = {
             logger.warn({ container: c.Id, err: err instanceof Error ? err.message : String(err) }, 'Failed to detach from proxy network');
           }
         }
+      }
+      if (!composeYieldedServices && !allowDetach) {
+        // Only worth mentioning once per refresh — surfaces silent YAML issues to the operator.
+        logger.warn({ projectName }, 'Skipped detach step — compose parse yielded 0 services (YAML error?)');
       }
     } catch (err) {
       logger.warn({ projectName, err: err instanceof Error ? err.message : String(err) }, 'Reconcile proxy network membership failed');
@@ -595,7 +620,9 @@ export const composeService = {
         if (s.status !== 'deployed') continue;
         try {
           await this._writeProxyOverride(s.composeProject, s.composeContent);
-          await this._reconcileProxyNetworkMembership(s.composeProject, s.composeContent, s.engineId);
+          // Attach-only: safe path for the "someone edited a proxy_host" trigger. Detach is
+          // reserved for explicit redeploys where the compose+override is guaranteed fresh.
+          await this._reconcileProxyNetworkMembership(s.composeProject, s.composeContent, s.engineId, { allowDetach: false });
         } catch (err) {
           logger.warn({ project: s.composeProject, err: err instanceof Error ? err.message : String(err) }, 'Proxy network refresh failed for stack');
         }

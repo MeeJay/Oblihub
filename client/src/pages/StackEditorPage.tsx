@@ -10,6 +10,7 @@ import type { Team } from '@oblihub/shared';
 import { ComposePreview, extractHostPort, type PortConflict } from '@/components/ComposePreview';
 import { SourcePanel } from '@/components/SourcePanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
+import { GeneratedFilesPanel } from '@/components/GeneratedFilesPanel';
 import yaml from 'js-yaml';
 import { SOCKET_EVENTS, type ManagedStack, type ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -641,6 +642,14 @@ export function StackEditorPage() {
             setDirty(false);
           }}
         />
+      )}
+
+      {/* Generated files (Oblihub's auto-override + effective merged compose). Same visibility
+          gate as SourcePanel: needs an existing stack id. */}
+      {stack && !isNew && (
+        <div className="mt-4">
+          <GeneratedFilesPanel stack={stack} />
+        </div>
       )}
 
       {/* Deploy history / rollback — only meaningful once the stack has an id + a deploy. Rendered

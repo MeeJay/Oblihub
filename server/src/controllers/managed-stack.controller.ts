@@ -491,13 +491,49 @@ export const managedStackController = {
     } catch (err) { next(err); }
   },
 
-  /** Pull latest commits on the configured branch. */
+  /**
+   * Pull latest commits on the configured branch, then trigger a redeploy in the background so
+   * the operator's mental model matches Portainer/NPM ("update code → apply") without a second
+   * click. Only redeploys when the stack has actually been deployed at least once (status !=
+   * 'draft'); a fresh clone still needs an explicit Deploy so the operator can review env vars
+   * and settings first. The redeploy runs async — same pattern as the /deploy handler — and
+   * records a deploy history entry.
+   */
   async gitPull(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = parseInt(req.params.id, 10);
       await sourceManagerService.gitPull(id);
       const stack = await managedStackService.getById(id);
-      res.json({ success: true, data: stack });
+      if (!stack) throw new AppError(404, 'Stack not found');
+      const shouldRedeploy = stack.status !== 'draft';
+      if (shouldRedeploy) {
+        await managedStackService.setStatus(id, 'deploying', null);
+        const sessionForPull = req.session as { userId?: number };
+        (async () => {
+          try {
+            const result = await composeService.redeploy(stack.composeProject, stack.composeContent, stack.envContent, stack.engineId);
+            const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
+            await managedStackService.setStatus(id, result.exitCode === 0 ? 'deployed' : 'error', output || null);
+            await managedStackService.recordDeployHistory({
+              managedStackId: id, sourceType: stack.sourceType, gitUrl: stack.gitUrl, gitBranch: stack.gitBranch,
+              gitRef: stack.gitRef, composePath: stack.composePath, buildEnabled: stack.buildEnabled,
+              success: result.exitCode === 0, notes: 'Manual pull + redeploy',
+              deployedByUserId: sessionForPull.userId ?? null,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Unknown error';
+            await managedStackService.setStatus(id, 'error', msg);
+            await managedStackService.recordDeployHistory({
+              managedStackId: id, sourceType: stack.sourceType, gitUrl: stack.gitUrl, gitBranch: stack.gitBranch,
+              gitRef: stack.gitRef, composePath: stack.composePath, buildEnabled: stack.buildEnabled,
+              success: false, notes: `Pull+redeploy failed: ${msg}`,
+              deployedByUserId: sessionForPull.userId ?? null,
+            });
+          }
+        })();
+      }
+      const refreshed = await managedStackService.getById(id);
+      res.json({ success: true, data: refreshed, redeployStarted: shouldRedeploy });
     } catch (err) { next(err); }
   },
 
@@ -507,6 +543,61 @@ export const managedStackController = {
       const id = parseInt(req.params.id, 10);
       const files = await sourceManagerService.listFiles(id);
       res.json({ success: true, data: files });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * Return Oblihub-generated files that live on disk alongside the operator's compose — right
+   * now that's just `docker-compose.override.yml`, but this is the natural place to surface
+   * anything else we auto-write in the future. Read-only. Exists so the operator can see WHY
+   * a service is (or isn't) on the proxy network without having to SSH into the server.
+   */
+  async getGeneratedFiles(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const stack = await managedStackService.getById(id);
+      if (!stack) throw new AppError(404, 'Stack not found');
+      const { db } = await import('../db');
+      const fs = await import('fs');
+      const pathMod = await import('path');
+      const stacksDir = config.stacksDir;
+      const baseDir = pathMod.join(stacksDir, stack.composeProject);
+      const composeDir = stack.composePath ? pathMod.join(baseDir, pathMod.dirname(stack.composePath)) : baseDir;
+      const generated: Array<{ name: string; path: string; content: string | null; exists: boolean }> = [];
+      for (const name of ['docker-compose.override.yml']) {
+        const full = pathMod.join(composeDir, name);
+        const exists = fs.existsSync(full);
+        generated.push({
+          name,
+          path: pathMod.relative(baseDir, full).replace(/\\/g, '/'),
+          content: exists ? fs.readFileSync(full, 'utf8') : null,
+          exists,
+        });
+      }
+      res.json({ success: true, data: generated });
+      void db; // silence unused-import lint when this method is expanded
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * Show the compose config as Docker Compose sees it AFTER merging the operator's compose
+   * with Oblihub's override + any .env resolution. This is exactly what runs on `up`. Great
+   * to debug "why isn't my service on the proxy network" — the merged output shows the final
+   * `networks:` block.
+   */
+  async getEffectiveConfig(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const stack = await managedStackService.getById(id);
+      if (!stack) throw new AppError(404, 'Stack not found');
+      // `docker compose config` merges compose + override + resolves env. We piggyback on the
+      // existing runCompose so engine + credentials are handled uniformly.
+      const result = await composeService.runCompose(stack.composeProject, ['config'], 30_000, stack.engineId);
+      if (result.exitCode !== 0) {
+        res.json({ success: true, data: { config: null, error: result.stderr || 'compose config failed', exitCode: result.exitCode } });
+        return;
+      }
+      res.json({ success: true, data: { config: result.stdout, error: null, exitCode: 0 } });
     } catch (err) { next(err); }
   },
 
