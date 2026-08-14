@@ -11,6 +11,7 @@ import { ComposePreview, extractHostPort, type PortConflict } from '@/components
 import { SourcePanel } from '@/components/SourcePanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { GeneratedFilesPanel } from '@/components/GeneratedFilesPanel';
+import { RestartPolicyControl } from '@/components/RestartPolicyControl';
 import yaml from 'js-yaml';
 import { SOCKET_EVENTS, type ManagedStack, type ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
@@ -676,9 +677,25 @@ export function StackEditorPage() {
         {/* Compose editor - 3/5 */}
         <div className="lg:col-span-3">
           <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden h-full">
-            <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
-              <Code size={14} className="text-text-muted" />
-              <h2 className="text-sm font-semibold text-text-secondary">docker-compose.yml</h2>
+            <div className="px-4 py-2.5 border-b border-border flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Code size={14} className="text-text-muted" />
+                <h2 className="text-sm font-semibold text-text-secondary">docker-compose.yml</h2>
+              </div>
+              <div className="ml-auto">
+                <RestartPolicyControl
+                  compose={composeContent}
+                  onChange={(next, touched) => {
+                    if (touched === 0) {
+                      toast.error('No `restart:` line found in any service — add it manually to at least one service first.');
+                      return;
+                    }
+                    setComposeContent(next);
+                    setDirty(true);
+                    toast.success(`Restart policy updated on ${touched} service${touched === 1 ? '' : 's'}`);
+                  }}
+                />
+              </div>
             </div>
             <textarea
               value={composeContent}
