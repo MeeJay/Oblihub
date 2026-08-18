@@ -4,6 +4,7 @@ import { LogOut, Bell } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { cn } from '@/utils/cn';
 import { Logo } from '@/components/common/Logo';
+import { HostStatsIndicator } from '@/components/HostStatsIndicator';
 
 // App switcher — fixed order across the suite. Per obli-design-system.md §1 + §4.1.
 type AppType = 'obliview' | 'obliguard' | 'oblimap' | 'obliance' | 'obliplan' | 'oblihub';
@@ -97,6 +98,9 @@ export function Header() {
 
       {/* Right cluster */}
       <div className="ml-auto flex items-center gap-3">
+        {/* Host resource indicator — visible on every page so a runaway build doesn't sneak
+            past the operator. Hidden on <md to keep mobile topbar readable. */}
+        <HostStatsIndicator />
         <button
           type="button"
           title="Notifications"
