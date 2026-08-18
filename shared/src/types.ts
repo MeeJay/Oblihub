@@ -364,6 +364,11 @@ export interface ProxyHost {
   wakeExtraContainerIds: number[];
   wakingPageId: number | null;
   autoMonitor: boolean;
+  // Docker network the target service should be attached to for the reverse-proxy to reach it.
+  // Null = Oblihub's own built-in `proxy` network (backward-compat default). Set to e.g.
+  // `nginx-proxy-manager_default` or `traefik_default` to have Oblihub's auto-override wire
+  // the container onto an EXTERNAL reverse proxy's network instead.
+  dockerNetwork: string | null;
   certificate?: Certificate | null;
   createdAt: string;
   updatedAt: string;

@@ -220,6 +220,24 @@ export function ProxyHostsPage() {
                     className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
                 </div>
               </div>
+              {/* Docker network — for the auto-override that attaches the target service to the
+                  reverse-proxy's network. Blank = Oblihub's own built-in `proxy` network.
+                  Set to your external reverse proxy's network (NPM, Traefik, Caddy…) to have
+                  Oblihub wire the container to THAT network on every deploy. */}
+              <div>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">
+                  Docker network <span className="text-text-muted font-normal">(for auto network-attach on deploy)</span>
+                </label>
+                <input
+                  value={editing.dockerNetwork || ''}
+                  onChange={e => setEditing(h => h ? { ...h, dockerNetwork: e.target.value || null } : null)}
+                  placeholder="proxy (default) — or nginx-proxy-manager_default, traefik_default, …"
+                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <p className="text-[10px] text-text-muted mt-1">
+                  The compose override attaches the forward-host service to this network on every deploy so it survives rebuilds. Leave blank for Oblihub&#39;s built-in proxy.
+                </p>
+              </div>
 
               {/* Certificate */}
               <div>

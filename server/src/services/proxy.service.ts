@@ -63,6 +63,7 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, acces
     })(),
     wakingPageId: (row.waking_page_id as number) || null,
     autoMonitor: (row.auto_monitor as boolean) || false,
+    dockerNetwork: (row.docker_network as string) || null,
     certificate: cert || null,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
@@ -232,6 +233,7 @@ export const proxyHostService = {
       wake_extra_container_ids: JSON.stringify(data.wakeExtraContainerIds || []),
       waking_page_id: data.wakingPageId || null,
       auto_monitor: data.autoMonitor || false,
+      docker_network: data.dockerNetwork || null,
     }).returning('*');
     // Hydrate the junction from accessListIds[] if provided; otherwise fall back to the
     // legacy single accessListId so older clients still work.
@@ -273,6 +275,7 @@ export const proxyHostService = {
     if (data.wakeExtraContainerIds !== undefined) update.wake_extra_container_ids = JSON.stringify(data.wakeExtraContainerIds);
     if (data.wakingPageId !== undefined) update.waking_page_id = data.wakingPageId;
     if (data.autoMonitor !== undefined) update.auto_monitor = data.autoMonitor;
+    if (data.dockerNetwork !== undefined) update.docker_network = data.dockerNetwork;
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');
     if (!row) return null;
     // Sync junction when the caller passed an explicit list (empty array = "clear all").
