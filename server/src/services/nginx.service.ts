@@ -382,6 +382,13 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += `        proxy_pass $oblihub_fa_upstream/oauth2/auth;\n`;
     conf += `        proxy_pass_request_body off;\n`;
     conf += `        proxy_set_header Content-Length "";\n`;
+    // CRITICAL: forward Host + X-Forwarded-Host so oauth2-proxy (with REVERSE_PROXY=true)
+    // reconstructs the original request URL as the user's domain, not "<sidecar-name>:4180".
+    // Without this, the sidecar sees a Host it doesn't recognize, considers the session cookie
+    // (set on the user-facing domain) as belonging to a different site, and returns 401
+    // immediately after every successful callback — the classic "login succeeds, next request
+    // 401s" symptom.
+    conf += `        proxy_set_header Host $http_host;\n`;
     conf += `        proxy_set_header X-Original-URI $request_uri;\n`;
     conf += `        proxy_set_header X-Forwarded-Host $http_host;\n`;
     conf += `        proxy_set_header X-Forwarded-Proto $scheme;\n`;
