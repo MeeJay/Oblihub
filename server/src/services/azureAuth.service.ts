@@ -163,6 +163,11 @@ export const azureAuthService = {
       'OAUTH2_PROXY_SET_XAUTHREQUEST=true',
       // Scope covers openid+email+profile out of the box for Entra ID.
       'OAUTH2_PROXY_SCOPE=openid email profile',
+      // Azure ID tokens with group claims routinely exceed the 4kb single-cookie limit; when
+      // that happens oauth2-proxy splits into _0/_1/... and warns about the split. Minimal mode
+      // keeps only the refresh token in the cookie and reconstructs the rest server-side per
+      // request — smaller cookies, no split, no warning.
+      'OAUTH2_PROXY_SESSION_COOKIE_MINIMAL=true',
     ];
     // Email whitelist. `*` (default when nothing specified) = any authenticated user in the
     // tenant. When the operator lists specific emails/domains, restrict.
@@ -174,6 +179,24 @@ export const azureAuthService = {
     // Azure group restriction — oauth2-proxy checks the `groups` claim.
     if (allowedGroups && allowedGroups.length > 0) {
       env.push(`OAUTH2_PROXY_ALLOWED_GROUPS=${allowedGroups.join(',')}`);
+    }
+    // WHITELIST_DOMAINS: post-auth, oauth2-proxy refuses to redirect the user back to any
+    // domain not listed here (anti-open-redirect). Without this, sign-in succeeds but the
+    // final "back to the app" redirect gets rejected with "domain / port not in whitelist"
+    // and the user sees a 401. We enumerate every domain from every proxy_host currently
+    // referencing this provider — the sidecar is redeployed whenever a proxy_host is
+    // created/updated/deleted so the whitelist stays in sync.
+    const hosts = await db('proxy_hosts').where({ azure_auth_provider_id: providerId }).select('domain_names');
+    const allDomains = new Set<string>();
+    for (const h of hosts) {
+      const raw = h.domain_names;
+      let arr: string[] = [];
+      if (Array.isArray(raw)) arr = raw as string[];
+      else if (typeof raw === 'string' && raw) { try { arr = JSON.parse(raw); } catch { arr = []; } }
+      for (const d of arr) if (d) allDomains.add(d);
+    }
+    if (allDomains.size > 0) {
+      env.push(`OAUTH2_PROXY_WHITELIST_DOMAINS=${[...allDomains].join(',')}`);
     }
 
     try {

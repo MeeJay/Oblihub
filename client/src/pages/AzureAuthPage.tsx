@@ -151,14 +151,21 @@ export function AzureAuthPage() {
                   className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
               </div>
               <div>
-                <label className="text-xs font-medium text-text-secondary block mb-1">Allowed emails / domains <span className="text-text-muted">(comma-separated, leave blank for any)</span></label>
+                <label className="text-xs font-medium text-text-secondary block mb-1">
+                  Allowed emails / domains <span className="text-text-muted">(comma-separated — leave BLANK to allow any user of the tenant)</span>
+                </label>
                 <input value={editing.allowedEmails} onChange={e => setEditing({ ...editing, allowedEmails: e.target.value })}
-                  placeholder="alice@corp.com, corp.com" className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  placeholder="e.g. yourcompany.com  (leave empty for any tenant user)" className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                <p className="text-[10px] text-text-muted mt-1">
+                  ⚠ Filled with a real placeholder value like <code className="bg-bg-primary px-1 rounded">corp.com</code>? It's a live filter — only that domain will pass. Clear the field to allow everyone in your Azure tenant.
+                </p>
               </div>
               <div>
-                <label className="text-xs font-medium text-text-secondary block mb-1">Allowed Azure group IDs <span className="text-text-muted">(comma-separated, optional)</span></label>
+                <label className="text-xs font-medium text-text-secondary block mb-1">
+                  Allowed Azure group IDs <span className="text-text-muted">(optional, comma-separated GUIDs — restrict to specific security groups)</span>
+                </label>
                 <input value={editing.allowedGroups} onChange={e => setEditing({ ...editing, allowedGroups: e.target.value })}
-                  placeholder="group-guid-1, group-guid-2" className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
+                  placeholder="leave empty to skip group check, or paste GUIDs" className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent" />
               </div>
               <div className="rounded-lg border border-status-pending/40 bg-status-pending/10 px-3 py-2 text-[11px] text-status-pending">
                 <strong>Azure setup:</strong> in the app registration → <em>Authentication</em>, add each proxy_host domain's <code className="bg-bg-primary px-1 rounded">/oauth2/callback</code> URL to <em>Redirect URIs</em>. The list is shown per-provider below once a proxy_host uses it.

@@ -388,6 +388,12 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += `        proxy_set_header X-Forwarded-For $remote_addr;\n`;
     conf += `    }\n\n`;
     conf += `    location /oauth2/ {\n`;
+    // CRITICAL: bypass auth_request here — /oauth2/* IS the sign-in flow itself. Without this
+    // override, the server-level auth_request runs on /oauth2/start, gets 401, redirects to
+    // /oauth2/start?rd=<current URL>, which triggers auth_request again → infinite redirect
+    // loop → ERR_TOO_MANY_REDIRECTS. Same reason /oauth2/callback must be reachable
+    // unauthenticated (Azure hits it before any session exists).
+    conf += `        auth_request off;\n`;
     conf += `        proxy_pass $oblihub_fa_upstream;\n`;
     conf += `        proxy_set_header Host $http_host;\n`;
     conf += `        proxy_set_header X-Forwarded-Host $http_host;\n`;

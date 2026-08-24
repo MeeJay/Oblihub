@@ -34,6 +34,9 @@ export const proxyController = {
       // Re-evaluate which managed stack services need the shared `proxy` network — a new
       // forward_host may now match a compose service that wasn't proxied before.
       void proxyController._refreshProxyNetworks();
+      // If this host uses an Azure AD provider, the sidecar's WHITELIST_DOMAINS env just
+      // became stale — redeploy it so the new domain is accepted post-auth.
+      if (host.azureAuthProviderId) void proxyController._refreshAzureAuthProvider(host.azureAuthProviderId);
       // Auto-create uptime monitor if requested
       if (host.autoMonitor && host.domainNames[0]) {
         const { rescheduleMonitor } = await import('../workers/UptimeWorker');
@@ -56,21 +59,32 @@ export const proxyController = {
 
   async updateProxyHost(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const host = await proxyHostService.update(parseInt(req.params.id, 10), req.body);
+      const id = parseInt(req.params.id, 10);
+      // Snapshot the pre-update provider so we can detect a change and refresh both sides.
+      const before = await proxyHostService.getById(id);
+      const host = await proxyHostService.update(id, req.body);
       if (!host) throw new AppError(404, 'Proxy host not found');
       await nginxService.regenerateAndReload();
       // forward_host may have changed → re-evaluate proxy network membership.
       void proxyController._refreshProxyNetworks();
+      // Refresh Azure sidecar whitelist for both the old and new provider (may be the same).
+      const providers = new Set<number>();
+      if (before?.azureAuthProviderId) providers.add(before.azureAuthProviderId);
+      if (host.azureAuthProviderId) providers.add(host.azureAuthProviderId);
+      for (const pid of providers) void proxyController._refreshAzureAuthProvider(pid);
       res.json({ success: true, data: host });
     } catch (err) { next(err); }
   },
 
   async deleteProxyHost(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      await proxyHostService.delete(parseInt(req.params.id, 10));
+      const id = parseInt(req.params.id, 10);
+      const before = await proxyHostService.getById(id);
+      await proxyHostService.delete(id);
       await nginxService.regenerateAndReload();
       // Deleted host means the target service may no longer need to be on `proxy`.
       void proxyController._refreshProxyNetworks();
+      if (before?.azureAuthProviderId) void proxyController._refreshAzureAuthProvider(before.azureAuthProviderId);
       res.json({ success: true });
     } catch (err) { next(err); }
   },
@@ -82,6 +96,21 @@ export const proxyController = {
       await composeService.refreshProxyNetworksForAllStacks();
     } catch (err) {
       logger.warn({ err }, 'refreshProxyNetworksForAllStacks failed');
+    }
+  },
+
+  /**
+   * Fire-and-forget redeploy of a specific Azure AD sidecar. The sidecar's
+   * OAUTH2_PROXY_WHITELIST_DOMAINS env is computed at deploy time from the set of proxy_hosts
+   * referencing this provider — without a redeploy, adding/removing a host leaves the sidecar
+   * with a stale whitelist and post-auth redirects fail with "domain / port not in whitelist".
+   */
+  async _refreshAzureAuthProvider(providerId: number): Promise<void> {
+    try {
+      const { azureAuthService } = await import('../services/azureAuth.service');
+      await azureAuthService.deployAuthProxy(providerId);
+    } catch (err) {
+      logger.warn({ err, providerId }, 'refresh of Azure auth sidecar failed');
     }
   },
 
