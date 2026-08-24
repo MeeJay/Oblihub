@@ -359,7 +359,12 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     // auth_request fails silently, error_page 500 kicks in, and the operator sees an Oblihub
     // error page that just LOOKS like the app is up. Been there.
     conf += `    # Azure AD forward-auth via oauth2-proxy sidecar (provider ${host.azureAuthProviderId})\n`;
-    conf += `    resolver 127.0.0.11 valid=10s ipv6=off;\n`;
+    // NO resolver directive here — nginx.service already emits one at server level for the
+    // main upstream. Duplicating it here makes nginx refuse `-s reload` with "directive is
+    // duplicate", nginx keeps running the OLD config, and the operator sees mysterious 200s
+    // from the upstream because the auth_request block never became active. The server-level
+    // resolver is inherited into this scope, `$oblihub_fa_upstream` is resolved at runtime
+    // with the same TTL/family settings.
     conf += `    set $oblihub_fa_upstream http://${sidecar}:4180;\n`;
     conf += `    auth_request /_oblihub_fa/auth;\n`;
     conf += `    auth_request_set $auth_user $upstream_http_x_auth_request_user;\n`;
