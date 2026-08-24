@@ -170,6 +170,21 @@ export const azureAuthService = {
       // Ensure the target network exists — we auto-attach to Oblihub's shared `proxy` network.
       await dockerService.ensureProxyNetwork(null);
 
+      // Pull the image if it's not local yet. dockerode's `createContainer` does NOT auto-pull
+      // (unlike the `docker run` CLI), so a fresh Oblihub install without the oauth2-proxy image
+      // cached would fail on the first Azure provider deploy with "No such image". Idempotent —
+      // no-op if the image is already present.
+      try {
+        const stream = await docker.pull(OAUTH2_PROXY_IMAGE);
+        await new Promise<void>((resolve, reject) => {
+          docker.modem.followProgress(stream, (err: Error | null) => err ? reject(err) : resolve());
+        });
+      } catch (err) {
+        // Non-fatal only if the image is already local; verify.
+        try { await docker.getImage(OAUTH2_PROXY_IMAGE).inspect(); }
+        catch { throw new Error(`Failed to pull ${OAUTH2_PROXY_IMAGE}: ${err instanceof Error ? err.message : String(err)}`); }
+      }
+
       // Stop + remove any existing sidecar so we redeploy with fresh config. Cheap idempotent.
       try {
         const existing = docker.getContainer(containerName);
