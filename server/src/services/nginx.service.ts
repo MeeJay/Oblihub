@@ -353,7 +353,14 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   // + callback flow. Stacks on top of Access Lists (satisfy defaults handled by nginx).
   if (host.azureAuthProviderId) {
     const sidecar = `oblihub-azauth-${host.azureAuthProviderId}`;
+    // CRITICAL: use `set $var` + `proxy_pass $var` (not the literal URL) so nginx resolves
+    // the sidecar hostname AT RUNTIME via docker DNS, not once at boot. Without this, a sidecar
+    // that got recreated (IP changed) leaves nginx tapping the stale cached IP forever — every
+    // auth_request fails silently, error_page 500 kicks in, and the operator sees an Oblihub
+    // error page that just LOOKS like the app is up. Been there.
     conf += `    # Azure AD forward-auth via oauth2-proxy sidecar (provider ${host.azureAuthProviderId})\n`;
+    conf += `    resolver 127.0.0.11 valid=10s ipv6=off;\n`;
+    conf += `    set $oblihub_fa_upstream http://${sidecar}:4180;\n`;
     conf += `    auth_request /_oblihub_fa/auth;\n`;
     conf += `    auth_request_set $auth_user $upstream_http_x_auth_request_user;\n`;
     conf += `    auth_request_set $auth_email $upstream_http_x_auth_request_email;\n`;
@@ -367,7 +374,7 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += `    }\n\n`;
     conf += `    location = /_oblihub_fa/auth {\n`;
     conf += `        internal;\n`;
-    conf += `        proxy_pass http://${sidecar}:4180/oauth2/auth;\n`;
+    conf += `        proxy_pass $oblihub_fa_upstream/oauth2/auth;\n`;
     conf += `        proxy_pass_request_body off;\n`;
     conf += `        proxy_set_header Content-Length "";\n`;
     conf += `        proxy_set_header X-Original-URI $request_uri;\n`;
@@ -376,7 +383,7 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += `        proxy_set_header X-Forwarded-For $remote_addr;\n`;
     conf += `    }\n\n`;
     conf += `    location /oauth2/ {\n`;
-    conf += `        proxy_pass http://${sidecar}:4180;\n`;
+    conf += `        proxy_pass $oblihub_fa_upstream;\n`;
     conf += `        proxy_set_header Host $http_host;\n`;
     conf += `        proxy_set_header X-Forwarded-Host $http_host;\n`;
     conf += `        proxy_set_header X-Forwarded-Proto $scheme;\n`;

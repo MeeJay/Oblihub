@@ -70,9 +70,11 @@ export const azureAuthService = {
     allowedEmails?: string[];
     allowedGroups?: string[];
   }): Promise<AzureAuthProvider> {
-    // Generate a random 32-byte cookie signing secret. Stored plaintext (it's per-provider,
-    // rotating it invalidates every existing session for that provider — deliberate).
-    const cookieSecret = crypto.randomBytes(32).toString('base64');
+    // Generate a random 32-char cookie signing secret. oauth2-proxy validates STRING LENGTH
+    // (not base64-decoded byte length) and rejects anything that isn't exactly 16/24/32 chars.
+    // 16 random bytes → 32 hex chars, always valid. Rotating this invalidates every existing
+    // session for the provider (deliberate — per-provider secret, no shared sessions).
+    const cookieSecret = crypto.randomBytes(16).toString('hex');
     const [row] = await db('azure_auth_providers').insert({
       name: data.name,
       tenant_id: data.tenantId,
@@ -127,7 +129,16 @@ export const azureAuthService = {
 
     const containerName = `oblihub-azauth-${providerId}`;
     const clientSecret = decryptSecret(row.client_secret_enc as string);
-    const cookieSecret = row.cookie_secret as string;
+    // Auto-heal providers created before the length fix — old default was a 44-char base64
+    // string that oauth2-proxy refuses (needs exactly 16/24/32 char ASCII). Regenerate + persist
+    // silently so the operator doesn't have to click anything. Invalidates existing sessions
+    // (there are none if this branch fires — the sidecar was crashlooping).
+    let cookieSecret = row.cookie_secret as string;
+    if (![16, 24, 32].includes(cookieSecret?.length)) {
+      cookieSecret = crypto.randomBytes(16).toString('hex');
+      await db('azure_auth_providers').where({ id: providerId }).update({ cookie_secret: cookieSecret, updated_at: new Date() });
+      logger.info({ providerId }, 'Migrated cookie_secret to valid 32-char format');
+    }
     const allowedEmails = parseJson(row.allowed_emails) as string[] | null;
     const allowedGroups = parseJson(row.allowed_groups) as string[] | null;
 
@@ -192,7 +203,11 @@ export const azureAuthService = {
         await existing.remove({ force: true }).catch(() => {});
       } catch { /* not there — fine */ }
 
-      await docker.createContainer({
+      // Attach to `proxy` via NetworkingConfig — HostConfig.NetworkMode alone doesn't reliably
+      // attach when the network is external + already exists (dockerode silently falls back to
+      // the default bridge network, and docker DNS resolution from other containers on `proxy`
+      // fails with "no such host" — auth_request then dies silently).
+      const container = await docker.createContainer({
         name: containerName,
         Image: OAUTH2_PROXY_IMAGE,
         Env: env,
@@ -201,11 +216,14 @@ export const azureAuthService = {
           'oblihub.managed': 'true',
         },
         HostConfig: {
-          NetworkMode: SIDECAR_NETWORK,
           RestartPolicy: { Name: 'unless-stopped' },
         },
+        NetworkingConfig: {
+          EndpointsConfig: {
+            [SIDECAR_NETWORK]: {},
+          },
+        },
       });
-      const container = docker.getContainer(containerName);
       await container.start();
 
       await db('azure_auth_providers').where({ id: providerId }).update({
