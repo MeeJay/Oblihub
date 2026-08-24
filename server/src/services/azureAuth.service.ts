@@ -163,11 +163,13 @@ export const azureAuthService = {
       'OAUTH2_PROXY_SET_XAUTHREQUEST=true',
       // Scope covers openid+email+profile out of the box for Entra ID.
       'OAUTH2_PROXY_SCOPE=openid email profile',
-      // Azure ID tokens with group claims routinely exceed the 4kb single-cookie limit; when
-      // that happens oauth2-proxy splits into _0/_1/... and warns about the split. Minimal mode
-      // keeps only the refresh token in the cookie and reconstructs the rest server-side per
-      // request — smaller cookies, no split, no warning.
-      'OAUTH2_PROXY_SESSION_COOKIE_MINIMAL=true',
+      // NOTE: Azure ID tokens with group claims often exceed the 4kb single-cookie limit —
+      // oauth2-proxy logs "Multiple cookies are required..." and splits into _0/_1/... which
+      // works but is noisy. The clean fix would be SESSION_COOKIE_MINIMAL=true, but that is
+      // incompatible with PASS_ACCESS_TOKEN and the X-Auth-Request-Access-Token header emitted
+      // by SET_XAUTHREQUEST (minimal mode strips the access_token from the cookie, so those
+      // headers have nothing to send and startup fails validation). Proper fix when this
+      // becomes a real problem: add a Redis sidecar and set SESSION_STORE_TYPE=redis.
     ];
     // Email whitelist. `*` (default when nothing specified) = any authenticated user in the
     // tenant. When the operator lists specific emails/domains, restrict.
