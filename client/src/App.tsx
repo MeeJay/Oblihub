@@ -17,6 +17,7 @@ import { ImagesPage } from '@/pages/ImagesPage';
 import { NetworksPage } from '@/pages/NetworksPage';
 import { VolumesPage } from '@/pages/VolumesPage';
 import { ProxyHostsPage } from '@/pages/ProxyHostsPage';
+import { AzureAuthPage } from '@/pages/AzureAuthPage';
 import { CertificatesPage } from '@/pages/CertificatesPage';
 import { RedirectionsPage } from '@/pages/RedirectionsPage';
 import { StreamsPage } from '@/pages/StreamsPage';
@@ -95,6 +96,7 @@ export default function App() {
         <Route path="/networks" element={<ProtectedRoute><AppLayout><NetworksPage /></AppLayout></ProtectedRoute>} />
         <Route path="/volumes" element={<ProtectedRoute><AppLayout><VolumesPage /></AppLayout></ProtectedRoute>} />
         <Route path="/proxy-hosts" element={<ProtectedRoute><AppLayout><ProxyHostsPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/azure-auth" element={<ProtectedRoute><AppLayout><AzureAuthPage /></AppLayout></ProtectedRoute>} />
         <Route path="/redirections" element={<ProtectedRoute><AppLayout><RedirectionsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/streams" element={<ProtectedRoute><AppLayout><StreamsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/dead-hosts" element={<ProtectedRoute><AppLayout><DeadHostsPage /></AppLayout></ProtectedRoute>} />

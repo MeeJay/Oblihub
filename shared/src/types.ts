@@ -369,6 +369,9 @@ export interface ProxyHost {
   // `nginx-proxy-manager_default` or `traefik_default` to have Oblihub's auto-override wire
   // the container onto an EXTERNAL reverse proxy's network instead.
   dockerNetwork: string | null;
+  // When set, nginx delegates authentication for this host to the Azure AD provider's
+  // oauth2-proxy sidecar. Null = no forward-auth (Access Lists / basic-auth still apply).
+  azureAuthProviderId: number | null;
   certificate?: Certificate | null;
   createdAt: string;
   updatedAt: string;
@@ -428,6 +431,26 @@ export interface DeadHost {
   advancedConfig: string | null;
   enabled: boolean;
   certificate?: Certificate | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Azure AD (Entra ID) auth provider — one app registration + its auto-deployed oauth2-proxy
+ * sidecar. `hasClientSecret` mirrors the pattern used for engine SSH keys and registry creds:
+ * the raw ciphertext never crosses the API, only the presence flag.
+ */
+export interface AzureAuthProvider {
+  id: number;
+  name: string;
+  tenantId: string;
+  clientId: string;
+  hasClientSecret: boolean;
+  allowedEmails: string[] | null;
+  allowedGroups: string[] | null;
+  containerName: string | null;
+  containerStatus: 'stopped' | 'running' | 'error' | null;
+  lastError: string | null;
   createdAt: string;
   updatedAt: string;
 }

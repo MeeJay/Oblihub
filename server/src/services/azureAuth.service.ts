@@ -1,0 +1,245 @@
+import * as crypto from 'crypto';
+import { db } from '../db';
+import { encryptSecret, decryptSecret } from '../utils/crypto';
+import { dockerService } from './docker.service';
+import { logger } from '../utils/logger';
+import type { AzureAuthProvider } from '@oblihub/shared';
+
+/**
+ * One AzureAuthProvider row = one Azure app registration + one dedicated `oauth2-proxy`
+ * sidecar container. The sidecar answers Nginx's `auth_request` for every proxy_host that
+ * references this provider (2xx = session valid, 401 = redirect to Azure sign-in).
+ *
+ * Sidecar naming: `oblihub-azauth-<providerId>`. Kept on the shared `proxy` network so nginx
+ * can reach it via docker DNS.
+ *
+ * Callback URL model: oauth2-proxy runs with `--reverse-proxy=true` and derives its redirect
+ * dynamically from the incoming `X-Forwarded-Host` header. That way ONE Azure app registration
+ * (this row) can serve any number of proxy_hosts — each with its own domain — as long as the
+ * operator adds every domain's `/oauth2/callback` URL to the Azure app's Redirect URIs list.
+ * The UI surfaces the list of callback URLs to add so the operator can copy them into Azure.
+ */
+
+const OAUTH2_PROXY_IMAGE = 'quay.io/oauth2-proxy/oauth2-proxy:latest';
+
+function rowToProvider(row: Record<string, unknown>): AzureAuthProvider {
+  return {
+    id: row.id as number,
+    name: row.name as string,
+    tenantId: row.tenant_id as string,
+    clientId: row.client_id as string,
+    hasClientSecret: !!row.client_secret_enc,
+    allowedEmails: parseJson(row.allowed_emails) as string[] | null,
+    allowedGroups: parseJson(row.allowed_groups) as string[] | null,
+    containerName: (row.container_name as string) || null,
+    containerStatus: (row.container_status as AzureAuthProvider['containerStatus']) || null,
+    lastError: (row.last_error as string) || null,
+    createdAt: (row.created_at as Date).toISOString(),
+    updatedAt: (row.updated_at as Date).toISOString(),
+  };
+}
+
+function parseJson(raw: unknown): unknown {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw) { try { return JSON.parse(raw); } catch { return null; } }
+  return raw;
+}
+
+/** The docker network name the sidecar attaches to. Matches the proxy_host default network so
+ *  the built-in nginx can reach it via docker DNS. When Oblihub is fronted by an external
+ *  reverse proxy on a different network, the sidecar is attached to that one too on demand. */
+const SIDECAR_NETWORK = 'proxy';
+
+export const azureAuthService = {
+  async list(): Promise<AzureAuthProvider[]> {
+    const rows = await db('azure_auth_providers').orderBy('name');
+    return rows.map(rowToProvider);
+  },
+
+  async getById(id: number): Promise<AzureAuthProvider | null> {
+    const row = await db('azure_auth_providers').where({ id }).first();
+    return row ? rowToProvider(row) : null;
+  },
+
+  async create(data: {
+    name: string;
+    tenantId: string;
+    clientId: string;
+    clientSecret: string;
+    allowedEmails?: string[];
+    allowedGroups?: string[];
+  }): Promise<AzureAuthProvider> {
+    // Generate a random 32-byte cookie signing secret. Stored plaintext (it's per-provider,
+    // rotating it invalidates every existing session for that provider — deliberate).
+    const cookieSecret = crypto.randomBytes(32).toString('base64');
+    const [row] = await db('azure_auth_providers').insert({
+      name: data.name,
+      tenant_id: data.tenantId,
+      client_id: data.clientId,
+      client_secret_enc: encryptSecret(data.clientSecret),
+      cookie_secret: cookieSecret,
+      allowed_emails: data.allowedEmails?.length ? JSON.stringify(data.allowedEmails) : null,
+      allowed_groups: data.allowedGroups?.length ? JSON.stringify(data.allowedGroups) : null,
+      container_status: 'stopped',
+    }).returning('*');
+    return rowToProvider(row);
+  },
+
+  async update(id: number, data: {
+    name?: string;
+    tenantId?: string;
+    clientId?: string;
+    clientSecret?: string;    // undefined = keep, '' = clear (rare), non-empty = replace
+    allowedEmails?: string[] | null;
+    allowedGroups?: string[] | null;
+  }): Promise<AzureAuthProvider | null> {
+    const updates: Record<string, unknown> = { updated_at: new Date() };
+    if (data.name !== undefined) updates.name = data.name;
+    if (data.tenantId !== undefined) updates.tenant_id = data.tenantId;
+    if (data.clientId !== undefined) updates.client_id = data.clientId;
+    if (data.clientSecret !== undefined && data.clientSecret !== '') {
+      updates.client_secret_enc = encryptSecret(data.clientSecret);
+    }
+    if (data.allowedEmails !== undefined) updates.allowed_emails = data.allowedEmails?.length ? JSON.stringify(data.allowedEmails) : null;
+    if (data.allowedGroups !== undefined) updates.allowed_groups = data.allowedGroups?.length ? JSON.stringify(data.allowedGroups) : null;
+    const [row] = await db('azure_auth_providers').where({ id }).update(updates).returning('*');
+    return row ? rowToProvider(row) : null;
+  },
+
+  async delete(id: number): Promise<boolean> {
+    // Tear down the sidecar first so we don't leave a dangling container.
+    try { await this.tearDownAuthProxy(id); } catch { /* best-effort */ }
+    const count = await db('azure_auth_providers').where({ id }).delete();
+    return count > 0;
+  },
+
+  /**
+   * Ensure the oauth2-proxy sidecar for this provider exists and is running with the current
+   * config. Idempotent: recreate if config drifted, no-op if already up to date. Called on:
+   *   - provider create/update
+   *   - any proxy_host that references it being deployed
+   *   - explicit "restart auth" button in the UI
+   */
+  async deployAuthProxy(providerId: number): Promise<void> {
+    const row = await db('azure_auth_providers').where({ id: providerId }).first();
+    if (!row) throw new Error(`Azure auth provider ${providerId} not found`);
+
+    const containerName = `oblihub-azauth-${providerId}`;
+    const clientSecret = decryptSecret(row.client_secret_enc as string);
+    const cookieSecret = row.cookie_secret as string;
+    const allowedEmails = parseJson(row.allowed_emails) as string[] | null;
+    const allowedGroups = parseJson(row.allowed_groups) as string[] | null;
+
+    const env: string[] = [
+      'OAUTH2_PROXY_PROVIDER=entra-id',
+      `OAUTH2_PROXY_OIDC_ISSUER_URL=https://login.microsoftonline.com/${row.tenant_id}/v2.0`,
+      `OAUTH2_PROXY_CLIENT_ID=${row.client_id}`,
+      `OAUTH2_PROXY_CLIENT_SECRET=${clientSecret}`,
+      `OAUTH2_PROXY_COOKIE_SECRET=${cookieSecret}`,
+      // Auth-only mode: nginx forwards the request via auth_request; we return 2xx / 401 with
+      // no upstream proxying done by oauth2-proxy itself. The sign-in / callback flow still
+      // happens through the /oauth2/ location that nginx proxies to this container.
+      'OAUTH2_PROXY_UPSTREAMS=static://200',
+      'OAUTH2_PROXY_HTTP_ADDRESS=0.0.0.0:4180',
+      // Trust X-Forwarded-* from nginx so cookie domain + redirect_url adapt per host.
+      'OAUTH2_PROXY_REVERSE_PROXY=true',
+      // Skip the "click to sign in" welcome page — go straight to Azure on 401.
+      'OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true',
+      // Emit auth headers upstream so backends can read the identity.
+      'OAUTH2_PROXY_PASS_ACCESS_TOKEN=true',
+      'OAUTH2_PROXY_PASS_USER_HEADERS=true',
+      'OAUTH2_PROXY_SET_XAUTHREQUEST=true',
+      // Scope covers openid+email+profile out of the box for Entra ID.
+      'OAUTH2_PROXY_SCOPE=openid email profile',
+    ];
+    // Email whitelist. `*` (default when nothing specified) = any authenticated user in the
+    // tenant. When the operator lists specific emails/domains, restrict.
+    if (allowedEmails && allowedEmails.length > 0) {
+      env.push(`OAUTH2_PROXY_EMAIL_DOMAINS=${allowedEmails.join(',')}`);
+    } else {
+      env.push('OAUTH2_PROXY_EMAIL_DOMAINS=*');
+    }
+    // Azure group restriction — oauth2-proxy checks the `groups` claim.
+    if (allowedGroups && allowedGroups.length > 0) {
+      env.push(`OAUTH2_PROXY_ALLOWED_GROUPS=${allowedGroups.join(',')}`);
+    }
+
+    try {
+      const docker = await dockerService.forEngine(null);
+      // Ensure the target network exists — we auto-attach to Oblihub's shared `proxy` network.
+      await dockerService.ensureProxyNetwork(null);
+
+      // Stop + remove any existing sidecar so we redeploy with fresh config. Cheap idempotent.
+      try {
+        const existing = docker.getContainer(containerName);
+        await existing.stop({ t: 5 }).catch(() => {});
+        await existing.remove({ force: true }).catch(() => {});
+      } catch { /* not there — fine */ }
+
+      await docker.createContainer({
+        name: containerName,
+        Image: OAUTH2_PROXY_IMAGE,
+        Env: env,
+        Labels: {
+          'oblihub.azauth.provider_id': String(providerId),
+          'oblihub.managed': 'true',
+        },
+        HostConfig: {
+          NetworkMode: SIDECAR_NETWORK,
+          RestartPolicy: { Name: 'unless-stopped' },
+        },
+      });
+      const container = docker.getContainer(containerName);
+      await container.start();
+
+      await db('azure_auth_providers').where({ id: providerId }).update({
+        container_name: containerName,
+        container_status: 'running',
+        last_error: null,
+        updated_at: new Date(),
+      });
+      logger.info({ providerId, containerName }, 'Azure auth sidecar deployed');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await db('azure_auth_providers').where({ id: providerId }).update({
+        container_status: 'error',
+        last_error: msg,
+        updated_at: new Date(),
+      });
+      logger.error({ providerId, err: msg }, 'Failed to deploy Azure auth sidecar');
+      throw err;
+    }
+  },
+
+  async tearDownAuthProxy(providerId: number): Promise<void> {
+    const containerName = `oblihub-azauth-${providerId}`;
+    try {
+      const docker = await dockerService.forEngine(null);
+      const c = docker.getContainer(containerName);
+      await c.stop({ t: 5 }).catch(() => {});
+      await c.remove({ force: true }).catch(() => {});
+      await db('azure_auth_providers').where({ id: providerId }).update({
+        container_status: 'stopped',
+        updated_at: new Date(),
+      });
+    } catch (err) {
+      logger.warn({ providerId, err: err instanceof Error ? err.message : String(err) }, 'tearDownAuthProxy failed');
+    }
+  },
+
+  /** List every proxy_host domain that references this provider — the operator needs to add
+   *  each one's `/oauth2/callback` URL to the Azure app's Redirect URIs list. Rendered in
+   *  the UI as a copy-friendly list. */
+  async listCallbackUrls(providerId: number): Promise<string[]> {
+    const hosts = await db('proxy_hosts').where({ azure_auth_provider_id: providerId }).select('domain_names', 'ssl_forced');
+    const urls: string[] = [];
+    for (const h of hosts) {
+      const domains = parseJson(h.domain_names) as string[] | null;
+      if (!Array.isArray(domains)) continue;
+      const scheme = h.ssl_forced ? 'https' : 'http';
+      for (const d of domains) urls.push(`${scheme}://${d}/oauth2/callback`);
+    }
+    return urls;
+  },
+};

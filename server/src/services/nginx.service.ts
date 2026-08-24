@@ -347,6 +347,44 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += combinedAccessListBlock(host.id, attached) + '\n\n';
   }
 
+  // Azure AD forward-auth via oauth2-proxy sidecar. Emitted only when the proxy_host
+  // references a provider — nginx delegates each request's auth check to the sidecar via
+  // auth_request, and the /oauth2/ subpath is proxied through to the sidecar for the sign-in
+  // + callback flow. Stacks on top of Access Lists (satisfy defaults handled by nginx).
+  if (host.azureAuthProviderId) {
+    const sidecar = `oblihub-azauth-${host.azureAuthProviderId}`;
+    conf += `    # Azure AD forward-auth via oauth2-proxy sidecar (provider ${host.azureAuthProviderId})\n`;
+    conf += `    auth_request /_oblihub_fa/auth;\n`;
+    conf += `    auth_request_set $auth_user $upstream_http_x_auth_request_user;\n`;
+    conf += `    auth_request_set $auth_email $upstream_http_x_auth_request_email;\n`;
+    conf += `    auth_request_set $auth_groups $upstream_http_x_auth_request_groups;\n`;
+    conf += `    proxy_set_header X-Auth-User $auth_user;\n`;
+    conf += `    proxy_set_header X-Auth-Email $auth_email;\n`;
+    conf += `    proxy_set_header X-Auth-Groups $auth_groups;\n`;
+    conf += `    error_page 401 = @_oblihub_fa_signin;\n\n`;
+    conf += `    location @_oblihub_fa_signin {\n`;
+    conf += `        return 302 /oauth2/start?rd=$scheme://$http_host$request_uri;\n`;
+    conf += `    }\n\n`;
+    conf += `    location = /_oblihub_fa/auth {\n`;
+    conf += `        internal;\n`;
+    conf += `        proxy_pass http://${sidecar}:4180/oauth2/auth;\n`;
+    conf += `        proxy_pass_request_body off;\n`;
+    conf += `        proxy_set_header Content-Length "";\n`;
+    conf += `        proxy_set_header X-Original-URI $request_uri;\n`;
+    conf += `        proxy_set_header X-Forwarded-Host $http_host;\n`;
+    conf += `        proxy_set_header X-Forwarded-Proto $scheme;\n`;
+    conf += `        proxy_set_header X-Forwarded-For $remote_addr;\n`;
+    conf += `    }\n\n`;
+    conf += `    location /oauth2/ {\n`;
+    conf += `        proxy_pass http://${sidecar}:4180;\n`;
+    conf += `        proxy_set_header Host $http_host;\n`;
+    conf += `        proxy_set_header X-Forwarded-Host $http_host;\n`;
+    conf += `        proxy_set_header X-Forwarded-Proto $scheme;\n`;
+    conf += `        proxy_set_header X-Forwarded-For $remote_addr;\n`;
+    conf += `        proxy_set_header X-Real-IP $remote_addr;\n`;
+    conf += `    }\n\n`;
+  }
+
   if (host.cachingEnabled) {
     conf += cachingSnippet() + '\n\n';
   }

@@ -64,6 +64,7 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, acces
     wakingPageId: (row.waking_page_id as number) || null,
     autoMonitor: (row.auto_monitor as boolean) || false,
     dockerNetwork: (row.docker_network as string) || null,
+    azureAuthProviderId: (row.azure_auth_provider_id as number) || null,
     certificate: cert || null,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
@@ -234,6 +235,7 @@ export const proxyHostService = {
       waking_page_id: data.wakingPageId || null,
       auto_monitor: data.autoMonitor || false,
       docker_network: data.dockerNetwork || null,
+      azure_auth_provider_id: data.azureAuthProviderId || null,
     }).returning('*');
     // Hydrate the junction from accessListIds[] if provided; otherwise fall back to the
     // legacy single accessListId so older clients still work.
@@ -276,6 +278,7 @@ export const proxyHostService = {
     if (data.wakingPageId !== undefined) update.waking_page_id = data.wakingPageId;
     if (data.autoMonitor !== undefined) update.auto_monitor = data.autoMonitor;
     if (data.dockerNetwork !== undefined) update.docker_network = data.dockerNetwork;
+    if (data.azureAuthProviderId !== undefined) update.azure_auth_provider_id = data.azureAuthProviderId;
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');
     if (!row) return null;
     // Sync junction when the caller passed an explicit list (empty array = "clear all").

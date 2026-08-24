@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { RefreshCw, Plus, Trash2, Edit2, Globe, Shield, Zap, Lock, Power, PowerOff, ChevronDown, ChevronRight, Moon } from 'lucide-react';
 import { proxyApi } from '@/api/proxy.api';
 import { stacksApi } from '@/api/stacks.api';
-import type { ProxyHost, Certificate, AccessList, CustomPage, Stack, Container } from '@oblihub/shared';
+import { azureAuthApi } from '@/api/azureAuth.api';
+import type { ProxyHost, Certificate, AccessList, CustomPage, Stack, Container, AzureAuthProvider } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
 const DEFAULT_HOST: Partial<ProxyHost> = {
@@ -25,6 +26,7 @@ export function ProxyHostsPage() {
   const [hosts, setHosts] = useState<ProxyHost[]>([]);
   const [certs, setCerts] = useState<Certificate[]>([]);
   const [accessLists, setAccessLists] = useState<AccessList[]>([]);
+  const [azureProviders, setAzureProviders] = useState<AzureAuthProvider[]>([]);
   const [customPages, setCustomPages] = useState<CustomPage[]>([]);
   const [allContainers, setAllContainers] = useState<{ container: Container; stackName: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,14 +38,16 @@ export function ProxyHostsPage() {
 
   const load = async () => {
     try {
-      const [h, c, a, p, stacks] = await Promise.all([
+      const [h, c, a, p, stacks, az] = await Promise.all([
         proxyApi.listHosts(), proxyApi.listCertificates(), proxyApi.listAccessLists(), proxyApi.listCustomPages(),
         stacksApi.list().catch(() => [] as Stack[]),
+        azureAuthApi.list().catch(() => [] as AzureAuthProvider[]),
       ]);
       setHosts(h);
       setCerts(c);
       setAccessLists(a);
       setCustomPages(p);
+      setAzureProviders(az);
       const flat: { container: Container; stackName: string }[] = [];
       for (const s of stacks) for (const ctr of s.containers) flat.push({ container: ctr, stackName: s.name });
       setAllContainers(flat);
@@ -346,6 +350,35 @@ export function ProxyHostsPage() {
                       );
                     })}
                   </div>
+                )}
+              </div>
+
+              {/* Azure AD forward-auth — stackable with Access Lists (nginx satisfies both). */}
+              <div>
+                <label className="text-xs font-medium text-text-secondary block mb-1.5">
+                  Azure AD forward-auth <span className="text-text-muted">(delegates auth to an oauth2-proxy sidecar)</span>
+                </label>
+                <select
+                  value={editing.azureAuthProviderId || ''}
+                  onChange={e => setEditing(h => h ? { ...h, azureAuthProviderId: e.target.value ? parseInt(e.target.value, 10) : null } : null)}
+                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  <option value="">None — no forward-auth</option>
+                  {azureProviders.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} {p.containerStatus === 'running' ? '' : `(${p.containerStatus || 'not deployed'})`}
+                    </option>
+                  ))}
+                </select>
+                {editing.azureAuthProviderId && editing.domainNames?.[0] && (
+                  <p className="text-[10px] text-status-pending mt-1.5">
+                    ⚠ Add this callback URL to the Azure app's Redirect URIs: <code className="bg-bg-tertiary px-1 rounded">https://{editing.domainNames[0]}/oauth2/callback</code>
+                  </p>
+                )}
+                {azureProviders.length === 0 && (
+                  <p className="text-[10px] text-text-muted mt-1.5">
+                    No providers yet — create one in the <a href="/azure-auth" className="text-accent hover:underline">Azure Auth page</a>.
+                  </p>
                 )}
               </div>
 
