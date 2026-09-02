@@ -490,6 +490,88 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   conf += `    resolver 127.0.0.11${process.env.PROXY_TAILSCALE_DNS === 'true' ? ' 100.100.100.100' : ''} valid=10s ipv6=off;\n`;
   conf += `    set $upstream ${upstream};\n\n`;
 
+  // ── Per-path sub-routes ──
+  // Emitted BEFORE `location /` so nginx picks the most specific prefix. We also sort by
+  // path length descending as a defensive measure — nginx does prefix-longest-wins natively,
+  // but a stable order keeps the emitted config diff-friendly across reloads.
+  if (host.routes && host.routes.length > 0) {
+    const routes = [...host.routes].sort((a, b) => b.pathIn.length - a.pathIn.length);
+    for (const route of routes) {
+      const rPath = sanitizeForNginx(route.pathIn);
+      const rScheme = route.forwardScheme === 'https' ? 'https' : 'http';
+      const rHost = sanitizeForNginx(route.forwardHost);
+      const rPort = route.forwardPort;
+      // Path-rewrite trick: `proxy_pass http://host:port/newprefix` (trailing URI) tells nginx
+      // to strip the location's matched prefix from $uri and prepend /newprefix before sending
+      // upstream. Without a trailing URI, nginx passes the full request URI through unchanged.
+      const rewrite = (route.pathRewrite || '').trim();
+      const rUpstream = rewrite.length > 0
+        ? `${rScheme}://${rHost}:${rPort}${rewrite.startsWith('/') ? rewrite : '/' + rewrite}`
+        : `${rScheme}://${rHost}:${rPort}`;
+
+      conf += `    location ${rPath} {\n`;
+      // Auth mode:
+      //   'inherit' → nothing to emit; server-scope `auth_request` (if any) applies via inheritance.
+      //   'none'    → `auth_request off` — this route bypasses the sidecar completely (useful for
+      //               API webhook endpoints called by external services that can't do OIDC).
+      //   'override'→ v1 falls back to 'inherit' with a log warning. Emitting a per-route
+      //               `auth_request` targeting a different sidecar would also need per-route
+      //               /oauth2/ callback paths + Azure app redirect URIs, out of scope for v1.
+      if (route.authMode === 'none') {
+        conf += `        auth_request off;\n`;
+      } else if (route.authMode === 'override') {
+        logger.warn({ hostId: host.id, routeId: route.id }, 'route.authMode=override not yet supported — treating as inherit');
+      }
+      // Access list mode:
+      //   'inherit' → server-scope `allow/deny` + `auth_basic` are inherited automatically.
+      //   'none'    → `auth_basic off` disables basic-auth; `allow all` is a best-effort reset
+      //               of the IP allow-list (nginx can't "unset" a `deny all` from parent scope,
+      //               so this is not a hermetic bypass — document that access-list bypass on a
+      //               route only makes sense when the host uses basic-auth OR when the parent
+      //               ACL has no explicit `deny all`).
+      //   'override'→ same v1 fallback story as auth override.
+      if (route.accessListMode === 'none') {
+        conf += `        auth_basic off;\n`;
+        conf += `        allow all;\n`;
+      } else if (route.accessListMode === 'override') {
+        logger.warn({ hostId: host.id, routeId: route.id }, 'route.accessListMode=override not yet supported — treating as inherit');
+      }
+      conf += `        proxy_pass ${rUpstream};\n`;
+      conf += `        proxy_set_header Host $host;\n`;
+      conf += `        proxy_set_header X-Real-IP $remote_addr;\n`;
+      conf += `        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n`;
+      conf += `        proxy_set_header X-Forwarded-Proto $scheme;\n`;
+      conf += `        proxy_set_header X-Forwarded-Host $host;\n`;
+      conf += `        proxy_set_header X-Forwarded-Port $server_port;\n`;
+      // Only inject X-Auth-* if the host has forward-auth AND this route inherits it (else the
+      // vars are empty strings, which is harmless but noisy).
+      if (host.azureAuthProviderId && route.authMode !== 'none') {
+        conf += `        proxy_set_header X-Auth-User $auth_user;\n`;
+        conf += `        proxy_set_header X-Auth-Email $auth_email;\n`;
+        conf += `        proxy_set_header X-Auth-Groups $auth_groups;\n`;
+      }
+      conf += `        proxy_http_version 1.1;\n`;
+      // Per-route override for websocket / buffering; null = fall back to host-level defaults
+      // (which get applied to `location /` further down but NOT here — we're isolated).
+      const wsOn = route.websocketSupport ?? host.websocketSupport;
+      if (wsOn) {
+        conf += `        proxy_set_header Upgrade $http_upgrade;\n`;
+        conf += `        proxy_set_header Connection $http_connection;\n`;
+      }
+      const bufOff = (route.proxyBuffering ?? host.proxyBuffering) === false;
+      if (bufOff) {
+        conf += `        proxy_buffering off;\n`;
+      }
+      const rConnect = host.proxyConnectTimeout || 60;
+      const rSend = host.proxySendTimeout || 60;
+      const rRead = host.proxyReadTimeout || 60;
+      conf += `        proxy_connect_timeout ${rConnect}s;\n`;
+      conf += `        proxy_send_timeout ${rSend}s;\n`;
+      conf += `        proxy_read_timeout ${rRead}s;\n`;
+      conf += `    }\n\n`;
+    }
+  }
+
   // Main location
   conf += `    location / {\n`;
   conf += `        proxy_pass $upstream;\n`;

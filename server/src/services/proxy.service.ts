@@ -1,5 +1,5 @@
 import { db } from '../db';
-import type { ProxyHost, RedirectionHost, StreamHost, DeadHost, AccessList, Certificate, CustomPage } from '@oblihub/shared';
+import type { ProxyHost, ProxyHostRoute, RedirectionHost, StreamHost, DeadHost, AccessList, Certificate, CustomPage } from '@oblihub/shared';
 import { logger } from '../utils/logger';
 
 // ── Helpers ──
@@ -23,7 +23,64 @@ function certRow(row: Record<string, unknown>): Certificate {
   };
 }
 
-function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, accessListIds: number[] = []): ProxyHost {
+function routeRow(row: Record<string, unknown>): ProxyHostRoute {
+  const parseIds = (raw: unknown): number[] => {
+    if (Array.isArray(raw)) return raw as number[];
+    if (typeof raw === 'string' && raw) { try { return JSON.parse(raw) as number[]; } catch { return []; } }
+    return [];
+  };
+  return {
+    id: row.id as number,
+    proxyHostId: row.proxy_host_id as number,
+    sortOrder: (row.sort_order as number) || 0,
+    pathIn: row.path_in as string,
+    pathRewrite: (row.path_rewrite as string) || null,
+    forwardScheme: (row.forward_scheme as 'http' | 'https') || 'http',
+    forwardHost: row.forward_host as string,
+    forwardPort: row.forward_port as number,
+    authMode: (row.auth_mode as 'inherit' | 'none' | 'override') || 'inherit',
+    azureAuthProviderOverrideId: (row.azure_auth_provider_override_id as number) || null,
+    accessListMode: (row.access_list_mode as 'inherit' | 'none' | 'override') || 'inherit',
+    accessListOverrideIds: parseIds(row.access_list_override_ids),
+    websocketSupport: row.websocket_support as boolean | null ?? null,
+    proxyBuffering: row.proxy_buffering as boolean | null ?? null,
+    createdAt: (row.created_at as Date).toISOString(),
+    updatedAt: (row.updated_at as Date).toISOString(),
+  };
+}
+
+async function getRoutesForHost(proxyHostId: number): Promise<ProxyHostRoute[]> {
+  const rows = await db('proxy_host_routes').where({ proxy_host_id: proxyHostId }).orderBy('sort_order').orderBy('id');
+  return rows.map(routeRow);
+}
+
+/**
+ * Replace all routes for a proxy host in one shot. Cheaper than diffing (route rows are cheap,
+ * no cascading FKs to worry about) and it means the UI can freely reorder / add / remove without
+ * having to track per-row PKs.
+ */
+async function setRoutesForHost(proxyHostId: number, routes: Partial<ProxyHostRoute>[] | undefined): Promise<void> {
+  if (routes === undefined) return; // caller doesn't want to touch routes
+  await db('proxy_host_routes').where({ proxy_host_id: proxyHostId }).delete();
+  if (routes.length === 0) return;
+  await db('proxy_host_routes').insert(routes.map((r, idx) => ({
+    proxy_host_id: proxyHostId,
+    sort_order: r.sortOrder ?? idx,
+    path_in: r.pathIn,
+    path_rewrite: r.pathRewrite || null,
+    forward_scheme: r.forwardScheme || 'http',
+    forward_host: r.forwardHost,
+    forward_port: r.forwardPort,
+    auth_mode: r.authMode || 'inherit',
+    azure_auth_provider_override_id: r.azureAuthProviderOverrideId || null,
+    access_list_mode: r.accessListMode || 'inherit',
+    access_list_override_ids: r.accessListOverrideIds ? JSON.stringify(r.accessListOverrideIds) : null,
+    websocket_support: r.websocketSupport ?? null,
+    proxy_buffering: r.proxyBuffering ?? null,
+  })));
+}
+
+function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, accessListIds: number[] = [], routes: ProxyHostRoute[] = []): ProxyHost {
   return {
     id: row.id as number,
     domainNames: (row.domain_names as string[]) || [],
@@ -65,6 +122,7 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, acces
     autoMonitor: (row.auto_monitor as boolean) || false,
     dockerNetwork: (row.docker_network as string) || null,
     azureAuthProviderId: (row.azure_auth_provider_id as number) || null,
+    routes,
     certificate: cert || null,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
@@ -188,17 +246,17 @@ export const certificateService = {
 export const proxyHostService = {
   async getAll(): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id))));
   },
 
   async getById(id: number): Promise<ProxyHost | null> {
     const row = await db('proxy_hosts').where({ id }).first();
-    return row ? proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id)) : null;
+    return row ? proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id)) : null;
   },
 
   async getByStackId(stackId: number): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').where({ stack_id: stackId }).orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id))));
   },
 
   async create(data: Partial<ProxyHost>): Promise<ProxyHost> {
@@ -241,7 +299,8 @@ export const proxyHostService = {
     // legacy single accessListId so older clients still work.
     const ids = data.accessListIds ?? (data.accessListId ? [data.accessListId] : []);
     await setAccessListIds(row.id, ids);
-    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id));
+    await setRoutesForHost(row.id, data.routes);
+    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id));
   },
 
   async update(id: number, data: Partial<ProxyHost>): Promise<ProxyHost | null> {
@@ -288,7 +347,8 @@ export const proxyHostService = {
       // Legacy single-id path — replace junction with at most one entry.
       await setAccessListIds(row.id, data.accessListId ? [data.accessListId] : []);
     }
-    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id));
+    await setRoutesForHost(row.id, data.routes);
+    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id));
   },
 
   async delete(id: number): Promise<void> {
@@ -297,7 +357,7 @@ export const proxyHostService = {
 
   async getEnabled(): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').where({ enabled: true }).orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id))));
   },
 };
 

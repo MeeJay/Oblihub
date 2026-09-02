@@ -372,7 +372,36 @@ export interface ProxyHost {
   // When set, nginx delegates authentication for this host to the Azure AD provider's
   // oauth2-proxy sidecar. Null = no forward-auth (Access Lists / basic-auth still apply).
   azureAuthProviderId: number | null;
+  // Per-path sub-routes. nginx emits one `location <path_in>` per route BEFORE `location /` —
+  // ordered by URI-prefix specificity so `/api/v3/` wins over `/api/` wins over `/`. Each
+  // route can target a different container, exempt itself from forward-auth or access lists,
+  // and optionally rewrite the URI prefix at the upstream boundary.
+  routes: ProxyHostRoute[];
   certificate?: Certificate | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProxyHostRoute {
+  id: number;
+  proxyHostId: number;
+  sortOrder: number;
+  pathIn: string;
+  // Empty / null = passthrough (URI unchanged). Non-empty = strip pathIn from the request URI
+  // and prefix pathRewrite before forwarding to the upstream.
+  pathRewrite: string | null;
+  forwardScheme: 'http' | 'https';
+  forwardHost: string;
+  forwardPort: number;
+  // 'inherit' = reuse host-level azureAuthProviderId; 'none' = public passthrough (auth_request
+  // off); 'override' = swap in azureAuthProviderOverrideId for this route only.
+  authMode: 'inherit' | 'none' | 'override';
+  azureAuthProviderOverrideId: number | null;
+  accessListMode: 'inherit' | 'none' | 'override';
+  accessListOverrideIds: number[];
+  // Null = fall back to host-level setting.
+  websocketSupport: boolean | null;
+  proxyBuffering: boolean | null;
   createdAt: string;
   updatedAt: string;
 }
