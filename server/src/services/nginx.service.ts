@@ -370,6 +370,23 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += `    auth_request_set $auth_user $upstream_http_x_auth_request_user;\n`;
     conf += `    auth_request_set $auth_email $upstream_http_x_auth_request_email;\n`;
     conf += `    auth_request_set $auth_groups $upstream_http_x_auth_request_groups;\n`;
+    // Preferred-username is the readable form (UPN / email) — X-Auth-Request-User carries the
+    // Entra objectId `sub` claim which is opaque and useless to display. Capture both; expose
+    // the readable one under a dedicated header for apps that want to show "Signed in as X".
+    conf += `    auth_request_set $auth_preferred_username $upstream_http_x_auth_request_preferred_username;\n`;
+    // Response-side identity headers — emitted at SERVER scope so they inherit into `location /`
+    // and every sub-route without needing to duplicate them per-location. The `add_header`
+    // directive has the SAME inheritance-kills-parent-set rule as `proxy_set_header`: declare
+    // one add_header in a child location and the entire parent set is dropped. Keeping every
+    // add_header (HSTS + user's customResponseHeaders + these identity headers) at the same
+    // scope means one inheritance ruling covers all of them.
+    // `always` = emit even on 4xx/5xx responses (default drops them). Access-Control-Expose-
+    // Headers lets JS running under a different origin read them via fetch().
+    conf += `    add_header X-Auth-User $auth_user always;\n`;
+    conf += `    add_header X-Auth-Email $auth_email always;\n`;
+    conf += `    add_header X-Auth-Groups $auth_groups always;\n`;
+    conf += `    add_header X-Auth-Preferred-Username $auth_preferred_username always;\n`;
+    conf += `    add_header Access-Control-Expose-Headers "X-Auth-User, X-Auth-Email, X-Auth-Groups, X-Auth-Preferred-Username" always;\n`;
     // NOTE: the corresponding `proxy_set_header X-Auth-*` lines are NOT emitted here at the
     // server scope on purpose. nginx does NOT merge proxy_set_header from parent into a child
     // location — the moment `location /` declares any proxy_set_header of its own, it REPLACES
@@ -543,12 +560,26 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
       conf += `        proxy_set_header X-Forwarded-Proto $scheme;\n`;
       conf += `        proxy_set_header X-Forwarded-Host $host;\n`;
       conf += `        proxy_set_header X-Forwarded-Port $server_port;\n`;
-      // Only inject X-Auth-* if the host has forward-auth AND this route inherits it (else the
-      // vars are empty strings, which is harmless but noisy).
+      // Identity headers — same multi-convention block as `location /` (X-Auth-* / X-Forwarded-*
+      // / Remote-*), plus the response-side add_header block for static SPAs. Only emitted when
+      // the host has forward-auth AND this route inherits it.
       if (host.azureAuthProviderId && route.authMode !== 'none') {
         conf += `        proxy_set_header X-Auth-User $auth_user;\n`;
         conf += `        proxy_set_header X-Auth-Email $auth_email;\n`;
         conf += `        proxy_set_header X-Auth-Groups $auth_groups;\n`;
+        conf += `        proxy_set_header X-Auth-Preferred-Username $auth_preferred_username;\n`;
+        conf += `        proxy_set_header X-Forwarded-User $auth_user;\n`;
+        conf += `        proxy_set_header X-Forwarded-Email $auth_email;\n`;
+        conf += `        proxy_set_header X-Forwarded-Groups $auth_groups;\n`;
+        conf += `        proxy_set_header X-Forwarded-Preferred-Username $auth_preferred_username;\n`;
+        conf += `        proxy_set_header Remote-User $auth_user;\n`;
+        conf += `        proxy_set_header Remote-Email $auth_email;\n`;
+        conf += `        proxy_set_header Remote-Name $auth_preferred_username;\n`;
+        conf += `        proxy_set_header Remote-Groups $auth_groups;\n`;
+        // Response-side add_header block lives at server scope — it inherits into this
+        // location automatically (see the auth_request_set block earlier). Adding them here
+        // would trigger the same "child overrides parent set" inheritance rule and would
+        // silently drop HSTS + the user's customResponseHeaders for this route.
       }
       conf += `        proxy_http_version 1.1;\n`;
       // Per-route override for websocket / buffering; null = fall back to host-level defaults
@@ -583,13 +614,34 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   conf += `        proxy_set_header X-Forwarded-Port $server_port;\n`;
   // Identity headers from the Azure auth sidecar — MUST be declared inside this location, not
   // at server scope. nginx REPLACES (not merges) the entire proxy_set_header set the moment a
-  // child location declares any of its own, so server-scoped X-Auth-* would silently drop off
+  // child location declares any of its own, so server-scoped headers would silently drop off
   // for every request to the upstream. `$auth_*` variables are populated by the
   // `auth_request_set` directives at server scope (those DO inherit correctly).
+  //
+  // Emitted under multiple naming conventions so upstream apps recognize the identity out of
+  // the box regardless of which ecosystem they follow:
+  //   - X-Auth-*        (Oblihub-native convention)
+  //   - X-Forwarded-*   (oauth2-proxy classic, Grafana, most Node/Go apps)
+  //   - Remote-*        (Authelia / Traefik forward-auth, Nextcloud, Jellyfin, ...)
+  // Cheap redundancy — three extra strings per request beats "the SSO integration doesn't work
+  // out of the box" as a support ticket.
   if (host.azureAuthProviderId) {
+    // Request headers → upstream. Kept here (not at server scope) because proxy_set_header does
+    // NOT inherit into a child location that declares its own. Server-scope add_header block
+    // above handles the response side — that inheritance IS fine as long as nothing in this
+    // location adds its own add_header.
     conf += `        proxy_set_header X-Auth-User $auth_user;\n`;
     conf += `        proxy_set_header X-Auth-Email $auth_email;\n`;
     conf += `        proxy_set_header X-Auth-Groups $auth_groups;\n`;
+    conf += `        proxy_set_header X-Auth-Preferred-Username $auth_preferred_username;\n`;
+    conf += `        proxy_set_header X-Forwarded-User $auth_user;\n`;
+    conf += `        proxy_set_header X-Forwarded-Email $auth_email;\n`;
+    conf += `        proxy_set_header X-Forwarded-Groups $auth_groups;\n`;
+    conf += `        proxy_set_header X-Forwarded-Preferred-Username $auth_preferred_username;\n`;
+    conf += `        proxy_set_header Remote-User $auth_user;\n`;
+    conf += `        proxy_set_header Remote-Email $auth_email;\n`;
+    conf += `        proxy_set_header Remote-Name $auth_preferred_username;\n`;
+    conf += `        proxy_set_header Remote-Groups $auth_groups;\n`;
   }
   conf += `        proxy_http_version 1.1;\n`;
 
