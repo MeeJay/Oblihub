@@ -21,6 +21,14 @@ import type { AzureAuthProvider } from '@oblihub/shared';
  */
 
 const OAUTH2_PROXY_IMAGE = 'quay.io/oauth2-proxy/oauth2-proxy:latest';
+// Shared Redis backend used by every oauth2-proxy sidecar to store session state. Azure ID
+// tokens with group claims routinely exceed the 4kb single-cookie limit; without a server-side
+// store, oauth2-proxy splits the session across `_oauth2_proxy_0`, `_1`, `_2`... which triggers
+// silent auth failures (fragmented cookies get dropped by proxies / browsers, the sidecar can't
+// reassemble on subsequent requests and returns 401 immediately after a successful callback).
+// One tiny Redis container amortized across all providers eliminates the whole class of bug.
+const REDIS_IMAGE = 'redis:7-alpine';
+const REDIS_CONTAINER_NAME = 'oblihub-azauth-redis';
 
 function rowToProvider(row: Record<string, unknown>): AzureAuthProvider {
   return {
@@ -164,13 +172,15 @@ export const azureAuthService = {
       'OAUTH2_PROXY_SET_XAUTHREQUEST=true',
       // Scope covers openid+email+profile out of the box for Entra ID.
       'OAUTH2_PROXY_SCOPE=openid email profile',
-      // NOTE: Azure ID tokens with group claims often exceed the 4kb single-cookie limit —
-      // oauth2-proxy logs "Multiple cookies are required..." and splits into _0/_1/... which
-      // works but is noisy. The clean fix would be SESSION_COOKIE_MINIMAL=true, but that is
-      // incompatible with PASS_ACCESS_TOKEN and the X-Auth-Request-Access-Token header emitted
-      // by SET_XAUTHREQUEST (minimal mode strips the access_token from the cookie, so those
-      // headers have nothing to send and startup fails validation). Proper fix when this
-      // becomes a real problem: add a Redis sidecar and set SESSION_STORE_TYPE=redis.
+      // Session store: Redis, backed by the shared `oblihub-azauth-redis` container that
+      // ensureAuthRedis() deploys on demand. Cookie stores hit the 4kb browser limit as soon as
+      // the Azure ID token carries group claims — oauth2-proxy then split-encodes the session
+      // across `_oauth2_proxy_0/_1/_2/...`, which reliably breaks in the field: nginx buffers
+      // truncate, browsers drop fragments, the sidecar can't reassemble and returns 401 on the
+      // request right after a successful callback. Server-side storage means one small ticket
+      // cookie holds a Redis key, and the session payload lives in Redis regardless of size.
+      'OAUTH2_PROXY_SESSION_STORE_TYPE=redis',
+      `OAUTH2_PROXY_REDIS_CONNECTION_URL=redis://${REDIS_CONTAINER_NAME}:6379`,
     ];
     // Email whitelist. `*` (default when nothing specified) = any authenticated user in the
     // tenant. When the operator lists specific emails/domains, restrict.
@@ -206,6 +216,10 @@ export const azureAuthService = {
       const docker = await dockerService.forEngine(null);
       // Ensure the target network exists — we auto-attach to Oblihub's shared `proxy` network.
       await dockerService.ensureProxyNetwork(null);
+      // Ensure the shared Redis session-store is up (idempotent, shared across all providers).
+      // Must happen BEFORE the sidecar starts — oauth2-proxy exits with error at boot if it
+      // can't reach the configured REDIS_CONNECTION_URL.
+      await this.ensureAuthRedis();
 
       // Pull the image if it's not local yet. dockerode's `createContainer` does NOT auto-pull
       // (unlike the `docker run` CLI), so a fresh Oblihub install without the oauth2-proxy image
@@ -270,6 +284,70 @@ export const azureAuthService = {
       logger.error({ providerId, err: msg }, 'Failed to deploy Azure auth sidecar');
       throw err;
     }
+  },
+
+  /**
+   * Idempotent bootstrap of the shared Redis backend that every oauth2-proxy sidecar uses for
+   * session storage. One instance across all providers — sessions are namespaced by cookie
+   * secret anyway, so tenants can't cross-read each other. No persistence (sessions die on
+   * Redis restart, forcing users to re-login — acceptable, and avoids managing a volume). Runs
+   * with maxmemory + LRU eviction so a runaway session growth caps at 64MB instead of
+   * unbounded RAM.
+   *
+   * Attached to whatever `getProxyNetworkName()` returns so oauth2-proxy sidecars on that same
+   * network can reach it via docker DNS at `oblihub-azauth-redis:6379`.
+   */
+  async ensureAuthRedis(): Promise<void> {
+    const docker = await dockerService.forEngine(null);
+    const network = await dockerService.getProxyNetworkName();
+    // Fast path: container already exists and is running — nothing to do.
+    try {
+      const existing = docker.getContainer(REDIS_CONTAINER_NAME);
+      const info = await existing.inspect();
+      if (info.State?.Running) {
+        // If somehow present but not on the current proxy network (operator changed the
+        // proxy_network_name setting after Redis was first deployed), reconnect it.
+        const nets = info.NetworkSettings?.Networks || {};
+        if (!nets[network]) {
+          try { await docker.getNetwork(network).connect({ Container: info.Id }); }
+          catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!/already (exists|connected)/i.test(msg)) throw err;
+          }
+        }
+        return;
+      }
+      // Present but stopped — start it. Faster than a full recreate.
+      await existing.start().catch(() => {});
+      return;
+    } catch { /* not there — full create below */ }
+
+    // Pull the image (idempotent, no-op if cached).
+    try {
+      const stream = await docker.pull(REDIS_IMAGE);
+      await new Promise<void>((resolve, reject) => {
+        docker.modem.followProgress(stream, (err: Error | null) => err ? reject(err) : resolve());
+      });
+    } catch (err) {
+      try { await docker.getImage(REDIS_IMAGE).inspect(); }
+      catch { throw new Error(`Failed to pull ${REDIS_IMAGE}: ${err instanceof Error ? err.message : String(err)}`); }
+    }
+
+    const c = await docker.createContainer({
+      name: REDIS_CONTAINER_NAME,
+      Image: REDIS_IMAGE,
+      // 64MB cap with LRU eviction — plenty for thousands of concurrent sessions, safe from
+      // runaway growth. `save ""` disables RDB snapshots (we don't want disk persistence).
+      Cmd: ['redis-server', '--save', '', '--maxmemory', '64mb', '--maxmemory-policy', 'allkeys-lru'],
+      Labels: {
+        'oblihub.managed': 'true',
+        'oblihub.azauth.role': 'session-store',
+      },
+      HostConfig: { RestartPolicy: { Name: 'unless-stopped' } },
+      NetworkingConfig: { EndpointsConfig: { [network]: {} } },
+    });
+    await c.start();
+    logger.info({ network }, 'Deployed shared Azure auth Redis session store');
   },
 
   async tearDownAuthProxy(providerId: number): Promise<void> {
