@@ -370,9 +370,11 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += `    auth_request_set $auth_user $upstream_http_x_auth_request_user;\n`;
     conf += `    auth_request_set $auth_email $upstream_http_x_auth_request_email;\n`;
     conf += `    auth_request_set $auth_groups $upstream_http_x_auth_request_groups;\n`;
-    conf += `    proxy_set_header X-Auth-User $auth_user;\n`;
-    conf += `    proxy_set_header X-Auth-Email $auth_email;\n`;
-    conf += `    proxy_set_header X-Auth-Groups $auth_groups;\n`;
+    // NOTE: the corresponding `proxy_set_header X-Auth-*` lines are NOT emitted here at the
+    // server scope on purpose. nginx does NOT merge proxy_set_header from parent into a child
+    // location — the moment `location /` declares any proxy_set_header of its own, it REPLACES
+    // the entire inherited set. Declaring X-Auth-* here would silently drop them at the app
+    // upstream. They're injected inside `location /` right next to the proxy_pass instead.
     conf += `    error_page 401 = @_oblihub_fa_signin;\n\n`;
     conf += `    location @_oblihub_fa_signin {\n`;
     conf += `        return 302 /oauth2/start?rd=$scheme://$http_host$request_uri;\n`;
@@ -497,6 +499,16 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   conf += `        proxy_set_header X-Forwarded-Proto $scheme;\n`;
   conf += `        proxy_set_header X-Forwarded-Host $host;\n`;
   conf += `        proxy_set_header X-Forwarded-Port $server_port;\n`;
+  // Identity headers from the Azure auth sidecar — MUST be declared inside this location, not
+  // at server scope. nginx REPLACES (not merges) the entire proxy_set_header set the moment a
+  // child location declares any of its own, so server-scoped X-Auth-* would silently drop off
+  // for every request to the upstream. `$auth_*` variables are populated by the
+  // `auth_request_set` directives at server scope (those DO inherit correctly).
+  if (host.azureAuthProviderId) {
+    conf += `        proxy_set_header X-Auth-User $auth_user;\n`;
+    conf += `        proxy_set_header X-Auth-Email $auth_email;\n`;
+    conf += `        proxy_set_header X-Auth-Groups $auth_groups;\n`;
+  }
   conf += `        proxy_http_version 1.1;\n`;
 
   // When a wake target is set, intercept 5xx responses from the upstream too — not just
