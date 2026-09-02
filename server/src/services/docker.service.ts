@@ -661,7 +661,23 @@ export const dockerService = {
   },
 
   /**
-   * Ensure the shared `proxy` bridge network exists on the given engine. Idempotent. Returns
+   * Name of the shared reverse-proxy network. Configurable via the `proxy_network_name` app
+   * setting; defaults to `proxy`. Needs to be configurable because docker-compose prefixes
+   * network names with the project name unless the compose file declares `name:` explicitly —
+   * an install brought up with `COMPOSE_PROJECT_NAME=oblihub` and a plain `proxy:` network
+   * ends up with `oblihub_proxy`, and hardcoding "proxy" leaves the auto-created auth sidecar
+   * unable to reach the actual nginx container. Cached briefly to avoid a db hit on every
+   * docker-facing call.
+   */
+  async getProxyNetworkName(): Promise<string> {
+    const { appConfigService } = await import('./appConfig.service');
+    const v = await appConfigService.get('proxy_network_name');
+    const trimmed = v?.trim();
+    return trimmed && trimmed.length > 0 ? trimmed : 'proxy';
+  },
+
+  /**
+   * Ensure the shared proxy bridge network exists on the given engine. Idempotent. Returns
    * the network id on success, null when the engine is unreachable (so we don't crash startup).
    *
    * Every managed stack Oblihub deploys gets its containers auto-attached to this network so
@@ -671,19 +687,20 @@ export const dockerService = {
   async ensureProxyNetwork(engineId: number | null = null): Promise<string | null> {
     try {
       const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
+      const name = await this.getProxyNetworkName();
       try {
-        const net = await docker.getNetwork('proxy').inspect();
+        const net = await docker.getNetwork(name).inspect();
         return net.Id;
       } catch {
         // not found — create it
       }
       const created = await docker.createNetwork({
-        Name: 'proxy',
+        Name: name,
         Driver: 'bridge',
         CheckDuplicate: true,
         Labels: { 'oblihub.shared': 'true' },
       });
-      logger.info({ engineId }, 'Created shared proxy network');
+      logger.info({ engineId, name }, 'Created shared proxy network');
       return created.id;
     } catch (err) {
       logger.warn({ engineId, err: err instanceof Error ? err.message : String(err) }, 'ensureProxyNetwork failed');
@@ -692,14 +709,15 @@ export const dockerService = {
   },
 
   /**
-   * Attach a container to the shared `proxy` network. Idempotent — "already on this network"
+   * Attach a container to the shared proxy network. Idempotent — "already on this network"
    * errors are swallowed. Throws on unrecoverable issues so the caller can decide whether to
    * fail the deploy or just log.
    */
   async connectToProxyNetwork(containerId: string, engineId: number | null = null): Promise<void> {
     const docker = engineId == null ? getDocker() : await getDockerForEngine(engineId);
+    const name = await this.getProxyNetworkName();
     try {
-      await docker.getNetwork('proxy').connect({ Container: containerId });
+      await docker.getNetwork(name).connect({ Container: containerId });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // dockerode surfaces "already exists" / "endpoint already exists" — fine, idempotent.

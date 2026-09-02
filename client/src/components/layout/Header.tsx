@@ -7,7 +7,7 @@ import { Logo } from '@/components/common/Logo';
 import { HostStatsIndicator } from '@/components/HostStatsIndicator';
 
 // App switcher — fixed order across the suite. Per obli-design-system.md §1 + §4.1.
-type AppType = 'obliview' | 'obliguard' | 'oblimap' | 'obliance' | 'obliplan' | 'oblihub';
+type AppType = 'obliview' | 'obliguard' | 'oblimap' | 'obliance' | 'obliplan' | 'oblidesk' | 'oblihub';
 
 interface AppEntry {
   type: AppType;
@@ -22,6 +22,7 @@ const APP_ORDER: AppEntry[] = [
   { type: 'oblimap',   label: 'Oblimap',   color: '#1edd8a' },
   { type: 'obliance',  label: 'Obliance',  color: '#e03a3a' },
   { type: 'obliplan',  label: 'Obliplan',  color: '#7c6cff' },
+  { type: 'oblidesk',  label: 'Oblidesk',  color: '#22b8f5' },
   { type: 'oblihub',   label: 'Oblihub',   color: '#1678cd' },
 ];
 

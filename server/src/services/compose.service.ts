@@ -559,7 +559,8 @@ export const composeService = {
       logger.warn({ projectName, err }, 'Compose YAML parse failed during proxy override detection');
       return { services: [], userOwnsProxyNetwork: false };
     }
-    const userOwnsProxyNetwork = !!(parsed.networks && Object.prototype.hasOwnProperty.call(parsed.networks, 'proxy'));
+    const proxyNetworkName = await dockerService.getProxyNetworkName();
+    const userOwnsProxyNetwork = !!(parsed.networks && Object.prototype.hasOwnProperty.call(parsed.networks, proxyNetworkName));
     const rawServices = parsed.services || {};
     const serviceNames = Object.keys(rawServices);
     if (serviceNames.length === 0) return { services: [], userOwnsProxyNetwork };
@@ -634,15 +635,18 @@ export const composeService = {
       .filter(h => (h.forward_host as string));
 
     // Build service → set of network names to attach to. A single service can have multiple
-    // proxy_hosts (e.g. one on Oblihub's own `proxy`, one on an external NPM). We union the
-    // networks so the override wires them all up in a single deploy.
+    // proxy_hosts (e.g. one on Oblihub's own shared network, one on an external NPM). We union
+    // the networks so the override wires them all up in a single deploy. Fallback for a
+    // proxy_host without an explicit docker_network is the configured proxy network name (was
+    // hardcoded to "proxy" — broke installs where the actual name is `oblihub_proxy` etc.).
     const servicesToNetworks = new Map<string, Set<string>>();
     for (const svc of serviceNames) {
       const aliases = serviceAliases.get(svc);
       if (!aliases) continue;
       for (const h of relevantHosts) {
         if (aliases.has(h.forward_host as string)) {
-          const net = ((h.docker_network as string) || 'proxy').trim() || 'proxy';
+          const raw = ((h.docker_network as string) || '').trim();
+          const net = raw.length > 0 ? raw : proxyNetworkName;
           if (!servicesToNetworks.has(svc)) servicesToNetworks.set(svc, new Set());
           servicesToNetworks.get(svc)!.add(net);
         }

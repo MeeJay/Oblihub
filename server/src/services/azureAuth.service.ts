@@ -46,10 +46,11 @@ function parseJson(raw: unknown): unknown {
   return raw;
 }
 
-/** The docker network name the sidecar attaches to. Matches the proxy_host default network so
- *  the built-in nginx can reach it via docker DNS. When Oblihub is fronted by an external
- *  reverse proxy on a different network, the sidecar is attached to that one too on demand. */
-const SIDECAR_NETWORK = 'proxy';
+// The sidecar network is resolved dynamically from dockerService.getProxyNetworkName() —
+// hardcoding "proxy" broke installs where docker-compose prefixed the project's network name
+// (e.g. `oblihub_proxy`): the sidecar ended up on a freshly-created `proxy` bridge that nginx
+// wasn't attached to, so auth_request failed silently. The app-config key drives both what
+// the sidecar attaches to and what ensureProxyNetwork() looks up / creates.
 
 export const azureAuthService = {
   async list(): Promise<AzureAuthProvider[]> {
@@ -232,6 +233,7 @@ export const azureAuthService = {
       // attach when the network is external + already exists (dockerode silently falls back to
       // the default bridge network, and docker DNS resolution from other containers on `proxy`
       // fails with "no such host" — auth_request then dies silently).
+      const sidecarNetwork = await dockerService.getProxyNetworkName();
       const container = await docker.createContainer({
         name: containerName,
         Image: OAUTH2_PROXY_IMAGE,
@@ -245,7 +247,7 @@ export const azureAuthService = {
         },
         NetworkingConfig: {
           EndpointsConfig: {
-            [SIDECAR_NETWORK]: {},
+            [sidecarNetwork]: {},
           },
         },
       });

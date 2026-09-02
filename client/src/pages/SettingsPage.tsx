@@ -955,6 +955,21 @@ function NotificationGlobalSection({ config, setConfig, onSave, saving }: {
           </select>
         </div>
 
+        {/* Proxy network name */}
+        <div>
+          <div className="text-sm font-medium text-text-primary mb-1">Proxy Network Name</div>
+          <div className="text-xs text-text-muted mb-2">
+            Docker network the built-in nginx proxy runs on. Auto-created sidecars (e.g. Azure AD auth) attach here so nginx can reach them via docker DNS. Default: <code>proxy</code>. If Compose prefixed it (e.g. <code>oblihub_proxy</code>), set it here so sidecars land on the correct network. Run <code>docker network ls</code> on the host to check the exact name — changing this only affects future sidecar deploys.
+          </div>
+          <input
+            type="text"
+            value={config.proxy_network_name || ''}
+            onChange={e => setConfig({ ...config, proxy_network_name: e.target.value || null })}
+            placeholder="proxy"
+            className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+        </div>
+
         <button onClick={onSave} disabled={saving}
           className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50">
           <Save size={14} /> {saving ? 'Saving...' : 'Save'}
