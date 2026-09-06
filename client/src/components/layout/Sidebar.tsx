@@ -23,6 +23,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   KeyRound,
+  Zap,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { cn } from '@/utils/cn';
@@ -96,6 +97,8 @@ export function Sidebar({ allowStack, allowNginx }: SidebarProps) {
         { label: 'Azure Auth', path: '/azure-auth', icon: <KeyRound size={18} /> },
         { label: 'Error Pages', path: '/custom-pages', icon: <FileText size={18} /> },
         { label: 'Uptime', path: '/uptime', icon: <Activity size={18} /> },
+        { label: 'Traffic', path: '/traffic', icon: <Activity size={18} /> },
+        { label: 'Automation', path: '/automation', icon: <Zap size={18} /> },
       ]
     : [];
 

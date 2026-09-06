@@ -198,12 +198,13 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
       const serverCert = certs[0];
       const chainCert = certs.slice(1).join('');
 
-      // Write cert files named by primary domain
+      // Write cert files under the new `<domain>_<id>` naming scheme — unique per cert row,
+      // collision-proof between multi-SAN and single-SAN certs sharing a primary domain.
       const primaryDomain = domains[0];
-      nginxService.writeCertFiles(primaryDomain, serverCert, certKey.toString(), chainCert);
+      const certRef = { id: certId, domainNames: domains };
+      nginxService.writeCertFiles(certRef, serverCert, certKey.toString(), chainCert);
 
-      // Parse expiry
-      const certPaths = nginxService.getCertPathsByDomain(primaryDomain);
+      const certPaths = nginxService.getCertPaths(certRef);
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 90); // LE certs are 90 days
 
@@ -227,6 +228,17 @@ async function doRequestCertificate(certId: number, domains: string[], email: st
       }).catch(err => {
         logger.warn({ certId, err }, 'Nginx reload after cert provisioning failed (non-fatal)');
       });
+
+      // Trigger any workflows subscribed to this cert's renewal (SFTP export, etc.). Non-blocking
+      // and swallow errors — a broken workflow must not fail the cert install path.
+      (async () => {
+        try {
+          const { fireOnCertRenew } = await import('../workers/WorkflowScheduler');
+          await fireOnCertRenew(certId);
+        } catch (err) {
+          logger.warn({ certId, err: err instanceof Error ? err.message : String(err) }, 'fireOnCertRenew failed');
+        }
+      })();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       await appendLog(certId, 'error', `FAILED: ${msg}`);
@@ -252,8 +264,9 @@ export const letsEncryptService = {
     try {
       // Get domain name from cert record
       const certRecord = await certificateService.getById(certId);
-      const primaryDomain = certRecord?.domainNames?.[0] || `cert_${certId}`;
-      nginxService.writeCertFiles(primaryDomain, certPem, keyPem, chainPem);
+      const domainNames = certRecord?.domainNames?.length ? certRecord.domainNames : [`cert_${certId}`];
+      const certRef = { id: certId, domainNames };
+      nginxService.writeCertFiles(certRef, certPem, keyPem, chainPem);
 
       // Try to parse expiry from cert
       let expiresAt: Date | undefined;
@@ -262,7 +275,7 @@ export const letsEncryptService = {
         expiresAt = new Date(x509.validTo);
       } catch { /* ignore */ }
 
-      const certPaths = nginxService.getCertPathsByDomain(primaryDomain);
+      const certPaths = nginxService.getCertPaths(certRef);
       await certificateService.updateStatus(certId, 'valid', {
         cert: certPaths.cert,
         key: certPaths.key,
@@ -297,7 +310,7 @@ export const letsEncryptService = {
       // For self-signed, we'll create a simple cert
       // In production you'd want proper x509 generation
       // For now, write a placeholder and mark as valid
-      const certPaths = nginxService.getCertPathsByDomain(domains[0]);
+      const certPaths = nginxService.getCertPaths({ id: certId, domainNames: domains });
       const expiresAt = new Date();
       expiresAt.setFullYear(expiresAt.getFullYear() + 1);
 

@@ -161,6 +161,34 @@ function GeneralTab({ editing, setEditing, domainInput, setDomainInput, addDomai
 
 // ── SSL ──
 function SslTab({ editing, setEditing, certs, hosts, certMode, setCertMode, acmeEmail, setAcmeEmail, editId }: ProxyHostEditorProps) {
+  const [search, setSearch] = useState('');
+  // Rank the cert list by relevance to the current host so the operator lands on the right one:
+  //   1. Currently selected cert first (never lose the pinned reference)
+  //   2. Certs covering EVERY domain of the host (perfect SAN match) — the "obviously right" pick
+  //   3. Certs covering AT LEAST ONE domain of the host (partial match — wildcard, multi-SAN)
+  //   4. Alphabetical by primary domain
+  // Search filters on any domain of the cert.
+  const hostDomains = editing.domainNames || [];
+  const rankedCerts = certs
+    .map(c => {
+      const domainsLower = c.domainNames.map(d => d.toLowerCase());
+      const covers = (hd: string) => domainsLower.some(cd => cd === hd.toLowerCase() || (cd.startsWith('*.') && hd.toLowerCase().endsWith(cd.slice(1))));
+      const perfectMatch = hostDomains.length > 0 && hostDomains.every(covers);
+      const partialMatch = hostDomains.some(covers);
+      return { c, perfectMatch, partialMatch };
+    })
+    .filter(({ c }) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return c.domainNames.some(d => d.toLowerCase().includes(q));
+    })
+    .sort((a, b) => {
+      if (a.c.id === editing.certificateId) return -1;
+      if (b.c.id === editing.certificateId) return 1;
+      if (a.perfectMatch !== b.perfectMatch) return a.perfectMatch ? -1 : 1;
+      if (a.partialMatch !== b.partialMatch) return a.partialMatch ? -1 : 1;
+      return (a.c.domainNames[0] || '').localeCompare(b.c.domainNames[0] || '');
+    });
   return (
     <>
       <div>
@@ -194,31 +222,49 @@ function SslTab({ editing, setEditing, certs, hosts, certMode, setCertMode, acme
           </div>
         )}
         {certMode === 'existing' && (
-          <div className="space-y-1 max-h-40 overflow-auto">
+          <div className="space-y-2">
             {certs.length === 0 ? (
               <div className="text-xs text-text-muted p-2">No certificates available</div>
-            ) : certs.map(c => {
-              const isUsed = hosts.some(h => h.certificateId === c.id && h.id !== editId);
-              const isSelected = editing.certificateId === c.id;
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => setEditing(h => h ? { ...h, certificateId: c.id, sslForced: true, http2Support: true } : null)}
-                  className={`w-full text-left px-3 py-2 rounded-lg border text-xs transition-colors ${
-                    isSelected ? 'border-accent bg-accent/10' : isUsed ? 'border-status-down/30 bg-status-down/5 hover:bg-status-down/10' : 'border-border hover:bg-bg-hover'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className={`font-mono ${isSelected ? 'text-accent' : 'text-text-primary'}`}>{c.domainNames.join(', ')}</span>
-                    <div className="flex items-center gap-1.5">
-                      {isUsed && <span className="text-[9px] px-1 py-0.5 rounded bg-status-down/10 text-status-down">In use</span>}
-                      <span className={`text-[9px] px-1 py-0.5 rounded ${c.status === 'valid' ? 'bg-status-up/10 text-status-up' : 'bg-status-pending/10 text-status-pending'}`}>{c.status}</span>
-                    </div>
-                  </div>
-                  {c.expiresAt && <div className="text-[10px] text-text-muted mt-0.5">Expires: {new Date(c.expiresAt).toLocaleDateString()}</div>}
-                </button>
-              );
-            })}
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search by domain..."
+                  className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <div className="space-y-1 max-h-60 overflow-auto">
+                  {rankedCerts.length === 0 && (
+                    <div className="text-xs text-text-muted p-2 text-center">No cert matches &quot;{search}&quot;</div>
+                  )}
+                  {rankedCerts.map(({ c, perfectMatch, partialMatch }) => {
+                    const isUsed = hosts.some(h => h.certificateId === c.id && h.id !== editId);
+                    const isSelected = editing.certificateId === c.id;
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => setEditing(h => h ? { ...h, certificateId: c.id, sslForced: true, http2Support: true } : null)}
+                        className={`w-full text-left px-3 py-2 rounded-lg border text-xs transition-colors ${
+                          isSelected ? 'border-accent bg-accent/10' : isUsed ? 'border-status-down/30 bg-status-down/5 hover:bg-status-down/10' : 'border-border hover:bg-bg-hover'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`font-mono truncate ${isSelected ? 'text-accent' : 'text-text-primary'}`}>{c.domainNames.join(', ')}</span>
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {perfectMatch && <span className="text-[9px] px-1 py-0.5 rounded bg-status-up/10 text-status-up" title="Covers every domain of this host">SAN ✓</span>}
+                            {!perfectMatch && partialMatch && <span className="text-[9px] px-1 py-0.5 rounded bg-accent/10 text-accent" title="Covers at least one domain of this host">SAN partial</span>}
+                            {isUsed && <span className="text-[9px] px-1 py-0.5 rounded bg-status-down/10 text-status-down">In use</span>}
+                            <span className={`text-[9px] px-1 py-0.5 rounded ${c.status === 'valid' ? 'bg-status-up/10 text-status-up' : 'bg-status-pending/10 text-status-pending'}`}>{c.status}</span>
+                          </div>
+                        </div>
+                        {c.expiresAt && <div className="text-[10px] text-text-muted mt-0.5">Expires: {new Date(c.expiresAt).toLocaleDateString()}</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

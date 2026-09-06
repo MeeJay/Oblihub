@@ -14,6 +14,9 @@ import { startDiscoveryWorker, stopDiscoveryWorker } from './workers/DiscoveryWo
 import { startGitPollWorker, stopGitPollWorker } from './workers/GitPollWorker';
 import { startStatsWorker, stopStatsWorker, cleanupOldStats } from './workers/StatsWorker';
 import { startUptimeWorker, stopUptimeWorker } from './workers/UptimeWorker';
+import { startWorkflowScheduler, stopWorkflowScheduler } from './workers/WorkflowScheduler';
+import { startTrafficLogWorker, stopTrafficLogWorker } from './workers/TrafficLogWorker';
+import { startTrafficDownsampleWorker, stopTrafficDownsampleWorker } from './workers/TrafficDownsampleWorker';
 import { startSleepWorker, stopSleepWorker } from './workers/SleepWorker';
 import { startActivityTracker, stopActivityTracker } from './workers/ActivityTracker';
 import { schedulerService } from './services/scheduler.service';
@@ -117,6 +120,17 @@ async function main() {
   // Start uptime monitoring worker
   await startUptimeWorker();
 
+  // Start workflow scheduler (fires cron/interval workflows, purges runs history hourly)
+  startWorkflowScheduler();
+
+  // Start traffic log workers — tail nginx access log for stats + hourly downsample/purge.
+  // Behind the same allowNginx guard as the activity tracker (no point tailing a log that
+  // doesn't exist in installs without the built-in proxy).
+  if (config.allowNginx) {
+    startTrafficLogWorker();
+    startTrafficDownsampleWorker();
+  }
+
   // Start sleep worker (idle container detection)
   startSleepWorker();
 
@@ -148,6 +162,9 @@ async function main() {
     stopGitPollWorker();
     stopStatsWorker();
     stopUptimeWorker();
+    stopWorkflowScheduler();
+    stopTrafficLogWorker();
+    stopTrafficDownsampleWorker();
     stopSleepWorker();
     stopActivityTracker();
     schedulerService.stopAll();

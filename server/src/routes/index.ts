@@ -18,6 +18,8 @@ import templatesRoutes from './templates.routes';
 import teamsRoutes from './teams.routes';
 import enginesRoutes from './engines.routes';
 import tailscaleRoutes from './tailscale.routes';
+import automationRoutes from './automation.routes';
+import trafficRoutes from './traffic.routes';
 
 const router = Router();
 
@@ -32,6 +34,8 @@ router.use('/docker', dockerRoutes);
 router.use('/managed-stacks', managedStackRoutes);
 router.use('/proxy', proxyRoutes);
 router.use('/azure-auth', azureAuthRoutes);
+router.use('/automation', automationRoutes);
+router.use('/traffic', trafficRoutes);
 router.use('/users', usersRoutes);
 router.use('/', permissionsRoutes);
 router.use('/stats', statsRoutes);

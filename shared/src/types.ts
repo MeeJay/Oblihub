@@ -632,6 +632,98 @@ export interface TeamResource {
   excluded: boolean;
 }
 
+// ── Automation: SSH keys, workflow targets, workflows ──
+
+export type SshKeyType = 'ed25519' | 'rsa';
+
+export interface SshKey {
+  id: number;
+  name: string;
+  description: string | null;
+  teamId: number | null;
+  ownerUserId: number | null;
+  keyType: SshKeyType;
+  publicKey: string;
+  fingerprint: string;
+  createdByUserId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type WorkflowTargetType = 'sftp';
+
+export interface WorkflowTarget {
+  id: number;
+  name: string;
+  description: string | null;
+  teamId: number | null;
+  ownerUserId: number | null;
+  targetType: WorkflowTargetType;
+  host: string;
+  port: number;
+  username: string;
+  remotePath: string;
+  sshKeyId: number | null;
+  hostKeyFingerprint: string | null;
+  createdByUserId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type WorkflowActionType = 'ssl-export-sftp' | 'restart-stacks';
+export type WorkflowTriggerType = 'on-cert-renew' | 'schedule-interval' | 'schedule-cron' | 'on-demand';
+export type WorkflowRunStatus = 'running' | 'success' | 'failed' | 'skipped';
+export type WorkflowRunTriggerSource = 'scheduler' | 'on-demand' | 'on-cert-renew' | 'external';
+
+/** Discriminated union for action_config — the shape depends on action_type. */
+export type WorkflowActionConfig =
+  | { certificateId: number; targetId: number; alsoExportChain?: boolean } // ssl-export-sftp
+  | { scope: 'stack' | 'team' | 'all'; stackId?: number; teamId?: number };  // restart-stacks
+
+/** Discriminated union for trigger_config — the shape depends on trigger_type. */
+export type WorkflowTriggerConfig =
+  | { certificateId: number }                            // on-cert-renew
+  | { intervalSeconds: number }                          // schedule-interval
+  | { cron: string; timezone?: string }                  // schedule-cron
+  | Record<string, never>;                               // on-demand — no config
+
+export interface Workflow {
+  id: number;
+  name: string;
+  description: string | null;
+  teamId: number | null;
+  ownerUserId: number | null;
+  actionType: WorkflowActionType;
+  actionConfig: WorkflowActionConfig;
+  triggerType: WorkflowTriggerType;
+  triggerConfig: WorkflowTriggerConfig;
+  enabled: boolean;
+  lastFiredAt: string | null;
+  nextFireAt: string | null;
+  lastRunId: number | null;
+  createdByUserId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowRunLogEntry {
+  ts: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+export interface WorkflowRun {
+  id: number;
+  workflowId: number;
+  startedAt: string;
+  finishedAt: string | null;
+  status: WorkflowRunStatus;
+  triggerSource: WorkflowRunTriggerSource;
+  outputLog: WorkflowRunLogEntry[];
+  errorMessage: string | null;
+  durationMs: number | null;
+}
+
 // ── API response wrapper ──
 export interface ApiResponse<T = unknown> {
   success: boolean;

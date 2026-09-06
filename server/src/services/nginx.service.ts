@@ -271,11 +271,11 @@ function sanitizeForNginx(value: string): string {
 function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []): string {
   const domains = host.domainNames.map(d => sanitizeForNginx(d)).join(' ');
   const upstream = `${sanitizeForNginx(host.forwardScheme)}://${sanitizeForNginx(host.forwardHost)}:${host.forwardPort}`;
-  const certDomain = host.certificate?.domainNames?.[0] || '';
-  const certFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.fullchain.crt`) : '';
-  const keyFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.key`) : '';
-  const hasCert = host.certificate && host.certificate.status === 'valid' && host.certificateId
-    && certFile && keyFile && fs.existsSync(certFile) && fs.existsSync(keyFile);
+  // Resolve the cert file paths through the compat helper — tries the new `<domain>_<id>`
+  // scheme first, falls back to the legacy `<domain>` naming for certs not yet renewed under
+  // the new convention. Returns null if neither variant exists on disk.
+  const resolved = host.certificate ? nginxService.resolveExistingCertFile(host.certificate) : null;
+  const hasCert = !!(host.certificate && host.certificate.status === 'valid' && host.certificateId && resolved);
 
   let conf = `# Proxy Host ${host.id} - ${domains}\n`;
 
@@ -304,11 +304,15 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   // Main server block
   conf += `server {\n`;
 
-  if (hasCert) {
-    const sslDomain = host.certificate?.domainNames?.[0] || '';
+  if (hasCert && resolved) {
+    // Resolved paths are absolute host paths (server-side); nginx needs the in-container mount
+    // point `/etc/nginx/certs/<filename>`. The filename is the tail of the resolved path — the
+    // compat helper already picked new-vs-legacy, we just re-emit as a container path.
+    const fullchainBasename = path.basename(resolved.fullchain);
+    const keyBasename = path.basename(resolved.key);
     conf += sslBlock(
-      `/etc/nginx/certs/${sslDomain}.fullchain.crt`,
-      `/etc/nginx/certs/${sslDomain}.key`,
+      `/etc/nginx/certs/${fullchainBasename}`,
+      `/etc/nginx/certs/${keyBasename}`,
       host.http2Support,
     ) + '\n';
   }
@@ -685,15 +689,15 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
 function generateRedirectionConfig(host: RedirectionHost): string {
   const domains = host.domainNames.join(' ');
   const target = `${host.forwardScheme}://${host.forwardDomain}${host.forwardPath}`;
-  const hasCert = host.certificate && host.certificate.status === 'valid' && host.certificateId;
+  const resolved = host.certificate ? nginxService.resolveExistingCertFile(host.certificate) : null;
+  const hasCert = !!(host.certificate && host.certificate.status === 'valid' && host.certificateId && resolved);
 
   let conf = `# Redirection ${host.id} - ${domains}\nserver {\n`;
 
-  if (hasCert) {
-    const sslDomain = host.certificate?.domainNames?.[0] || '';
+  if (hasCert && resolved) {
     conf += sslBlock(
-      `/etc/nginx/certs/${sslDomain}.fullchain.crt`,
-      `/etc/nginx/certs/${sslDomain}.key`,
+      `/etc/nginx/certs/${path.basename(resolved.fullchain)}`,
+      `/etc/nginx/certs/${path.basename(resolved.key)}`,
       host.http2Support,
     ) + '\n';
   }
@@ -733,21 +737,20 @@ function generateDeadHostConfig(host: DeadHost): string {
 
 function generateMainConfig(
   rateLimitedHosts: { id: number; rps: number }[] = [],
-  wakeHostMap: { hostId: number; domains: string[] }[] = [],
+  hostIdMap: { hostId: number; domains: string[] }[] = [],
 ): string {
   const rateLimitZones = rateLimitedHosts.map(h => `    limit_req_zone $binary_remote_addr zone=rl_${h.id}:10m rate=${h.rps}r/s;`).join('\n');
 
-  // Static map from request Host header → proxy_host_id. Built from all wake-enabled hosts so
-  // that the `sleep_activity` log_format can reference $proxy_host_id at the http context (where
-  // log_format is declared) without depending on a server-level `set` directive. nginx's
-  // log_format is parsed BEFORE any server block runs, which is why a `set $proxy_host_id …`
-  // inside a server block doesn't satisfy the parser — the variable must be declared at http
-  // level too. Using `map` here covers both needs in one place.
-  const wakeMapEntries = wakeHostMap.flatMap(h =>
+  // Static map from request Host header → proxy_host_id. Populated with EVERY enabled proxy_host
+  // (not just wake-enabled ones) so both the sleep-activity log_format AND the traffic log_format
+  // resolve their host id from one shared http-context map. Declaring the variable via `map`
+  // also satisfies nginx's parse-time requirement that log_format variables exist at http scope,
+  // which a server-block `set` doesn't.
+  const hostMapEntries = hostIdMap.flatMap(h =>
     h.domains.map(d => `        "${sanitizeForNginx(d)}" "${h.hostId}";`)
   ).join('\n');
-  const wakeMapBlock = wakeMapEntries
-    ? `    map $host $proxy_host_id {\n        default "0";\n${wakeMapEntries}\n    }`
+  const wakeMapBlock = hostMapEntries
+    ? `    map $host $proxy_host_id {\n        default "0";\n${hostMapEntries}\n    }`
     : `    map $host $proxy_host_id { default "0"; }`;
 
   return `user nginx;
@@ -768,12 +771,20 @@ http {
                     '"$http_user_agent" "$http_x_forwarded_for"';
 
     # Sleep activity log — pipe-separated, parsed by Oblihub's ActivityTracker.
-    # $proxy_host_id is mapped from the request Host header for wake-enabled hosts; defaults
-    # to "0" for everything else.
+    # $proxy_host_id is mapped from the request Host header via the map below (covers ALL
+    # enabled proxy_hosts, not just wake-enabled ones — same variable feeds the traffic log
+    # too).
 ${wakeMapBlock}
     log_format sleep_activity '$proxy_host_id|$msec|$status|$http_user_agent|$request_uri';
 
+    # Traffic stats log — pipe-separated, parsed by Oblihub's TrafficLogWorker to feed the
+    # per-host time-series (req/s, bytes, latency, top IPs / URIs). $request_time is nginx's
+    # own timing (client-to-client), rounded to ms via $request_time*1000. Empty
+    # $upstream_response_time (no upstream contacted — early 4xx, cached response) logs as "-".
+    log_format oblihub_traffic '$proxy_host_id|$msec|$status|$body_bytes_sent|$request_length|$request_time|$upstream_response_time|$remote_addr|$request_uri';
+
     access_log /var/log/nginx/access.log main;
+    access_log /var/log/nginx/oblihub_traffic.log oblihub_traffic;
 
     sendfile on;
     tcp_nopush on;
@@ -854,13 +865,12 @@ export const nginxService = {
     // Get enabled proxy hosts for rate limit zones
     const enabledHosts = await proxyHostService.getEnabled();
     const rateLimitedHosts = enabledHosts.filter(h => h.rateLimitRps).map(h => ({ id: h.id, rps: h.rateLimitRps! }));
-    // Wake-enabled hosts feed the http-level $proxy_host_id map used by sleep_activity log_format.
-    const wakeHostMap = enabledHosts
-      .filter(h => h.wakeContainerId)
-      .map(h => ({ hostId: h.id, domains: h.domainNames || [] }));
+    // Every enabled proxy_host contributes to the $host → $proxy_host_id map — used by both
+    // sleep_activity AND oblihub_traffic log formats to tag each request line with its host id.
+    const hostIdMap = enabledHosts.map(h => ({ hostId: h.id, domains: h.domainNames || [] }));
 
-    // Write main config (with rate limit zones + wake host map)
-    fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig(rateLimitedHosts, wakeHostMap));
+    // Write main config (with rate limit zones + host id map)
+    fs.writeFileSync(path.join(PROXY_DIR, 'nginx.conf'), generateMainConfig(rateLimitedHosts, hostIdMap));
 
     // Write custom error pages to disk (one file per error code with dynamic replacement).
     // Always write files for ALL 8 codes referenced in generateProxyHostConfig — codes that
@@ -910,16 +920,14 @@ export const nginxService = {
       if (!host.enabled) {
         // Disabled host: keep server_name + SSL but return 503
         const domains = host.domainNames.map(d => sanitizeForNginx(d)).join(' ');
-        const certDomain = host.certificate?.domainNames?.[0] || '';
-        const certFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.fullchain.crt`) : '';
-        const keyFile = certDomain ? path.join(CERTS_DIR, `${certDomain}.key`) : '';
-        const hasCert = host.certificate?.status === 'valid' && certFile && keyFile && fs.existsSync(certFile) && fs.existsSync(keyFile);
+        const resolved = host.certificate ? this.resolveExistingCertFile(host.certificate) : null;
+        const hasCert = host.certificate?.status === 'valid' && resolved;
 
         let conf = `# Disabled: ${domains}\nserver {\n    listen 80;\n    listen [::]:80;\n`;
-        if (hasCert) {
+        if (hasCert && resolved) {
           conf += `    listen 443 ssl;\n    listen [::]:443 ssl;\n    http2 on;\n`;
-          conf += `    ssl_certificate /etc/nginx/certs/${certDomain}.fullchain.crt;\n`;
-          conf += `    ssl_certificate_key /etc/nginx/certs/${certDomain}.key;\n`;
+          conf += `    ssl_certificate /etc/nginx/certs/${path.basename(resolved.fullchain)};\n`;
+          conf += `    ssl_certificate_key /etc/nginx/certs/${path.basename(resolved.key)};\n`;
         }
         conf += `    server_name ${domains};\n    return 503;\n}\n`;
         fs.writeFileSync(path.join(CONF_DIR, `${host.domainNames[0] || `proxy_${host.id}`}.conf`), conf);
@@ -1059,9 +1067,62 @@ export const nginxService = {
     }
   },
 
-  /** Get paths for certificate files by domain name */
+  /**
+   * File naming convention for a certificate.
+   *
+   * Historical scheme was `<primary-domain>.fullchain.crt`, which collided as soon as two certs
+   * shared a primary domain — typical case: an initial multi-SAN LE cert with `[a.com, b.com]`,
+   * then the user drops proxy_host `b.com`, recreates it and requests a fresh single-SAN cert
+   * `[b.com]`. Both certs render to `b.com.fullchain.crt` on disk → the multi-SAN cert's file
+   * gets silently overwritten by the single-SAN one, the vhost still linked to the multi-SAN
+   * cert reads a file that no longer covers its domain, browser errors out with wrong-cert.
+   *
+   * New scheme: `<sanitized-primary-domain>_<id>.fullchain.crt`. Unique by construction (id),
+   * lisible on disk for manual export. `<id>` is the certificate's DB PK.
+   *
+   * Reading: callers must pass the FULL cert row (id + domainNames). Writing: same.
+   *
+   * Backward-compat: `resolveExistingCertFile()` tries the new name first, falls back to the
+   * legacy `<domain>.fullchain.crt` if not found. This lets a running install keep serving its
+   * old certs after upgrade; each certificate migrates naturally on its next renewal (LE writes
+   * under the new name, nginx vhost is regenerated with the new path).
+   */
+  getCertPaths(cert: { id: number; domainNames: string[] }) {
+    const primaryDomain = cert.domainNames[0] || 'unknown';
+    const safeDomain = primaryDomain.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const stem = `${safeDomain}_${cert.id}`;
+    return {
+      cert: path.join(CERTS_DIR, `${stem}.crt`),
+      key: path.join(CERTS_DIR, `${stem}.key`),
+      chain: path.join(CERTS_DIR, `${stem}.chain.crt`),
+      fullchain: path.join(CERTS_DIR, `${stem}.fullchain.crt`),
+    };
+  },
+
+  /**
+   * Try the new `<domain>_<id>` naming first, fall back to legacy `<domain>` for certs that
+   * haven't been re-written since the naming change. Returns { fullchain, key } on success or
+   * null when neither exists. Used by vhost generation to decide whether the cert is usable.
+   */
+  resolveExistingCertFile(cert: { id: number; domainNames: string[] } | null): { fullchain: string; key: string } | null {
+    if (!cert) return null;
+    const primaryDomain = cert.domainNames[0] || '';
+    if (!primaryDomain) return null;
+    const modern = this.getCertPaths(cert);
+    if (fs.existsSync(modern.fullchain) && fs.existsSync(modern.key)) {
+      return { fullchain: modern.fullchain, key: modern.key };
+    }
+    const safeDomain = primaryDomain.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const legacyFullchain = path.join(CERTS_DIR, `${safeDomain}.fullchain.crt`);
+    const legacyKey = path.join(CERTS_DIR, `${safeDomain}.key`);
+    if (fs.existsSync(legacyFullchain) && fs.existsSync(legacyKey)) {
+      return { fullchain: legacyFullchain, key: legacyKey };
+    }
+    return null;
+  },
+
+  /** @deprecated kept for legacy call sites — new code should use getCertPaths(cert). */
   getCertPathsByDomain(domain: string) {
-    // Sanitize domain to prevent path traversal
     const safeDomain = domain.replace(/[^a-zA-Z0-9._-]/g, '_');
     return {
       cert: path.join(CERTS_DIR, `${safeDomain}.crt`),
@@ -1071,14 +1132,14 @@ export const nginxService = {
     };
   },
 
-  /** Write certificate files named by primary domain */
-  writeCertFiles(domain: string, cert: string, key: string, chain?: string): void {
+  /** Write certificate files under the `<domain>_<id>` scheme. */
+  writeCertFiles(cert: { id: number; domainNames: string[] }, certContent: string, key: string, chain?: string): void {
     ensureDirs();
-    const paths = this.getCertPathsByDomain(domain);
-    fs.writeFileSync(paths.cert, cert);
+    const paths = this.getCertPaths(cert);
+    fs.writeFileSync(paths.cert, certContent);
     fs.writeFileSync(paths.key, key, { mode: 0o600 });
     if (chain) fs.writeFileSync(paths.chain, chain);
-    const fullchain = chain ? cert + '\n' + chain : cert;
+    const fullchain = chain ? certContent + '\n' + chain : certContent;
     fs.writeFileSync(paths.fullchain, fullchain);
   },
 
