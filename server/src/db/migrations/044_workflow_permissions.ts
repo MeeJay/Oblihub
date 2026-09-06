@@ -21,7 +21,10 @@ export async function up(knex: Knex): Promise<void> {
     { key: 'targets.view',      category: 'automation', label: 'View Workflow Targets',                       default_admin: true, default_user: true,  default_viewer: true },
     { key: 'targets.manage',    category: 'automation', label: 'Create/Edit/Delete Workflow Targets',         default_admin: true, default_user: false, default_viewer: false },
   ];
-  await knex('permissions').insert(perms);
+  // Idempotent — a partial migration re-run must not choke on duplicates.
+  for (const p of perms) {
+    await knex('permissions').insert(p).onConflict('key').ignore();
+  }
 
   // Grant to system roles based on their default_* flag.
   const roles = await knex('roles').whereIn('name', ['admin', 'user', 'viewer']);

@@ -32,13 +32,16 @@ function parseRange(raw: string | undefined): RangeSpec {
 }
 
 async function visibleHostIdsForUser(req: Request): Promise<number[]> {
-  const user = (req as unknown as { user?: { id: number; role?: string } }).user;
-  if (!user) throw new AppError(401, 'Not authenticated');
-  if (user.role === 'admin') {
+  // Oblihub uses express-session, not Passport — the authenticated identity lives on
+  // req.session, not req.user. Earlier versions of this file read the wrong slot and
+  // returned 401 on every read for every user (including admins). See auth.ts SessionData.
+  const session = req.session as { userId?: number; role?: string };
+  if (!session.userId) throw new AppError(401, 'Not authenticated');
+  if (session.role === 'admin') {
     const rows = await db('proxy_hosts').select('id');
     return rows.map(r => r.id as number);
   }
-  const teamIds = (await db('team_members').where({ user_id: user.id }).pluck('team_id')) as number[];
+  const teamIds = (await db('team_members').where({ user_id: session.userId }).pluck('team_id')) as number[];
   if (teamIds.length === 0) return [];
   // proxy_hosts.stack_id → stacks.team_id.
   // A proxy_host without a stack_id is considered orphan; only admin sees those.
@@ -190,20 +193,30 @@ export const trafficController = {
       const visible = await visibleHostIdsForUser(req);
       if (visible.length === 0) { res.json({ success: true, data: [] }); return; }
       const from = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      // Aggregation on the traffic side without touching proxy_hosts.domain_names (jsonb — MIN()
+      // is not defined for jsonb in pg, crashes the query). Domain names are resolved in a second
+      // trivial round-trip; the two-query total is still one fast IX scan + one PK-lookup fetch.
       const rows = await db('proxy_traffic_1m')
-        .join('proxy_hosts', 'proxy_traffic_1m.proxy_host_id', 'proxy_hosts.id')
         .whereIn('proxy_host_id', visible)
         .where('ts', '>=', from)
         .select('proxy_host_id',
-          db.raw('MIN(proxy_hosts.domain_names) AS domain_names'),
           db.raw('SUM(req_count)::bigint AS req_count'),
           db.raw('SUM(bytes_out)::bigint AS bytes_out'),
           db.raw('SUM(status_4xx + status_5xx)::bigint AS error_count'))
         .groupBy('proxy_host_id')
         .orderBy('req_count', 'desc');
+      if (rows.length === 0) { res.json({ success: true, data: [] }); return; }
+      const hostIds = rows.map(r => Number(r.proxy_host_id));
+      const hostRows = await db('proxy_hosts').whereIn('id', hostIds).select('id', 'domain_names');
+      const domainById = new Map<number, string>();
+      for (const h of hostRows) {
+        const raw = h.domain_names;
+        const arr = Array.isArray(raw) ? raw : (typeof raw === 'string' && raw ? JSON.parse(raw) : []);
+        domainById.set(h.id as number, arr[0] || `#${h.id}`);
+      }
       res.json({ success: true, data: rows.map(r => ({
         proxyHostId: Number(r.proxy_host_id),
-        domain: Array.isArray(r.domain_names) ? (r.domain_names[0] as string) : String(r.domain_names || '').split(',')[0],
+        domain: domainById.get(Number(r.proxy_host_id)) || `#${r.proxy_host_id}`,
         reqCount: Number(r.req_count) || 0,
         bytesOut: Number(r.bytes_out) || 0,
         errorCount: Number(r.error_count) || 0,

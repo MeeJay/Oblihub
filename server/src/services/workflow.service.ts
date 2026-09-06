@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { db } from '../db';
 import { logger } from '../utils/logger';
 import { sshKeyService } from './sshKey.service';
@@ -158,7 +159,6 @@ const actSslExportSftp: ActionExecutor = async (ctx) => {
       // strict enforcement, mismatched key → error.
       hostVerifier: target.hostKeyFingerprint
         ? (key: Buffer) => {
-            const crypto = require('crypto');
             const fp = 'SHA256:' + crypto.createHash('sha256').update(key).digest('base64').replace(/=+$/, '');
             const ok = fp === target.hostKeyFingerprint;
             if (!ok) ctx.log('error', `Host key mismatch: got ${fp}, expected ${target.hostKeyFingerprint}`);

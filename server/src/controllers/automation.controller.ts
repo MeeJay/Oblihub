@@ -13,13 +13,16 @@ import { AppError } from '../middleware/errorHandler';
  * items + global.
  */
 async function resolveVisibility(req: Request): Promise<{ teamIds: number[]; ownerUserId: number; includeGlobal: boolean }> {
-  const user = (req as unknown as { user?: { id: number; role?: string } }).user;
-  if (!user) throw new AppError(401, 'Not authenticated');
-  const isAdmin = user.role === 'admin';
-  const teamRows = await db('team_members').where({ user_id: user.id }).pluck('team_id');
+  // Oblihub uses express-session, not Passport — the authenticated identity lives on
+  // req.session, not req.user. Earlier versions of this file read the wrong slot and
+  // returned 401 on every read for every user. See auth.ts SessionData for the shape.
+  const session = req.session as { userId?: number; role?: string };
+  if (!session.userId) throw new AppError(401, 'Not authenticated');
+  const isAdmin = session.role === 'admin';
+  const teamRows = await db('team_members').where({ user_id: session.userId }).pluck('team_id');
   return {
     teamIds: teamRows as number[],
-    ownerUserId: user.id,
+    ownerUserId: session.userId,
     // Global scope = admin-managed shared resources. Non-admins can SEE them too — needed so a
     // "user" role team member can reference a global SSH key in a workflow target they create.
     includeGlobal: true || isAdmin,
@@ -48,7 +51,8 @@ export const sshKeyController = {
 
   async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const user = (req as unknown as { user: { id: number } }).user;
+      const session = req.session as { userId?: number };
+      const user = { id: session.userId! };
       const { name, description, teamId, ownerUserId, keyType } = req.body;
       if (!name) throw new AppError(400, 'name required');
       const key = await sshKeyService.create({
@@ -99,7 +103,8 @@ export const workflowTargetController = {
 
   async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const user = (req as unknown as { user: { id: number } }).user;
+      const session = req.session as { userId?: number };
+      const user = { id: session.userId! };
       const body = req.body;
       if (!body.name || !body.host || !body.username || !body.remotePath || !body.sshKeyId) {
         throw new AppError(400, 'name, host, username, remotePath and sshKeyId are required');
@@ -149,7 +154,8 @@ export const workflowController = {
 
   async create(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const user = (req as unknown as { user: { id: number } }).user;
+      const session = req.session as { userId?: number };
+      const user = { id: session.userId! };
       const body = req.body;
       if (!body.name || !body.actionType || !body.triggerType) {
         throw new AppError(400, 'name, actionType and triggerType are required');
