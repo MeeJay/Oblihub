@@ -827,7 +827,25 @@ ${wakeMapBlock}
     # the host's <stacksDir>/_proxy/ so the log file surfaces where the Oblihub server can tail
     # it. /var/log/nginx stays inside the proxy container and would never be readable by the
     # server (same trick sleep_activity.log has been using).
-    log_format oblihub_traffic '$proxy_host_id|$msec|$status|$body_bytes_sent|$request_length|$request_time|$upstream_response_time|$remote_addr|$request_uri';
+    #
+    # Field list (14 fields):
+    #   1  $proxy_host_id       (from the host→id map above)
+    #   2  $msec                (unix timestamp with ms, e.g. 1728000000.123)
+    #   3  $status              (HTTP status code)
+    #   4  $body_bytes_sent     (response body bytes)
+    #   5  $request_length      (request bytes)
+    #   6  $request_time        (edge latency in seconds, e.g. "0.024")
+    #   7  $upstream_response_time (upstream latency; "-" if no upstream contacted)
+    #   8  $remote_addr         (source IP)
+    #   9  $request_method      (GET/POST/...)
+    #  10  $request_uri         (URI with querystring)
+    #  11  $http_user_agent
+    #  12  $http_referer
+    #  13  $upstream_cache_status (HIT/MISS/BYPASS/EXPIRED/UPDATING/STALE; "-" no cache config)
+    #  14  $server_protocol     (HTTP/1.1, HTTP/2.0)
+    # Any embedded pipes in UA/referer/URI would break the split; nginx escapes special chars
+    # with \x00 style by default, no operator action needed.
+    log_format oblihub_traffic '$proxy_host_id|$msec|$status|$body_bytes_sent|$request_length|$request_time|$upstream_response_time|$remote_addr|$request_method|$request_uri|$http_user_agent|$http_referer|$upstream_cache_status|$server_protocol';
 
     access_log /var/log/nginx/access.log main;
     access_log /etc/nginx/oblihub_traffic.log oblihub_traffic;
