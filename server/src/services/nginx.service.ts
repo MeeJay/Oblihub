@@ -781,10 +781,14 @@ ${wakeMapBlock}
     # per-host time-series (req/s, bytes, latency, top IPs / URIs). $request_time is nginx's
     # own timing (client-to-client), rounded to ms via $request_time*1000. Empty
     # $upstream_response_time (no upstream contacted — early 4xx, cached response) logs as "-".
+    # Path is /etc/nginx/... NOT /var/log/nginx/... — the /etc/nginx dir is bind-mounted from
+    # the host's <stacksDir>/_proxy/ so the log file surfaces where the Oblihub server can tail
+    # it. /var/log/nginx stays inside the proxy container and would never be readable by the
+    # server (same trick sleep_activity.log has been using).
     log_format oblihub_traffic '$proxy_host_id|$msec|$status|$body_bytes_sent|$request_length|$request_time|$upstream_response_time|$remote_addr|$request_uri';
 
     access_log /var/log/nginx/access.log main;
-    access_log /var/log/nginx/oblihub_traffic.log oblihub_traffic;
+    access_log /etc/nginx/oblihub_traffic.log oblihub_traffic;
 
     sendfile on;
     tcp_nopush on;

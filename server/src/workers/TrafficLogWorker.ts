@@ -22,10 +22,12 @@ import { logger } from '../utils/logger';
  * emit only the top 20 IPs / URIs per host per hour at flush time.
  */
 
+// Same volume-mount trick as ActivityTracker: nginx writes to /etc/nginx/oblihub_traffic.log
+// INSIDE the proxy container, which is bind-mounted from <stacksDir>/_proxy/ on the host — so
+// the Oblihub server (different container, same host volume) tails it here. If nginx writes
+// to /var/log/nginx/... instead, the file stays trapped inside the proxy container and this
+// worker sees nothing forever.
 const LOG_PATH = path.join(config.stacksDir, '_proxy', 'oblihub_traffic.log');
-// Alternate mount inside the container. If the primary path doesn't exist yet (fresh install),
-// we fall back to the standard nginx location so the worker doesn't crash.
-const ALT_LOG_PATH = '/var/log/nginx/oblihub_traffic.log';
 const POLL_INTERVAL_MS = 1_000;
 const FLUSH_INTERVAL_MS = 60_000;
 const TOP_K = 20;
@@ -60,10 +62,7 @@ let flushTimer: ReturnType<typeof setInterval> | null = null;
 let activeLogPath: string | null = null;
 
 function resolveLogPath(): string | null {
-  for (const p of [LOG_PATH, ALT_LOG_PATH]) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
+  return fs.existsSync(LOG_PATH) ? LOG_PATH : null;
 }
 
 function bucketKey(hostId: number, tsMs: number, granularity: 'minute' | 'hour'): string {
