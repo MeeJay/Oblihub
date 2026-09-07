@@ -746,9 +746,23 @@ function generateMainConfig(
   // resolve their host id from one shared http-context map. Declaring the variable via `map`
   // also satisfies nginx's parse-time requirement that log_format variables exist at http scope,
   // which a server-block `set` doesn't.
-  const hostMapEntries = hostIdMap.flatMap(h =>
-    h.domains.map(d => `        "${sanitizeForNginx(d)}" "${h.hostId}";`)
-  ).join('\n');
+  //
+  // Dedup by domain — nginx refuses a `map` with two entries on the same key ("conflicting
+  // parameter ... in nginx.conf"). Operators legitimately have two proxy_hosts pointing at the
+  // same domain (one legacy left disabled, or a stub / staging). First occurrence wins; the
+  // request-side routing (server_name matching per vhost) is unaffected — this only picks
+  // which host id is stamped in the traffic / sleep logs.
+  const seenDomains = new Set<string>();
+  const hostMapLines: string[] = [];
+  for (const h of hostIdMap) {
+    for (const d of h.domains) {
+      const safe = sanitizeForNginx(d);
+      if (!safe || seenDomains.has(safe)) continue;
+      seenDomains.add(safe);
+      hostMapLines.push(`        "${safe}" "${h.hostId}";`);
+    }
+  }
+  const hostMapEntries = hostMapLines.join('\n');
   const wakeMapBlock = hostMapEntries
     ? `    map $host $proxy_host_id {\n        default "0";\n${hostMapEntries}\n    }`
     : `    map $host $proxy_host_id { default "0"; }`;

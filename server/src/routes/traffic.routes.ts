@@ -13,5 +13,7 @@ router.get('/proxy-host/:id/top-uris',   requirePermission('proxy.view'), traffi
 router.get('/summary',                   requirePermission('proxy.view'), trafficController.hostsSummary);
 router.get('/team-cumul',                requirePermission('proxy.view'), trafficController.teamCumul);
 router.get('/geo',                       requirePermission('proxy.view'), trafficController.geoAggregated);
+router.get('/top-ips',                   requirePermission('proxy.view'), trafficController.topIpsGlobal);
+router.get('/top-uris',                  requirePermission('proxy.view'), trafficController.topUrisGlobal);
 
 export default router;

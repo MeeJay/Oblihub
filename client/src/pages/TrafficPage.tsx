@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, TrendingUp, AlertTriangle, Globe, RefreshCw } from 'lucide-react';
+import { Activity, TrendingUp, AlertTriangle, Globe, RefreshCw, Server as ServerIcon, Link as LinkIcon } from 'lucide-react';
 import { LineChart, formatBytes, formatShortNumber } from '@/components/LineChart';
 import { Sparkline } from '@/components/Sparkline';
-import { trafficApi, type TrafficRange, type TrafficPoint, type TopIp, type TopUri, type HostSummary, type GeoCountry, type TrafficSeries } from '@/api/traffic.api';
+import { WorldMap } from '@/components/WorldMap';
+import { StatusDonut } from '@/components/StatusDonut';
+import { trafficApi, type TrafficRange, type TopIp, type TopUri, type HostSummary, type GeoCountry, type TrafficSeries } from '@/api/traffic.api';
 import { proxyApi } from '@/api/proxy.api';
 import type { ProxyHost } from '@oblihub/shared';
 
@@ -15,32 +17,29 @@ const RANGES: { key: TrafficRange; label: string }[] = [
   { key: '90d', label: '90d' },
 ];
 
-/**
- * Global Traffic dashboard. Shows the cumul across every proxy host the user can see + a
- * per-host summary + a geographic distribution. Deliberately dense — the user asked for
- * "en foutre plein les yeux".
- *
- * Per-host drill-down happens through the "View" link on each row → opens the per-host tab.
- */
 export function TrafficPage() {
   const [range, setRange] = useState<TrafficRange>('24h');
   const [series, setSeries] = useState<TrafficSeries | null>(null);
   const [hosts, setHosts] = useState<ProxyHost[]>([]);
   const [summary, setSummary] = useState<HostSummary[]>([]);
   const [geo, setGeo] = useState<GeoCountry[]>([]);
+  const [topIps, setTopIps] = useState<TopIp[]>([]);
+  const [topUris, setTopUris] = useState<TopUri[]>([]);
   const [selectedHostId, setSelectedHostId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
     try {
-      const [s, sm, g, h] = await Promise.all([
+      const [s, sm, g, ips, uris, h] = await Promise.all([
         trafficApi.teamCumul(range),
         trafficApi.summary(),
         trafficApi.geo(range),
+        trafficApi.topIpsGlobal(range),
+        trafficApi.topUrisGlobal(range),
         proxyApi.listHosts().catch(() => []),
       ]);
-      setSeries(s); setSummary(sm); setGeo(g); setHosts(h);
-    } catch { /* silent — page shows empty state */ }
+      setSeries(s); setSummary(sm); setGeo(g); setTopIps(ips); setTopUris(uris); setHosts(h);
+    } catch { /* silent */ }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [range]);
@@ -66,11 +65,43 @@ export function TrafficPage() {
       ) : (
         <>
           <StatCards series={series} />
-          <CumulChart series={series} />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          {/* Requests-over-time + Bandwidth/latency on the SAME row (2 cols) for density */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div>
+              <h2 className="text-sm font-medium text-text-primary mb-2">Requests over time</h2>
+              <TimeChart series={series} kind="status" />
+            </div>
+            <div>
+              <h2 className="text-sm font-medium text-text-primary mb-2">Bandwidth &amp; latency</h2>
+              <TimeChart series={series} kind="bw" />
+            </div>
+          </div>
+
+          {/* Hero: world map — full width so hotspots pop */}
+          <div>
+            <h2 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
+              <Globe size={14} /> Requests by geography
+            </h2>
+            <WorldMap countries={geo} />
+          </div>
+
+          {/* Row: status donut + hosts table + country list */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="rounded-xl border border-border bg-bg-secondary p-4">
+              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Status distribution</h3>
+              <StatusDonutFromSeries series={series} />
+            </div>
             <HostsTable summary={summary} onSelect={setSelectedHostId} />
             <GeoWidget geo={geo} />
           </div>
+
+          {/* Row: top IPs + top URIs live on the dashboard */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <TopIpsWidget ips={topIps} />
+            <TopUrisWidget uris={topUris} />
+          </div>
+
           {selectedHostId != null && (
             <HostDrilldown
               host={hosts.find(h => h.id === selectedHostId) || null}
@@ -88,11 +119,8 @@ function RangeSwitcher({ range, onChange }: { range: TrafficRange; onChange: (r:
   return (
     <div className="flex gap-0.5 rounded-lg border border-border bg-bg-tertiary p-0.5">
       {RANGES.map(r => (
-        <button
-          key={r.key}
-          onClick={() => onChange(r.key)}
-          className={`px-2.5 py-1 text-xs rounded ${range === r.key ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'}`}
-        >
+        <button key={r.key} onClick={() => onChange(r.key)}
+          className={`px-2.5 py-1 text-xs rounded ${range === r.key ? 'bg-accent text-white' : 'text-text-muted hover:text-text-primary'}`}>
           {r.label}
         </button>
       ))}
@@ -143,66 +171,70 @@ function StatCard({ label, value, icon: Icon, spark, color }: { label: string; v
   );
 }
 
-function CumulChart({ series }: { series: TrafficSeries | null }) {
+function TimeChart({ series, kind }: { series: TrafficSeries | null; kind: 'status' | 'bw' }) {
   const points = series?.points || [];
   const labels = points.map(p => new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-  return (
-    <div>
-      <h2 className="text-sm font-medium text-text-primary mb-2">Requests over time</h2>
-      <LineChart
-        labels={labels}
+  if (kind === 'status') {
+    return (
+      <LineChart labels={labels} yLabel="req / bucket" height={200}
         series={[
           { name: '2xx', color: '#22c55e', values: points.map(p => p.status2xx) },
           { name: '3xx', color: '#4a9eff', values: points.map(p => p.status3xx) },
           { name: '4xx', color: '#f59e0b', values: points.map(p => p.status4xx) },
           { name: '5xx', color: '#ef4444', values: points.map(p => p.status5xx) },
         ]}
-        yLabel="req / bucket"
       />
-      <h2 className="text-sm font-medium text-text-primary mt-4 mb-2">Bandwidth &amp; latency</h2>
-      <LineChart
-        labels={labels}
-        series={[
-          { name: 'Bytes out', color: '#22c55e', values: points.map(p => p.bytesOut), format: formatBytes },
-          { name: 'Avg latency (ms)', color: '#f59e0b', values: points.map(p => p.avgLatencyMs) },
-        ]}
-        yLabel="bytes / ms"
-      />
-    </div>
+    );
+  }
+  return (
+    <LineChart labels={labels} yLabel="bytes / ms" height={200}
+      series={[
+        { name: 'Bytes out', color: '#22c55e', values: points.map(p => p.bytesOut), format: formatBytes },
+        { name: 'Avg latency (ms)', color: '#f59e0b', values: points.map(p => p.avgLatencyMs) },
+      ]}
+    />
   );
+}
+
+function StatusDonutFromSeries({ series }: { series: TrafficSeries | null }) {
+  const totals = useMemo(() => {
+    const p = series?.points || [];
+    return p.reduce((a, x) => ({
+      s2xx: a.s2xx + x.status2xx,
+      s3xx: a.s3xx + x.status3xx,
+      s4xx: a.s4xx + x.status4xx,
+      s5xx: a.s5xx + x.status5xx,
+    }), { s2xx: 0, s3xx: 0, s4xx: 0, s5xx: 0 });
+  }, [series]);
+  return <StatusDonut {...totals} />;
 }
 
 function HostsTable({ summary, onSelect }: { summary: HostSummary[]; onSelect: (id: number) => void }) {
   const maxReq = Math.max(1, ...summary.map(s => s.reqCount));
   return (
     <div className="rounded-xl border border-border bg-bg-secondary p-4">
-      <h2 className="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
-        <TrendingUp size={14} /> Top proxy hosts (24h)
-      </h2>
+      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+        <ServerIcon size={12} /> Top proxy hosts (24h)
+      </h3>
       {summary.length === 0 ? (
         <div className="text-xs text-text-muted text-center py-8">No data yet</div>
       ) : (
-        <div className="space-y-1.5 max-h-96 overflow-auto">
+        <div className="space-y-1.5 max-h-80 overflow-auto">
           {summary.map(s => (
-            <button
-              key={s.proxyHostId}
-              onClick={() => onSelect(s.proxyHostId)}
-              className="w-full text-left flex items-center gap-3 p-2 rounded hover:bg-bg-tertiary text-xs"
-            >
+            <button key={s.proxyHostId} onClick={() => onSelect(s.proxyHostId)}
+              className="w-full text-left flex items-center gap-3 p-2 rounded hover:bg-bg-tertiary text-xs">
               <div className="flex-1 min-w-0">
                 <div className="font-mono text-text-primary truncate">{s.domain}</div>
                 <div className="mt-1 h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
                   <div className="h-full bg-accent" style={{ width: `${(s.reqCount / maxReq) * 100}%` }} />
                 </div>
               </div>
-              <div className="text-right shrink-0 min-w-[80px]">
+              <div className="text-right shrink-0 min-w-[70px]">
                 <div className="font-mono text-text-primary">{formatShortNumber(s.reqCount)}</div>
                 <div className="text-[10px] text-text-muted">{formatBytes(s.bytesOut)}</div>
               </div>
               {s.errorCount > 0 && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-down/10 text-status-down">
-                  {formatShortNumber(s.errorCount)} err
-                </span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-down/10 text-status-down">{formatShortNumber(s.errorCount)} err</span>
               )}
             </button>
           ))}
@@ -216,13 +248,13 @@ function GeoWidget({ geo }: { geo: GeoCountry[] }) {
   const total = geo.reduce((a, g) => a + g.reqCount, 0) || 1;
   return (
     <div className="rounded-xl border border-border bg-bg-secondary p-4">
-      <h2 className="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
-        <Globe size={14} /> Requests by country
-      </h2>
+      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+        <Globe size={12} /> Requests by country
+      </h3>
       {geo.length === 0 ? (
-        <div className="text-xs text-text-muted text-center py-8">No geo data yet — either no traffic in this range or all IPs are private/local.</div>
+        <div className="text-xs text-text-muted text-center py-8">No geo data yet</div>
       ) : (
-        <div className="space-y-1.5 max-h-96 overflow-auto">
+        <div className="space-y-1.5 max-h-80 overflow-auto">
           {geo.map(g => (
             <div key={g.code} className="flex items-center gap-3 p-2 rounded hover:bg-bg-tertiary text-xs">
               <span className="text-lg">{countryFlag(g.code)}</span>
@@ -232,9 +264,75 @@ function GeoWidget({ geo }: { geo: GeoCountry[] }) {
                   <div className="h-full bg-accent" style={{ width: `${(g.reqCount / total) * 100}%` }} />
                 </div>
               </div>
-              <div className="text-right shrink-0 min-w-[70px]">
+              <div className="text-right shrink-0 min-w-[60px]">
                 <div className="font-mono text-text-primary">{formatShortNumber(g.reqCount)}</div>
                 <div className="text-[10px] text-text-muted">{((g.reqCount / total) * 100).toFixed(1)}%</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopIpsWidget({ ips }: { ips: TopIp[] }) {
+  const maxReq = Math.max(1, ...ips.map(i => i.reqCount));
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary p-4">
+      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+        <Globe size={12} /> Top source IPs
+      </h3>
+      {ips.length === 0 ? (
+        <div className="text-xs text-text-muted text-center py-8">No data yet</div>
+      ) : (
+        <div className="space-y-1.5 max-h-96 overflow-auto">
+          {ips.map(ip => (
+            <div key={ip.ip} className="flex items-center gap-3 p-2 rounded hover:bg-bg-tertiary text-xs">
+              {ip.geo && <span className="text-base flex-shrink-0">{countryFlag(ip.geo.countryCode || '')}</span>}
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-text-primary truncate">{ip.ip}</div>
+                {ip.geo && (
+                  <div className="text-[10px] text-text-muted truncate">{[ip.geo.city, ip.geo.countryName, ip.geo.org].filter(Boolean).join(' · ')}</div>
+                )}
+                <div className="mt-1 h-1 rounded-full bg-bg-tertiary overflow-hidden">
+                  <div className="h-full bg-accent" style={{ width: `${(ip.reqCount / maxReq) * 100}%` }} />
+                </div>
+              </div>
+              <div className="text-right shrink-0 min-w-[70px]">
+                <div className="font-mono text-text-primary">{formatShortNumber(ip.reqCount)}</div>
+                <div className="text-[10px] text-text-muted">{formatBytes(ip.bytesOut)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopUrisWidget({ uris }: { uris: TopUri[] }) {
+  const maxReq = Math.max(1, ...uris.map(u => u.reqCount));
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary p-4">
+      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 flex items-center gap-2">
+        <LinkIcon size={12} /> Top URIs
+      </h3>
+      {uris.length === 0 ? (
+        <div className="text-xs text-text-muted text-center py-8">No data yet</div>
+      ) : (
+        <div className="space-y-1.5 max-h-96 overflow-auto">
+          {uris.map(u => (
+            <div key={u.uri} className="flex items-center gap-3 p-2 rounded hover:bg-bg-tertiary text-xs">
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-text-primary truncate">{u.uri}</div>
+                <div className="mt-1 h-1 rounded-full bg-bg-tertiary overflow-hidden">
+                  <div className="h-full bg-accent" style={{ width: `${(u.reqCount / maxReq) * 100}%` }} />
+                </div>
+              </div>
+              <div className="text-right shrink-0 min-w-[80px]">
+                <div className="font-mono text-text-primary">{formatShortNumber(u.reqCount)}</div>
+                <div className="text-[10px] text-text-muted">{u.avgLatencyMs}ms</div>
               </div>
             </div>
           ))}
@@ -323,11 +421,6 @@ function HostDrilldown({ host, range, onClose }: { host: ProxyHost | null; range
   );
 }
 
-/**
- * Country code → emoji flag. Wraps each ASCII letter into its regional indicator (U+1F1E6-1F1FF)
- * pair; browsers with color-emoji fonts render the flag. Falls back to a neutral placeholder
- * for empty / invalid inputs.
- */
 function countryFlag(code: string): string {
   if (!code || code.length !== 2) return '🏳️';
   const A = 0x1F1E6;

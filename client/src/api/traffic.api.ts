@@ -85,4 +85,12 @@ export const trafficApi = {
     const res = await apiClient.get<ApiResponse<GeoCountry[]>>(`/traffic/geo?range=${range}`);
     return res.data.data!;
   },
+  async topIpsGlobal(range: TrafficRange = '24h'): Promise<TopIp[]> {
+    const res = await apiClient.get<ApiResponse<TopIp[]>>(`/traffic/top-ips?range=${range}`);
+    return res.data.data!;
+  },
+  async topUrisGlobal(range: TrafficRange = '24h'): Promise<TopUri[]> {
+    const res = await apiClient.get<ApiResponse<TopUri[]>>(`/traffic/top-uris?range=${range}`);
+    return res.data.data!;
+  },
 };

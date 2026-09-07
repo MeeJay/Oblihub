@@ -224,6 +224,52 @@ export const trafficController = {
     } catch (err) { next(err); }
   },
 
+  /** Top IPs across ALL visible proxy hosts for the range — used by the global dashboard. */
+  async topIpsGlobal(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const visible = await visibleHostIdsForUser(req);
+      if (visible.length === 0) { res.json({ success: true, data: [] }); return; }
+      const { fromMs } = parseRange(req.query.range as string);
+      const rows = await db('proxy_traffic_top_ips_1h')
+        .whereIn('proxy_host_id', visible)
+        .where('ts', '>=', new Date(fromMs))
+        .select('ip', db.raw('SUM(req_count)::bigint AS req_count'), db.raw('SUM(bytes_out)::bigint AS bytes_out'))
+        .groupBy('ip')
+        .orderBy('req_count', 'desc')
+        .limit(20);
+      const geoMap = await geoipService.lookupMany(rows.map(r => r.ip as string));
+      res.json({ success: true, data: rows.map(r => ({
+        ip: r.ip as string,
+        reqCount: Number(r.req_count) || 0,
+        bytesOut: Number(r.bytes_out) || 0,
+        geo: geoMap.get(r.ip as string) || null,
+      })) });
+    } catch (err) { next(err); }
+  },
+
+  /** Top URIs across ALL visible proxy hosts for the range — used by the global dashboard. */
+  async topUrisGlobal(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const visible = await visibleHostIdsForUser(req);
+      if (visible.length === 0) { res.json({ success: true, data: [] }); return; }
+      const { fromMs } = parseRange(req.query.range as string);
+      const rows = await db('proxy_traffic_top_uris_1h')
+        .whereIn('proxy_host_id', visible)
+        .where('ts', '>=', new Date(fromMs))
+        .select('uri',
+          db.raw('SUM(req_count)::bigint AS req_count'),
+          db.raw('SUM(req_count * avg_latency_ms) / GREATEST(1, SUM(req_count)) AS avg_latency_ms'))
+        .groupBy('uri')
+        .orderBy('req_count', 'desc')
+        .limit(20);
+      res.json({ success: true, data: rows.map(r => ({
+        uri: r.uri as string,
+        reqCount: Number(r.req_count) || 0,
+        avgLatencyMs: Math.round(Number(r.avg_latency_ms) || 0),
+      })) });
+    } catch (err) { next(err); }
+  },
+
   /**
    * Aggregated geo points for the visible scope — one row per unique country over the range,
    * with total request count. Fed into the worldmap widget.
