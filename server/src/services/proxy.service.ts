@@ -122,6 +122,13 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, acces
     autoMonitor: (row.auto_monitor as boolean) || false,
     dockerNetwork: (row.docker_network as string) || null,
     azureAuthProviderId: (row.azure_auth_provider_id as number) || null,
+    azureAuthAllowedGroups: ((): string[] | null => {
+      const raw = row.azure_auth_allowed_groups;
+      if (raw == null) return null;
+      if (Array.isArray(raw)) return raw as string[];
+      if (typeof raw === 'string' && raw) { try { return JSON.parse(raw) as string[]; } catch { return null; } }
+      return null;
+    })(),
     routes,
     certificate: cert || null,
     createdAt: (row.created_at as Date).toISOString(),
@@ -294,6 +301,7 @@ export const proxyHostService = {
       auto_monitor: data.autoMonitor || false,
       docker_network: data.dockerNetwork || null,
       azure_auth_provider_id: data.azureAuthProviderId || null,
+      azure_auth_allowed_groups: data.azureAuthAllowedGroups && data.azureAuthAllowedGroups.length ? JSON.stringify(data.azureAuthAllowedGroups) : null,
     }).returning('*');
     // Hydrate the junction from accessListIds[] if provided; otherwise fall back to the
     // legacy single accessListId so older clients still work.
@@ -338,6 +346,9 @@ export const proxyHostService = {
     if (data.autoMonitor !== undefined) update.auto_monitor = data.autoMonitor;
     if (data.dockerNetwork !== undefined) update.docker_network = data.dockerNetwork;
     if (data.azureAuthProviderId !== undefined) update.azure_auth_provider_id = data.azureAuthProviderId;
+    if (data.azureAuthAllowedGroups !== undefined) {
+      update.azure_auth_allowed_groups = data.azureAuthAllowedGroups && data.azureAuthAllowedGroups.length ? JSON.stringify(data.azureAuthAllowedGroups) : null;
+    }
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');
     if (!row) return null;
     // Sync junction when the caller passed an explicit list (empty array = "clear all").

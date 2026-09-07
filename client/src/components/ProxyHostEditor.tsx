@@ -343,6 +343,29 @@ function AuthTab({ editing, setEditing, accessLists, azureProviders }: ProxyHost
           </p>
         )}
       </div>
+
+      {editing.azureAuthProviderId && (
+        <div>
+          <label className="text-xs font-medium text-text-secondary block mb-1.5">
+            Restrict to Azure group IDs <span className="text-text-muted">(per-host, comma-separated GUIDs)</span>
+          </label>
+          <input
+            value={(editing.azureAuthAllowedGroups || []).join(', ')}
+            onChange={e => {
+              const parsed = e.target.value
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => s.length > 0);
+              setEditing(h => h ? { ...h, azureAuthAllowedGroups: parsed.length ? parsed : null } : null);
+            }}
+            placeholder="leave empty to accept every user the provider authenticates"
+            className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+          <p className="text-[10px] text-text-muted mt-1">
+            Applied ON TOP of the provider&#39;s global group restriction, ENFORCED BY NGINX post-auth. Lets a single Azure App Registration serve several stacks with different group permissions (e.g. group A → stackA, group B → stackB behind the same provider). Empty = no per-host restriction. Provider must be configured with <code>groups</code> as an optional claim in Azure (Token configuration → Add optional claim → ID → groups) so the sidecar receives the user&#39;s group list.
+          </p>
+        </div>
+      )}
     </>
   );
 }

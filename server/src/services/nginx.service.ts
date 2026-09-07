@@ -268,6 +268,27 @@ function sanitizeForNginx(value: string): string {
   return value.replace(/[;\n\r{}#'"\\]/g, '');
 }
 
+/**
+ * Emit an `if ($auth_groups !~ ...) { return 403; }` guard when the proxy_host restricts by
+ * Azure group. Empty / null list = no guard (auth is enough). Group tokens are cleaned to
+ * `[A-Za-z0-9._:-]+` so they can go verbatim inside a regex — Entra group IDs are GUIDs so
+ * this is a no-op in practice, but keeps us safe from operator-typed junk.
+ *
+ * Note: $auth_groups is populated by auth_request_set at server scope; guards inside a location
+ * see it correctly. The regex uses `(^|,)(g1|g2)(,|$)` so a substring match on a longer GUID
+ * doesn't accidentally succeed (e.g. group "abc" shouldn't match "abcd,xyz").
+ */
+function azureGroupGuardLines(host: ProxyHost, indent: string): string {
+  const groups = host.azureAuthAllowedGroups;
+  if (!groups || groups.length === 0) return '';
+  const clean = groups
+    .map(g => g.replace(/[^A-Za-z0-9._:-]/g, ''))
+    .filter(g => g.length > 0);
+  if (clean.length === 0) return '';
+  const regex = `(^|,)(${clean.join('|')})(,|$)`;
+  return `${indent}if ($auth_groups !~ "${regex}") { return 403; }\n`;
+}
+
 function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []): string {
   const domains = host.domainNames.map(d => sanitizeForNginx(d)).join(' ');
   const upstream = `${sanitizeForNginx(host.forwardScheme)}://${sanitizeForNginx(host.forwardHost)}:${host.forwardPort}`;
@@ -568,6 +589,8 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
       // / Remote-*), plus the response-side add_header block for static SPAs. Only emitted when
       // the host has forward-auth AND this route inherits it.
       if (host.azureAuthProviderId && route.authMode !== 'none') {
+        // Per-host group guard applies to sub-routes that inherit auth too.
+        conf += azureGroupGuardLines(host, '        ');
         conf += `        proxy_set_header X-Auth-User $auth_user;\n`;
         conf += `        proxy_set_header X-Auth-Email $auth_email;\n`;
         conf += `        proxy_set_header X-Auth-Groups $auth_groups;\n`;
@@ -630,6 +653,11 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   // Cheap redundancy — three extra strings per request beats "the SSO integration doesn't work
   // out of the box" as a support ticket.
   if (host.azureAuthProviderId) {
+    // Per-host Azure group restriction. Enforced HERE (post-auth) rather than at the sidecar
+    // because one sidecar is shared across every proxy_host using the same provider — so any
+    // sidecar-side group filter would apply to all of them uniformly. Per-host filter lives in
+    // nginx via `if ($auth_groups !~ ...) { return 403; }`.
+    conf += azureGroupGuardLines(host, '        ');
     // Request headers → upstream. Kept here (not at server scope) because proxy_set_header does
     // NOT inherit into a child location that declares its own. Server-scope add_header block
     // above handles the response side — that inheritance IS fine as long as nothing in this

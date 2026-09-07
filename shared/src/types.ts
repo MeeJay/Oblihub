@@ -372,6 +372,12 @@ export interface ProxyHost {
   // When set, nginx delegates authentication for this host to the Azure AD provider's
   // oauth2-proxy sidecar. Null = no forward-auth (Access Lists / basic-auth still apply).
   azureAuthProviderId: number | null;
+  // Per-host Azure group restriction, layered ON TOP of the provider's global `allowed_groups`.
+  // Null / empty = no per-host filter (provider-level filter still applies). When set, nginx
+  // enforces an additional check on the X-Auth-Request-Groups header — a user authenticated by
+  // the shared sidecar but not in any of these groups gets a 403 on THIS host only. Lets one
+  // Azure app registration back several stacks with different group permissions.
+  azureAuthAllowedGroups: string[] | null;
   // Per-path sub-routes. nginx emits one `location <path_in>` per route BEFORE `location /` —
   // ordered by URI-prefix specificity so `/api/v3/` wins over `/api/` wins over `/`. Each
   // route can target a different container, exempt itself from forward-auth or access lists,
