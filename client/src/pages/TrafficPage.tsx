@@ -26,6 +26,7 @@ export function TrafficPage() {
   const [topIps, setTopIps] = useState<TopIp[]>([]);
   const [topUris, setTopUris] = useState<TopUri[]>([]);
   const [selectedHostId, setSelectedHostId] = useState<number | null>(null);
+  const [drilldownOpen, setDrilldownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
@@ -66,7 +67,7 @@ export function TrafficPage() {
         <>
           <StatCards series={series} />
 
-          {/* Requests-over-time + Bandwidth/latency on the SAME row (2 cols) for density */}
+          {/* Row 1 — ROT + Bandwidth side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
               <h2 className="text-sm font-medium text-text-primary mb-2">Requests over time</h2>
@@ -78,35 +79,46 @@ export function TrafficPage() {
             </div>
           </div>
 
-          {/* Hero: world map — full width so hotspots pop */}
-          <div>
-            <h2 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
-              <Globe size={14} /> Requests by geography
-            </h2>
-            <WorldMap countries={geo} />
-          </div>
-
-          {/* Row: status donut + hosts table + country list */}
+          {/* Row 2 — Status Distribution (1/3) + Top Proxy Hosts split into list+graph (2/3, 1/3+1/3) */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="rounded-xl border border-border bg-bg-secondary p-4">
               <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Status distribution</h3>
               <StatusDonutFromSeries series={series} />
             </div>
-            <HostsTable summary={summary} onSelect={setSelectedHostId} />
+            <HostsTable
+              summary={summary}
+              selectedId={selectedHostId}
+              onSelect={setSelectedHostId}
+            />
+            <SelectedHostChart
+              host={hosts.find(h => h.id === selectedHostId) || null}
+              range={range}
+              onDetails={() => selectedHostId != null && setDrilldownOpen(true)}
+            />
+          </div>
+
+          {/* Row 3 — World map + Country list on the same row */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2">
+              <h2 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
+                <Globe size={14} /> Requests by geography
+              </h2>
+              <WorldMap countries={geo} height={360} />
+            </div>
             <GeoWidget geo={geo} />
           </div>
 
-          {/* Row: top IPs + top URIs live on the dashboard */}
+          {/* Row 4 — Top IPs + Top URIs */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <TopIpsWidget ips={topIps} />
             <TopUrisWidget uris={topUris} />
           </div>
 
-          {selectedHostId != null && (
+          {drilldownOpen && selectedHostId != null && (
             <HostDrilldown
               host={hosts.find(h => h.id === selectedHostId) || null}
               range={range}
-              onClose={() => setSelectedHostId(null)}
+              onClose={() => setDrilldownOpen(false)}
             />
           )}
         </>
@@ -209,7 +221,7 @@ function StatusDonutFromSeries({ series }: { series: TrafficSeries | null }) {
   return <StatusDonut {...totals} />;
 }
 
-function HostsTable({ summary, onSelect }: { summary: HostSummary[]; onSelect: (id: number) => void }) {
+function HostsTable({ summary, selectedId, onSelect }: { summary: HostSummary[]; selectedId: number | null; onSelect: (id: number) => void }) {
   const maxReq = Math.max(1, ...summary.map(s => s.reqCount));
   return (
     <div className="rounded-xl border border-border bg-bg-secondary p-4">
@@ -220,25 +232,82 @@ function HostsTable({ summary, onSelect }: { summary: HostSummary[]; onSelect: (
         <div className="text-xs text-text-muted text-center py-8">No data yet</div>
       ) : (
         <div className="space-y-1.5 max-h-80 overflow-auto">
-          {summary.map(s => (
-            <button key={s.proxyHostId} onClick={() => onSelect(s.proxyHostId)}
-              className="w-full text-left flex items-center gap-3 p-2 rounded hover:bg-bg-tertiary text-xs">
-              <div className="flex-1 min-w-0">
-                <div className="font-mono text-text-primary truncate">{s.domain}</div>
-                <div className="mt-1 h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
-                  <div className="h-full bg-accent" style={{ width: `${(s.reqCount / maxReq) * 100}%` }} />
+          {summary.map(s => {
+            const active = s.proxyHostId === selectedId;
+            return (
+              <button key={s.proxyHostId} onClick={() => onSelect(s.proxyHostId)}
+                className={`w-full text-left flex items-center gap-3 p-2 rounded text-xs transition-colors ${
+                  active ? 'bg-accent/10 ring-1 ring-accent/40' : 'hover:bg-bg-tertiary'
+                }`}>
+                <div className="flex-1 min-w-0">
+                  <div className={`font-mono truncate ${active ? 'text-accent' : 'text-text-primary'}`}>{s.domain}</div>
+                  <div className="mt-1 h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+                    <div className="h-full bg-accent" style={{ width: `${(s.reqCount / maxReq) * 100}%` }} />
+                  </div>
                 </div>
-              </div>
-              <div className="text-right shrink-0 min-w-[70px]">
-                <div className="font-mono text-text-primary">{formatShortNumber(s.reqCount)}</div>
-                <div className="text-[10px] text-text-muted">{formatBytes(s.bytesOut)}</div>
-              </div>
-              {s.errorCount > 0 && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-down/10 text-status-down">{formatShortNumber(s.errorCount)} err</span>
-              )}
-            </button>
-          ))}
+                <div className="text-right shrink-0 min-w-[70px]">
+                  <div className="font-mono text-text-primary">{formatShortNumber(s.reqCount)}</div>
+                  <div className="text-[10px] text-text-muted">{formatBytes(s.bytesOut)}</div>
+                </div>
+                {s.errorCount > 0 && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-down/10 text-status-down">{formatShortNumber(s.errorCount)} err</span>
+                )}
+              </button>
+            );
+          })}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inline chart of the currently-selected proxy host — same column as Top Proxy Hosts, right
+ * side of the split. Instead of shoving everything into a modal, the operator sees the primary
+ * KPI (requests over time) immediately; the "Details" button opens the full drilldown with
+ * top IPs + top URIs for that host if they want deeper analysis.
+ */
+function SelectedHostChart({ host, range, onDetails }: { host: ProxyHost | null; range: TrafficRange; onDetails: () => void }) {
+  const [series, setSeries] = useState<TrafficSeries | null>(null);
+
+  useEffect(() => {
+    if (!host) { setSeries(null); return; }
+    trafficApi.hostTimeSeries(host.id, range).then(setSeries).catch(() => setSeries(null));
+  }, [host, range]);
+
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary p-4 flex flex-col">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
+          {host ? host.domainNames[0] : 'Select a proxy host'}
+        </h3>
+        {host && (
+          <button
+            onClick={onDetails}
+            className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-accent/10 text-accent hover:bg-accent/20"
+            title="Open full drilldown (top IPs + URIs)"
+          >
+            Details →
+          </button>
+        )}
+      </div>
+      {!host ? (
+        <div className="flex-1 flex items-center justify-center text-xs text-text-muted text-center px-4">
+          Click a proxy host on the left to see its request timeline here.
+        </div>
+      ) : !series || series.points.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-xs text-text-muted">
+          No data in this range
+        </div>
+      ) : (
+        <LineChart
+          labels={series.points.map(p => new Date(p.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}
+          series={[
+            { name: 'Requests', color: '#4a9eff', values: series.points.map(p => p.reqCount) },
+            { name: 'Avg latency (ms)', color: '#f59e0b', values: series.points.map(p => p.avgLatencyMs) },
+          ]}
+          height={200}
+        />
       )}
     </div>
   );

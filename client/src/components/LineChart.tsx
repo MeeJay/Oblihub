@@ -136,19 +136,26 @@ export function LineChart({
           </>
         )}
       </svg>
-      {hover != null && (
-        <div className="text-[10px] font-mono text-text-secondary mt-1 flex flex-wrap gap-3">
-          <span className="text-text-muted">{labels[hover]}</span>
-          {series.map(s => {
-            const v = s.values[hover];
-            return (
-              <span key={s.name} style={{ color: s.color }}>
-                {s.name}: {s.format ? s.format(v ?? 0) : formatShortNumber(v ?? 0)}
-              </span>
-            );
-          })}
-        </div>
-      )}
+      {/*
+        Hover details reserve a constant height even when nothing is hovered — the earlier
+        version showed the row only on hover, which shifted every element below it as the mouse
+        crossed the chart. Fixed min-height with an empty placeholder keeps the layout stable.
+      */}
+      <div className="text-[10px] font-mono text-text-secondary mt-1 flex flex-wrap gap-3 min-h-[16px]">
+        {hover != null && (
+          <>
+            <span className="text-text-muted">{labels[hover]}</span>
+            {series.map(s => {
+              const v = s.values[hover];
+              return (
+                <span key={s.name} style={{ color: s.color }}>
+                  {s.name}: {s.format ? s.format(v ?? 0) : formatShortNumber(v ?? 0)}
+                </span>
+              );
+            })}
+          </>
+        )}
+      </div>
     </div>
   );
 }
