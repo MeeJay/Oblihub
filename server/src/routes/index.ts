@@ -20,6 +20,7 @@ import enginesRoutes from './engines.routes';
 import tailscaleRoutes from './tailscale.routes';
 import automationRoutes from './automation.routes';
 import trafficRoutes from './traffic.routes';
+import bansRoutes from './bans.routes';
 
 const router = Router();
 
@@ -36,6 +37,7 @@ router.use('/proxy', proxyRoutes);
 router.use('/azure-auth', azureAuthRoutes);
 router.use('/automation', automationRoutes);
 router.use('/traffic', trafficRoutes);
+router.use('/', bansRoutes);
 router.use('/users', usersRoutes);
 router.use('/', permissionsRoutes);
 router.use('/stats', statsRoutes);

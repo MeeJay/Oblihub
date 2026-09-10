@@ -98,6 +98,7 @@ export function Sidebar({ allowStack, allowNginx }: SidebarProps) {
         { label: 'Error Pages', path: '/custom-pages', icon: <FileText size={18} /> },
         { label: 'Uptime', path: '/uptime', icon: <Activity size={18} /> },
         { label: 'Traffic', path: '/traffic', icon: <Activity size={18} /> },
+        { label: 'Bans', path: '/bans', icon: <Ban size={18} strokeWidth={2.2} /> },
         { label: 'Automation', path: '/automation', icon: <Zap size={18} /> },
       ]
     : [];

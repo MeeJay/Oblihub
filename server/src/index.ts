@@ -17,6 +17,7 @@ import { startUptimeWorker, stopUptimeWorker } from './workers/UptimeWorker';
 import { startWorkflowScheduler, stopWorkflowScheduler } from './workers/WorkflowScheduler';
 import { startTrafficLogWorker, stopTrafficLogWorker } from './workers/TrafficLogWorker';
 import { startTrafficDownsampleWorker, stopTrafficDownsampleWorker } from './workers/TrafficDownsampleWorker';
+import { startHoneypotWorker, stopHoneypotWorker } from './workers/HoneypotWorker';
 import { startSleepWorker, stopSleepWorker } from './workers/SleepWorker';
 import { startActivityTracker, stopActivityTracker } from './workers/ActivityTracker';
 import { schedulerService } from './services/scheduler.service';
@@ -129,6 +130,7 @@ async function main() {
   if (config.allowNginx) {
     startTrafficLogWorker();
     startTrafficDownsampleWorker();
+    startHoneypotWorker();
   }
 
   // Start sleep worker (idle container detection)
@@ -165,6 +167,7 @@ async function main() {
     stopWorkflowScheduler();
     stopTrafficLogWorker();
     stopTrafficDownsampleWorker();
+    stopHoneypotWorker();
     stopSleepWorker();
     stopActivityTracker();
     schedulerService.stopAll();

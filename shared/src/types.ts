@@ -378,6 +378,17 @@ export interface ProxyHost {
   // the shared sidecar but not in any of these groups gets a 403 on THIS host only. Lets one
   // Azure app registration back several stacks with different group permissions.
   azureAuthAllowedGroups: string[] | null;
+  // Honeypot: master switch + per-host defaults. When enabled, honeypot_paths for this host
+  // become bait — any hit auto-bans the source IP globally. When honeypotBanAclViolations is
+  // ALSO true, an IP that fails the access-list check (would normally get 403) also gets
+  // banned via the same honeypot machinery. banDurationSeconds null = permanent (falls back to
+  // the app_config default_honeypot_ban_duration_seconds — also null-by-default = permanent).
+  honeypotEnabled: boolean;
+  honeypotBanAclViolations: boolean;
+  honeypotBanDurationSeconds: number | null;
+  // Hydrated by the server on read paths. Server-side only — clients read/write via the
+  // separate /honeypot-paths endpoints on the host.
+  honeypotPaths?: { id: number; path: string; enabled: boolean }[];
   // Per-path sub-routes. nginx emits one `location <path_in>` per route BEFORE `location /` —
   // ordered by URI-prefix specificity so `/api/v3/` wins over `/api/` wins over `/`. Each
   // route can target a different container, exempt itself from forward-auth or access lists,
@@ -728,6 +739,45 @@ export interface WorkflowRun {
   outputLog: WorkflowRunLogEntry[];
   errorMessage: string | null;
   durationMs: number | null;
+}
+
+// ── Honeypot / IP ban ──
+
+export type BanSourceType = 'honeypot-path' | 'honeypot-acl' | 'manual' | 'obliguard-sync';
+
+export interface BannedIp {
+  id: number;
+  ip: string;
+  bannedUntil: string | null; // null = permanent
+  reason: string | null;
+  sourceType: BanSourceType;
+  sourceProxyHostId: number | null;
+  firstSeenAt: string;
+  lastHitAt: string;
+  hitCount: number;
+  sentToObliguardAt: string | null;
+  obliguardError: string | null;
+  isActive: boolean;
+  bannedByUserId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  // Enrichment (optional, populated by the /bans endpoint):
+  geo?: {
+    countryCode: string | null;
+    countryName: string | null;
+    city: string | null;
+    org: string | null;
+  } | null;
+  sourceProxyHostDomain?: string | null;
+}
+
+export interface HoneypotPath {
+  id: number;
+  proxyHostId: number;
+  path: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ── API response wrapper ──

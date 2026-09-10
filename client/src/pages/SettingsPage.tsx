@@ -970,6 +970,49 @@ function NotificationGlobalSection({ config, setConfig, onSave, saving }: {
           />
         </div>
 
+        {/* Obliguard integration */}
+        <div>
+          <div className="text-sm font-medium text-text-primary mb-1">Obliguard integration</div>
+          <div className="text-xs text-text-muted mb-2">
+            Sends every ban Oblihub creates to Obliguard's central ban store. Leave both fields blank to auto-discover via Obligate (if both apps are registered there). Fill them in manually otherwise. Fire-and-forget — a failed sync doesn't fail the ban path.
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              type="text"
+              value={config.obliguard_url || ''}
+              onChange={e => setConfig({ ...config, obliguard_url: e.target.value || null })}
+              placeholder="https://obliguard.yourdomain.com"
+              className="rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <input
+              type="password"
+              value={config.obliguard_api_key || ''}
+              onChange={e => setConfig({ ...config, obliguard_api_key: e.target.value || null })}
+              placeholder="API key (bearer)"
+              className="rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </div>
+        </div>
+
+        {/* Default honeypot ban duration */}
+        <div>
+          <div className="text-sm font-medium text-text-primary mb-1">Default honeypot ban duration</div>
+          <div className="text-xs text-text-muted mb-2">
+            How long a caught scanner stays banned when the proxy_host doesn't set its own. Empty = permanent. Applies to bans coming from any host that hasn't overridden it.
+          </div>
+          <select
+            value={config.default_honeypot_ban_duration_seconds || ''}
+            onChange={e => setConfig({ ...config, default_honeypot_ban_duration_seconds: e.target.value || null })}
+            className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+          >
+            <option value="">Permanent (default)</option>
+            <option value={String(60 * 60)}>1 hour</option>
+            <option value={String(24 * 60 * 60)}>24 hours</option>
+            <option value={String(7 * 24 * 60 * 60)}>7 days</option>
+            <option value={String(30 * 24 * 60 * 60)}>30 days</option>
+          </select>
+        </div>
+
         <button onClick={onSave} disabled={saving}
           className="flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50">
           <Save size={14} /> {saving ? 'Saving...' : 'Save'}

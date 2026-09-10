@@ -49,6 +49,11 @@ function routeRow(row: Record<string, unknown>): ProxyHostRoute {
   };
 }
 
+async function getHoneypotPathsForHost(proxyHostId: number): Promise<{ id: number; path: string; enabled: boolean }[]> {
+  const rows = await db('honeypot_paths').where({ proxy_host_id: proxyHostId, enabled: true }).select('id', 'path', 'enabled').orderBy('path');
+  return rows.map(r => ({ id: r.id as number, path: r.path as string, enabled: !!r.enabled }));
+}
+
 async function getRoutesForHost(proxyHostId: number): Promise<ProxyHostRoute[]> {
   const rows = await db('proxy_host_routes').where({ proxy_host_id: proxyHostId }).orderBy('sort_order').orderBy('id');
   return rows.map(routeRow);
@@ -80,7 +85,7 @@ async function setRoutesForHost(proxyHostId: number, routes: Partial<ProxyHostRo
   })));
 }
 
-function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, accessListIds: number[] = [], routes: ProxyHostRoute[] = []): ProxyHost {
+function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, accessListIds: number[] = [], routes: ProxyHostRoute[] = [], honeypotPaths: { id: number; path: string; enabled: boolean }[] = []): ProxyHost {
   return {
     id: row.id as number,
     domainNames: (row.domain_names as string[]) || [],
@@ -129,6 +134,10 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, acces
       if (typeof raw === 'string' && raw) { try { return JSON.parse(raw) as string[]; } catch { return null; } }
       return null;
     })(),
+    honeypotEnabled: !!row.honeypot_enabled,
+    honeypotBanAclViolations: !!row.honeypot_ban_acl_violations,
+    honeypotBanDurationSeconds: (row.honeypot_ban_duration_seconds as number) || null,
+    honeypotPaths,
     routes,
     certificate: cert || null,
     createdAt: (row.created_at as Date).toISOString(),
@@ -253,17 +262,17 @@ export const certificateService = {
 export const proxyHostService = {
   async getAll(): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id), await getHoneypotPathsForHost(r.id))));
   },
 
   async getById(id: number): Promise<ProxyHost | null> {
     const row = await db('proxy_hosts').where({ id }).first();
-    return row ? proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id)) : null;
+    return row ? proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id), await getHoneypotPathsForHost(row.id)) : null;
   },
 
   async getByStackId(stackId: number): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').where({ stack_id: stackId }).orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id), await getHoneypotPathsForHost(r.id))));
   },
 
   async create(data: Partial<ProxyHost>): Promise<ProxyHost> {
@@ -302,13 +311,16 @@ export const proxyHostService = {
       docker_network: data.dockerNetwork || null,
       azure_auth_provider_id: data.azureAuthProviderId || null,
       azure_auth_allowed_groups: data.azureAuthAllowedGroups && data.azureAuthAllowedGroups.length ? JSON.stringify(data.azureAuthAllowedGroups) : null,
+      honeypot_enabled: data.honeypotEnabled || false,
+      honeypot_ban_acl_violations: data.honeypotBanAclViolations || false,
+      honeypot_ban_duration_seconds: data.honeypotBanDurationSeconds ?? null,
     }).returning('*');
     // Hydrate the junction from accessListIds[] if provided; otherwise fall back to the
     // legacy single accessListId so older clients still work.
     const ids = data.accessListIds ?? (data.accessListId ? [data.accessListId] : []);
     await setAccessListIds(row.id, ids);
     await setRoutesForHost(row.id, data.routes);
-    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id));
+    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id), await getHoneypotPathsForHost(row.id));
   },
 
   async update(id: number, data: Partial<ProxyHost>): Promise<ProxyHost | null> {
@@ -349,6 +361,9 @@ export const proxyHostService = {
     if (data.azureAuthAllowedGroups !== undefined) {
       update.azure_auth_allowed_groups = data.azureAuthAllowedGroups && data.azureAuthAllowedGroups.length ? JSON.stringify(data.azureAuthAllowedGroups) : null;
     }
+    if (data.honeypotEnabled !== undefined) update.honeypot_enabled = data.honeypotEnabled;
+    if (data.honeypotBanAclViolations !== undefined) update.honeypot_ban_acl_violations = data.honeypotBanAclViolations;
+    if (data.honeypotBanDurationSeconds !== undefined) update.honeypot_ban_duration_seconds = data.honeypotBanDurationSeconds;
     const [row] = await db('proxy_hosts').where({ id }).update(update).returning('*');
     if (!row) return null;
     // Sync junction when the caller passed an explicit list (empty array = "clear all").
@@ -359,7 +374,7 @@ export const proxyHostService = {
       await setAccessListIds(row.id, data.accessListId ? [data.accessListId] : []);
     }
     await setRoutesForHost(row.id, data.routes);
-    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id));
+    return proxyRow(row, await getCert(row.certificate_id), await getAccessListIds(row.id), await getRoutesForHost(row.id), await getHoneypotPathsForHost(row.id));
   },
 
   async delete(id: number): Promise<void> {
@@ -368,7 +383,7 @@ export const proxyHostService = {
 
   async getEnabled(): Promise<ProxyHost[]> {
     const rows = await db('proxy_hosts').where({ enabled: true }).orderBy('id');
-    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id))));
+    return Promise.all(rows.map(async (r) => proxyRow(r, await getCert(r.certificate_id), await getAccessListIds(r.id), await getRoutesForHost(r.id), await getHoneypotPathsForHost(r.id))));
   },
 };
 

@@ -1,5 +1,5 @@
-import { useState, type Dispatch, type SetStateAction } from 'react';
-import { Shield, Zap, Lock, Globe, Moon } from 'lucide-react';
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import { Shield, Zap, Lock, Globe, Moon, Plus, Trash2 } from 'lucide-react';
 import type { ProxyHost, Certificate, AccessList, CustomPage, Container, AzureAuthProvider, ProxyHostRoute } from '@oblihub/shared';
 import { ContainerPicker } from './ContainerPicker';
 import { RouteEditor } from './RouteEditor';
@@ -24,12 +24,13 @@ export type ProxyHostEditorProps = {
   setAcmeEmail: (v: string) => void;
 };
 
-type Tab = 'general' | 'ssl' | 'auth' | 'routes' | 'performance' | 'others' | 'expert';
+type Tab = 'general' | 'ssl' | 'auth' | 'routes' | 'honeypot' | 'performance' | 'others' | 'expert';
 const TABS: { key: Tab; label: string }[] = [
   { key: 'general',     label: 'General' },
   { key: 'ssl',         label: 'SSL' },
   { key: 'auth',        label: 'Auth' },
   { key: 'routes',      label: 'Routes' },
+  { key: 'honeypot',    label: 'Honeypot' },
   { key: 'performance', label: 'Performance' },
   { key: 'others',      label: 'Others' },
   { key: 'expert',      label: 'Expert' },
@@ -71,6 +72,7 @@ export function ProxyHostEditor(props: ProxyHostEditorProps) {
             accessLists={props.accessLists}
           />
         )}
+        {tab === 'honeypot'    && <HoneypotTab {...props} />}
         {tab === 'performance' && <PerformanceTab {...props} />}
         {tab === 'others'      && <OthersTab {...props} />}
         {tab === 'expert'      && <ExpertTab {...props} />}
@@ -579,6 +581,167 @@ function ExpertTab({ editing, setEditing }: ProxyHostEditorProps) {
         Free-form nginx directives. Emitted at the server-scope after the main location block. Use with care — a bad snippet fails <code>nginx -t</code> and stops reloads until fixed.
       </p>
     </div>
+  );
+}
+
+// ── Honeypot tab — bait paths + ACL-violation ban switch ──
+function HoneypotTab({ editing, setEditing }: ProxyHostEditorProps) {
+  const [paths, setPaths] = useState<{ path: string; enabled: boolean }[]>([]);
+  const [newPath, setNewPath] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [presetPreview, setPresetPreview] = useState<string[]>([]);
+  const editId = (editing as { id?: number }).id;
+
+  useEffect(() => {
+    if (!editId) { setPaths([]); setLoading(false); return; }
+    Promise.all([
+      import('@/api/bans.api').then(m => m.honeypotApi.listForHost(editId).catch(() => [])),
+      import('@/api/bans.api').then(m => m.honeypotApi.getDefaults().catch(() => [])),
+    ]).then(([hostPaths, defaults]) => {
+      setPaths(hostPaths.map(p => ({ path: p.path, enabled: p.enabled })));
+      setPresetPreview(defaults);
+      setLoading(false);
+    });
+  }, [editId]);
+
+  const addPath = () => {
+    const clean = newPath.trim();
+    if (!clean) return;
+    if (paths.some(p => p.path === clean)) return;
+    setPaths([...paths, { path: clean, enabled: true }]);
+    setNewPath('');
+  };
+
+  const removePath = (idx: number) => setPaths(paths.filter((_, i) => i !== idx));
+  const togglePath = (idx: number) => setPaths(paths.map((p, i) => i === idx ? { ...p, enabled: !p.enabled } : p));
+
+  const addPreset = () => {
+    const existing = new Set(paths.map(p => p.path));
+    const merged = [...paths, ...presetPreview.filter(p => !existing.has(p)).map(p => ({ path: p, enabled: true }))];
+    setPaths(merged);
+  };
+
+  const savePaths = async () => {
+    if (!editId) return;
+    setSaving(true);
+    try {
+      const { honeypotApi } = await import('@/api/bans.api');
+      await honeypotApi.replaceAll(editId, paths);
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      <div className="rounded-lg border border-status-down/30 bg-status-down/5 p-3">
+        <div className="flex items-start gap-2">
+          <Shield size={16} className="text-status-down mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-text-secondary">
+            <p className="font-medium text-status-down mb-1">Honeypot = deceptive banning</p>
+            <p>
+              Enabled paths return 404 to <strong>everyone</strong>. Any IP that requests one gets banned across
+              <strong> ALL your Oblihub proxy hosts</strong>. Post-ban, that IP sees 404 on every URL of every host — indistinguishable from a site that doesn't exist. Also synced to Obliguard if configured.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <ToggleCell active={!!editing.honeypotEnabled} onToggle={() => setEditing(h => h ? { ...h, honeypotEnabled: !h.honeypotEnabled } : null)}
+        icon={Shield} label="Enable honeypot on this host" />
+
+      <ToggleCell active={!!editing.honeypotBanAclViolations} disabled={!editing.accessListIds?.length && !editing.accessListId}
+        onToggle={() => setEditing(h => h ? { ...h, honeypotBanAclViolations: !h.honeypotBanAclViolations } : null)}
+        icon={Shield} label="Also ban IPs that fail this host's access list" />
+      <p className="-mt-3 text-[10px] text-text-muted">
+        Any request to this host from an IP not on the access list = auto-ban (globally). Only usable when the host has an access list configured in the Auth tab.
+      </p>
+
+      <div>
+        <div className="text-sm font-medium text-text-primary mb-1 flex items-center gap-2">
+          Honeypot endpoints
+        </div>
+        <p className="text-[11px] text-text-muted mb-2">
+          One-click preset covers the top ~30 scanner targets (WordPress, PHP admin, CI leakage, cloud metadata, framework endpoints). You can also add custom paths — prefix matching, so <code>/admin</code> also catches <code>/admin/login</code>.
+        </p>
+
+        <div className="flex flex-wrap gap-2 mb-3">
+          <button
+            onClick={addPreset}
+            disabled={!editing.honeypotEnabled}
+            className="flex items-center gap-1 text-xs px-2.5 py-1 rounded border border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40"
+          >
+            <Plus size={12} /> Add common exploit URLs ({presetPreview.length})
+          </button>
+          {editId && (
+            <button
+              onClick={savePaths}
+              disabled={saving || !editing.honeypotEnabled}
+              className="text-xs px-2.5 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-40"
+            >
+              {saving ? 'Saving...' : 'Save paths'}
+            </button>
+          )}
+          {!editId && <span className="text-[10px] text-text-muted self-center">Save this host first to manage paths</span>}
+        </div>
+
+        <div className="flex gap-2 mb-2">
+          <input
+            value={newPath}
+            onChange={e => setNewPath(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addPath())}
+            placeholder="/some-honeypot-path"
+            disabled={!editing.honeypotEnabled}
+            className="flex-1 rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-40"
+          />
+          <button onClick={addPath} disabled={!editing.honeypotEnabled}
+            className="px-3 py-1.5 text-sm rounded-lg border border-border text-text-secondary hover:bg-bg-hover disabled:opacity-40">
+            Add
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="text-xs text-text-muted italic">Loading...</div>
+        ) : paths.length === 0 ? (
+          <div className="text-xs text-text-muted italic rounded-lg border border-border bg-bg-tertiary px-3 py-4 text-center">
+            No honeypot paths yet — click "Add common exploit URLs" or add your own above.
+          </div>
+        ) : (
+          <div className="rounded-lg border border-border bg-bg-tertiary max-h-72 overflow-auto">
+            {paths.map((p, i) => (
+              <div key={p.path} className="flex items-center gap-2 px-3 py-1.5 text-xs border-b border-border/40 last:border-b-0">
+                <input type="checkbox" checked={p.enabled} onChange={() => togglePath(i)} className="cursor-pointer" />
+                <span className={`font-mono flex-1 ${p.enabled ? 'text-text-primary' : 'text-text-muted line-through'}`}>{p.path}</span>
+                <button onClick={() => removePath(i)} className="text-text-muted hover:text-status-down p-1">
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-text-secondary block mb-1.5">Ban duration</label>
+        <select
+          value={editing.honeypotBanDurationSeconds ?? 'permanent'}
+          onChange={e => {
+            const v = e.target.value;
+            setEditing(h => h ? { ...h, honeypotBanDurationSeconds: v === 'permanent' ? null : parseInt(v, 10) } : null);
+          }}
+          disabled={!editing.honeypotEnabled}
+          className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-40"
+        >
+          <option value="permanent">Permanent (default)</option>
+          <option value={String(60 * 60)}>1 hour</option>
+          <option value={String(24 * 60 * 60)}>24 hours</option>
+          <option value={String(7 * 24 * 60 * 60)}>7 days</option>
+          <option value={String(30 * 24 * 60 * 60)}>30 days</option>
+        </select>
+        <p className="text-[10px] text-text-muted mt-1">
+          How long a caught scanner stays banned. Falls back to the app-wide default when blank — which is <strong>permanent</strong> unless you change it in Settings.
+        </p>
+      </div>
+    </>
   );
 }
 

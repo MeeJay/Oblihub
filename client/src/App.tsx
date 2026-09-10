@@ -21,6 +21,7 @@ import { AzureAuthPage } from '@/pages/AzureAuthPage';
 import { AutomationPage } from '@/pages/AutomationPage';
 import { TrafficPage } from '@/pages/TrafficPage';
 import { TrafficHostPage } from '@/pages/TrafficHostPage';
+import { BansPage } from '@/pages/BansPage';
 import { CertificatesPage } from '@/pages/CertificatesPage';
 import { RedirectionsPage } from '@/pages/RedirectionsPage';
 import { StreamsPage } from '@/pages/StreamsPage';
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="/automation" element={<ProtectedRoute><AppLayout><AutomationPage /></AppLayout></ProtectedRoute>} />
         <Route path="/traffic" element={<ProtectedRoute><AppLayout><TrafficPage /></AppLayout></ProtectedRoute>} />
         <Route path="/traffic/host/:id" element={<ProtectedRoute><AppLayout><TrafficHostPage /></AppLayout></ProtectedRoute>} />
+        <Route path="/bans" element={<ProtectedRoute><AppLayout><BansPage /></AppLayout></ProtectedRoute>} />
         <Route path="/redirections" element={<ProtectedRoute><AppLayout><RedirectionsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/streams" element={<ProtectedRoute><AppLayout><StreamsPage /></AppLayout></ProtectedRoute>} />
         <Route path="/dead-hosts" element={<ProtectedRoute><AppLayout><DeadHostsPage /></AppLayout></ProtectedRoute>} />
