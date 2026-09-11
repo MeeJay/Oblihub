@@ -39,9 +39,17 @@ export const honeypotApi = {
   },
 };
 
+export interface ObliguardStatus {
+  configured: boolean;
+  source: 'obligate' | 'manual' | null;
+  url: string | null;
+  reachable: boolean;
+  hasDelegation: boolean;
+}
+
 export const obliguardApi = {
-  async status(): Promise<{ configured: boolean; source: 'obligate' | 'manual' | null; url: string | null; reachable: boolean }> {
-    const res = await apiClient.get<ApiResponse<{ configured: boolean; source: 'obligate' | 'manual' | null; url: string | null; reachable: boolean }>>('/obliguard/status');
+  async status(): Promise<ObliguardStatus> {
+    const res = await apiClient.get<ApiResponse<ObliguardStatus>>('/obliguard/status');
     return res.data.data!;
   },
 };

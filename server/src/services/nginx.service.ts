@@ -296,6 +296,43 @@ function azureGroupGuardLines(host: ProxyHost, indent: string): string {
   return `${indent}if ($auth_groups !~ "${regex}") { return 403; }\n`;
 }
 
+/**
+ * Emit an `if ($auth_email !~ ...) { return 403; }` guard when the proxy_host restricts by
+ * Azure email. Empty / null list = no guard. Each entry becomes one alternative in the regex:
+ *   - contains `@`  → treated as a FULL EMAIL, matched exactly (`^user@example\.com$`)
+ *   - no `@`        → treated as a DOMAIN,      suffix-matched (`@example\.com$`)
+ *
+ * Emitted as a SECOND independent `if` after the group guard (see caller). Two `if` statements
+ * combine with AND — each failure returns 403 on its own — so a host with both filters set
+ * requires the user to match BOTH, mirroring oauth2-proxy's own combination of
+ * EMAIL_DOMAINS + ALLOWED_GROUPS. Never widens access, only narrows it.
+ *
+ * Sanitization: characters outside the RFC-5322-lite set `A-Za-z0-9._+-@` are dropped from
+ * each entry before regex assembly, so a stray comma or quote can't break out. Dots are
+ * escaped for regex literalness. Empty results after cleaning skip the guard entirely
+ * rather than emitting a match-nothing regex that would 403 everyone.
+ */
+function azureEmailGuardLines(host: ProxyHost, indent: string): string {
+  const emails = host.azureAuthAllowedEmails;
+  if (!emails || emails.length === 0) return '';
+  const escapeRegex = (s: string): string => s.replace(/[.+\-]/g, m => `\\${m}`);
+  const alts: string[] = [];
+  for (const raw of emails) {
+    const clean = raw.trim().toLowerCase().replace(/[^a-z0-9._+\-@]/g, '');
+    if (!clean) continue;
+    if (clean.includes('@')) {
+      alts.push(`^${escapeRegex(clean)}$`);
+    } else {
+      alts.push(`@${escapeRegex(clean)}$`);
+    }
+  }
+  if (alts.length === 0) return '';
+  const regex = `(${alts.join('|')})`;
+  // `~*` = case-insensitive: Azure returns UPN with the casing the user typed at sign-up,
+  // which may not match the operator's config (`Alice@Example.com` vs `alice@example.com`).
+  return `${indent}if ($auth_email !~* "${regex}") { return 403; }\n`;
+}
+
 function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []): string {
   const domains = host.domainNames.map(d => sanitizeForNginx(d)).join(' ');
   const upstream = `${sanitizeForNginx(host.forwardScheme)}://${sanitizeForNginx(host.forwardHost)}:${host.forwardPort}`;
@@ -641,8 +678,10 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
       // / Remote-*), plus the response-side add_header block for static SPAs. Only emitted when
       // the host has forward-auth AND this route inherits it.
       if (host.azureAuthProviderId && route.authMode !== 'none') {
-        // Per-host group guard applies to sub-routes that inherit auth too.
+        // Per-host group + email guards apply to sub-routes that inherit auth too. Combined
+        // with AND: two independent `if` returns 403, matching the semantics on `location /`.
         conf += azureGroupGuardLines(host, '        ');
+        conf += azureEmailGuardLines(host, '        ');
         conf += `        proxy_set_header X-Auth-User $auth_user;\n`;
         conf += `        proxy_set_header X-Auth-Email $auth_email;\n`;
         conf += `        proxy_set_header X-Auth-Groups $auth_groups;\n`;
@@ -705,11 +744,14 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   // Cheap redundancy — three extra strings per request beats "the SSO integration doesn't work
   // out of the box" as a support ticket.
   if (host.azureAuthProviderId) {
-    // Per-host Azure group restriction. Enforced HERE (post-auth) rather than at the sidecar
-    // because one sidecar is shared across every proxy_host using the same provider — so any
-    // sidecar-side group filter would apply to all of them uniformly. Per-host filter lives in
-    // nginx via `if ($auth_groups !~ ...) { return 403; }`.
+    // Per-host Azure group + email restriction. Enforced HERE (post-auth) rather than at the
+    // sidecar because one sidecar is shared across every proxy_host using the same provider —
+    // any sidecar-side filter would apply uniformly to all of them. Per-host filters live in
+    // nginx via `if ($auth_groups !~ ...) / if ($auth_email !~ ...) { return 403; }`. Two
+    // independent `if`s = AND: when both filters are set, the user must satisfy both to reach
+    // this host. Same semantics as oauth2-proxy's own EMAIL_DOMAINS ∧ ALLOWED_GROUPS.
     conf += azureGroupGuardLines(host, '        ');
+    conf += azureEmailGuardLines(host, '        ');
     // Request headers → upstream. Kept here (not at server scope) because proxy_set_header does
     // NOT inherit into a child location that declares its own. Server-scope add_header block
     // above handles the response side — that inheritance IS fine as long as nothing in this

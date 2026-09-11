@@ -347,26 +347,59 @@ function AuthTab({ editing, setEditing, accessLists, azureProviders }: ProxyHost
       </div>
 
       {editing.azureAuthProviderId && (
-        <div>
-          <label className="text-xs font-medium text-text-secondary block mb-1.5">
-            Restrict to Azure group IDs <span className="text-text-muted">(per-host, comma-separated GUIDs)</span>
-          </label>
-          <input
-            value={(editing.azureAuthAllowedGroups || []).join(', ')}
-            onChange={e => {
-              const parsed = e.target.value
-                .split(',')
-                .map(s => s.trim())
-                .filter(s => s.length > 0);
-              setEditing(h => h ? { ...h, azureAuthAllowedGroups: parsed.length ? parsed : null } : null);
-            }}
-            placeholder="leave empty to accept every user the provider authenticates"
-            className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
-          />
-          <p className="text-[10px] text-text-muted mt-1">
-            Applied ON TOP of the provider&#39;s global group restriction, ENFORCED BY NGINX post-auth. Lets a single Azure App Registration serve several stacks with different group permissions (e.g. group A → stackA, group B → stackB behind the same provider). Empty = no per-host restriction. Provider must be configured with <code>groups</code> as an optional claim in Azure (Token configuration → Add optional claim → ID → groups) so the sidecar receives the user&#39;s group list.
-          </p>
-        </div>
+        <>
+          <div>
+            <label className="text-xs font-medium text-text-secondary block mb-1.5">
+              Restrict to Azure group IDs <span className="text-text-muted">(per-host, comma-separated GUIDs — Object IDs)</span>
+            </label>
+            <input
+              value={(editing.azureAuthAllowedGroups || []).join(', ')}
+              onChange={e => {
+                const parsed = e.target.value
+                  .split(',')
+                  .map(s => s.trim())
+                  .filter(s => s.length > 0);
+                setEditing(h => h ? { ...h, azureAuthAllowedGroups: parsed.length ? parsed : null } : null);
+              }}
+              placeholder="e.g. f1249c89-2f32-4e3f-bdcb-fa7a33d5d3f3, 8a2b1c4d-…"
+              className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <p className="text-[10px] text-text-muted mt-1">
+              GUID = <em>Object ID</em> from Azure Portal → Groups → &lt;group&gt; → Object ID. Provider must expose <code>groups</code> as an optional claim (Token configuration → Add optional claim → ID → groups) so the sidecar receives the user&#39;s group list.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-text-secondary block mb-1.5">
+              Restrict to emails / domains <span className="text-text-muted">(per-host, comma-separated)</span>
+            </label>
+            <input
+              value={(editing.azureAuthAllowedEmails || []).join(', ')}
+              onChange={e => {
+                const parsed = e.target.value
+                  .split(',')
+                  .map(s => s.trim())
+                  .filter(s => s.length > 0);
+                setEditing(h => h ? { ...h, azureAuthAllowedEmails: parsed.length ? parsed : null } : null);
+              }}
+              placeholder="alice@contoso.com, contoso.com"
+              className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <p className="text-[10px] text-text-muted mt-1">
+              Entries with <code>@</code> are matched as full emails; entries without are matched as domains (any user <code>*@domain</code>).
+            </p>
+          </div>
+
+          <div className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-2 text-[10px] text-text-muted leading-relaxed">
+            <span className="text-text-secondary font-semibold">How these filters combine</span> — both boxes above are <strong>restrictive surcharges</strong> on top of the provider. They <em>never widen</em> access; the strictest rule always wins.
+            <ul className="list-disc pl-4 mt-1 space-y-0.5">
+              <li>Empty = no per-host filter (only the provider filter applies).</li>
+              <li>Both boxes filled = <strong>AND</strong>: user must be in one of the groups <em>and</em> match one of the emails/domains.</li>
+              <li>Provider unrestricted + host restricted = only users matching the host rules reach this host (rest of the tenant is refused with 403).</li>
+              <li>Enforced by nginx post-auth via <code>if ($auth_groups !~ …) / if ($auth_email !~ …) {'{'}return 403{'}'}</code>.</li>
+            </ul>
+          </div>
+        </>
       )}
     </>
   );

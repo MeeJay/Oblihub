@@ -134,6 +134,13 @@ function proxyRow(row: Record<string, unknown>, cert?: Certificate | null, acces
       if (typeof raw === 'string' && raw) { try { return JSON.parse(raw) as string[]; } catch { return null; } }
       return null;
     })(),
+    azureAuthAllowedEmails: ((): string[] | null => {
+      const raw = row.azure_auth_allowed_emails;
+      if (raw == null) return null;
+      if (Array.isArray(raw)) return raw as string[];
+      if (typeof raw === 'string' && raw) { try { return JSON.parse(raw) as string[]; } catch { return null; } }
+      return null;
+    })(),
     honeypotEnabled: !!row.honeypot_enabled,
     honeypotBanAclViolations: !!row.honeypot_ban_acl_violations,
     honeypotBanDurationSeconds: (row.honeypot_ban_duration_seconds as number) || null,
@@ -311,6 +318,7 @@ export const proxyHostService = {
       docker_network: data.dockerNetwork || null,
       azure_auth_provider_id: data.azureAuthProviderId || null,
       azure_auth_allowed_groups: data.azureAuthAllowedGroups && data.azureAuthAllowedGroups.length ? JSON.stringify(data.azureAuthAllowedGroups) : null,
+      azure_auth_allowed_emails: data.azureAuthAllowedEmails && data.azureAuthAllowedEmails.length ? JSON.stringify(data.azureAuthAllowedEmails) : null,
       honeypot_enabled: data.honeypotEnabled || false,
       honeypot_ban_acl_violations: data.honeypotBanAclViolations || false,
       honeypot_ban_duration_seconds: data.honeypotBanDurationSeconds ?? null,
@@ -360,6 +368,9 @@ export const proxyHostService = {
     if (data.azureAuthProviderId !== undefined) update.azure_auth_provider_id = data.azureAuthProviderId;
     if (data.azureAuthAllowedGroups !== undefined) {
       update.azure_auth_allowed_groups = data.azureAuthAllowedGroups && data.azureAuthAllowedGroups.length ? JSON.stringify(data.azureAuthAllowedGroups) : null;
+    }
+    if (data.azureAuthAllowedEmails !== undefined) {
+      update.azure_auth_allowed_emails = data.azureAuthAllowedEmails && data.azureAuthAllowedEmails.length ? JSON.stringify(data.azureAuthAllowedEmails) : null;
     }
     if (data.honeypotEnabled !== undefined) update.honeypot_enabled = data.honeypotEnabled;
     if (data.honeypotBanAclViolations !== undefined) update.honeypot_ban_acl_violations = data.honeypotBanAclViolations;

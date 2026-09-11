@@ -243,6 +243,7 @@ export function ProxyHostsPage() {
                   {host.hstsEnabled && <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent">HSTS</span>}
                   {host.websocketSupport && <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent">WS</span>}
                   {host.blockExploits && <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-pending/10 text-status-pending">Protected</span>}
+                  {host.honeypotEnabled && <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-down/10 text-status-down" title="Honeypot active — bait paths auto-ban scanners globally">🍯 Honeypot</span>}
                   {host.cachingEnabled && <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent">Cached</span>}
                   {host.certificate && (
                     <span className={`text-[9px] px-1.5 py-0.5 rounded ${host.certificate.status === 'valid' ? 'bg-status-up/10 text-status-up' : 'bg-status-down/10 text-status-down'}`}>

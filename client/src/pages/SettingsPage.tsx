@@ -4,6 +4,7 @@ import { settingsApi } from '@/api/settings.api';
 import { notificationsApi, type PluginMeta } from '@/api/notifications.api';
 import { systemApi } from '@/api/stacks.api';
 import { proxyApi } from '@/api/proxy.api';
+import { obliguardApi, type ObliguardStatus } from '@/api/bans.api';
 import { tailscaleApi } from '@/api/tailscale.api';
 import { enginesApi } from '@/api/engines.api';
 import type { CustomPage, TailscaleStatus, DockerEngine } from '@oblihub/shared';
@@ -11,6 +12,54 @@ import { useAuthStore } from '@/store/authStore';
 import type { NotificationChannel } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 import { Save, Plus, Trash2, Send, ChevronDown, ChevronRight, Power, PowerOff, X, Globe, RefreshCw, Shield, CheckCircle, Copy, Eye, EyeOff, Network, Server } from 'lucide-react';
+
+// ── Obliguard integration status pill ──
+//
+// Reflects the state of the SAVED config (server-side check), not the current input values.
+// After changing URL / key, the user has to Save first, then hit refresh here — otherwise the
+// pill would report "reachable" for a URL that's still just in the input field.
+//
+// Order the checks by user intent when composing the label:
+//   1. No target resolved   → "Not configured" (nothing to test)
+//   2. Target resolved but unreachable → the URL is the problem
+//   3. Target reachable, no delegation token → auth setup is the problem (Obligate down / not registered)
+//   4. Both reachable + token → green, all good
+function ObliguardStatusPill() {
+  const [status, setStatus] = useState<ObliguardStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = async (): Promise<void> => {
+    setLoading(true);
+    try { setStatus(await obliguardApi.status()); }
+    catch { setStatus({ configured: false, source: null, url: null, reachable: false, hasDelegation: false }); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { refresh(); }, []);
+
+  const { dot, label, hint } = ((): { dot: string; label: string; hint: string } => {
+    if (loading && !status) return { dot: 'bg-text-muted animate-pulse', label: 'Checking…', hint: '' };
+    if (!status || !status.configured) return { dot: 'bg-text-muted', label: 'Not configured', hint: 'No URL saved and no Obliguard app found via Obligate.' };
+    if (!status.reachable) return { dot: 'bg-status-down', label: 'Unreachable', hint: `${status.url} did not answer /health — check DNS, port, TLS.` };
+    if (!status.hasDelegation) return { dot: 'bg-status-warning', label: 'Reachable, no delegation token', hint: 'Obligate rejected the app-scoped mint request or is unreachable. Bans will not sync.' };
+    return { dot: 'bg-status-up', label: status.source === 'obligate' ? 'Auto (via Obligate)' : 'Manual', hint: `Syncing to ${status.url}` };
+  })();
+
+  return (
+    <div className="flex items-center gap-2" title={hint}>
+      <span className={`w-2 h-2 rounded-full ${dot}`} />
+      <span className="text-[11px] text-text-secondary">{label}</span>
+      <button
+        type="button"
+        onClick={refresh}
+        disabled={loading}
+        className="text-text-muted hover:text-text-primary disabled:opacity-50"
+        title="Re-check (reads the saved config)"
+      >
+        <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+      </button>
+    </div>
+  );
+}
 
 // ── Obligate SSO Section ──
 function SsoSection({ config, setConfig, onSave, saving }: {
@@ -972,7 +1021,10 @@ function NotificationGlobalSection({ config, setConfig, onSave, saving }: {
 
         {/* Obliguard integration */}
         <div>
-          <div className="text-sm font-medium text-text-primary mb-1">Obliguard integration</div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-sm font-medium text-text-primary">Obliguard integration</div>
+            <ObliguardStatusPill />
+          </div>
           <div className="text-xs text-text-muted mb-2">
             Sends every ban Oblihub creates to Obliguard's central ban store. Leave both fields blank to auto-discover via Obligate (if both apps are registered there). Fill them in manually otherwise. Fire-and-forget — a failed sync doesn't fail the ban path.
           </div>

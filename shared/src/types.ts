@@ -378,6 +378,13 @@ export interface ProxyHost {
   // the shared sidecar but not in any of these groups gets a 403 on THIS host only. Lets one
   // Azure app registration back several stacks with different group permissions.
   azureAuthAllowedGroups: string[] | null;
+  // Per-host Azure email/domain restriction. Same AND-layering as azureAuthAllowedGroups: this
+  // stacks on top of the provider's global email filter (never widens it) and is enforced by
+  // nginx post-auth via `if ($auth_email !~ regex) { return 403; }`. Entries are matched as
+  // full emails when they contain `@` (exact match), otherwise as domains (suffix `@domain`).
+  // When BOTH per-host groups AND per-host emails are set, they combine with AND: a user must
+  // satisfy both to reach this host.
+  azureAuthAllowedEmails: string[] | null;
   // Honeypot: master switch + per-host defaults. When enabled, honeypot_paths for this host
   // become bait — any hit auto-bans the source IP globally. When honeypotBanAclViolations is
   // ALSO true, an IP that fails the access-list check (would normally get 403) also gets
