@@ -753,7 +753,11 @@ function HoneypotTab({ editing, setEditing }: ProxyHostEditorProps) {
               // A sub-route on the same path (Routes tab) overrides the bait — nginx would
               // otherwise fail with "duplicate location". Show the operator this is happening
               // so they don't wonder why their bait isn't firing on that path.
-              const overriddenByRoute = (editing.routes || []).some(r => r.pathIn === p.path);
+              // Trailing slash normalization matches the server (`/admin` and `/admin/` are
+              // considered the same override target, so a `/admin/` route also skips the
+              // `/admin` bait — avoids the "I typed a slash and got banned" trap).
+              const stripSlash = (s: string) => s.length > 1 && s.endsWith('/') ? s.slice(0, -1) : s;
+              const overriddenByRoute = (editing.routes || []).some(r => stripSlash(r.pathIn) === stripSlash(p.path));
               return (
                 <div key={p.path} className="flex items-center gap-2 px-3 py-1.5 text-xs border-b border-border/40 last:border-b-0">
                   <input type="checkbox" checked={p.enabled} onChange={() => togglePath(i)} disabled={overriddenByRoute} className="cursor-pointer disabled:opacity-40" />
@@ -772,7 +776,10 @@ function HoneypotTab({ editing, setEditing }: ProxyHostEditorProps) {
           </div>
         )}
 
-        {(editing.routes || []).some(r => paths.some(p => p.path === r.pathIn)) && (
+        {(editing.routes || []).some(r => paths.some(p => {
+          const norm = (s: string) => s.length > 1 && s.endsWith('/') ? s.slice(0, -1) : s;
+          return norm(p.path) === norm(r.pathIn);
+        })) && (
           <p className="text-[10px] text-accent mt-2 leading-relaxed">
             Path shared with a sub-route (e.g. <code>/admin</code> on Vaultwarden): the bait is skipped so nginx can start.
             To still trap non-whitelisted access on that path, put an <strong>access list</strong> on the sub-route (Routes tab → Access lists → Override) and keep <strong>&quot;Also ban IPs that fail an access list&quot;</strong> above ON. Whitelisted IPs pass through, everyone else 403s → banned globally, same as a bait hit.

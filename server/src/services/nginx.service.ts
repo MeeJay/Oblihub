@@ -434,7 +434,13 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   // Whitelisted IPs pass through the ACL and reach the real backend. Best of both worlds.
   const hasHoneypotPaths = host.honeypotEnabled && host.honeypotPaths && host.honeypotPaths.length > 0;
   const hasAclHoneypot = host.honeypotBanAclViolations;
-  const routePaths = new Set((host.routes || []).map(r => r.pathIn));
+  // Normalize trailing slashes when comparing route paths vs honeypot bait — `/admin` and
+  // `/admin/` are semantically the same "the operator claimed this prefix" from an override
+  // standpoint. Without this, a route declared as `/admin/` would fail to override the bait
+  // `/admin`, both would end up in the config, and a request to bare `/admin` (no slash) would
+  // match the shorter bait prefix and ban the operator. Root `/` is preserved as-is.
+  const stripSlash = (p: string): string => (p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p);
+  const routePaths = new Set((host.routes || []).map(r => stripSlash(r.pathIn)));
   if (hasHoneypotPaths || hasAclHoneypot) {
     // Server-scope honeypot access_log — fires only when a honeypot location set the flag.
     // Additive w/ other access_log directives at same scope (nginx allows multiple).
@@ -444,7 +450,7 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     for (const p of host.honeypotPaths!) {
       const safe = sanitizeForNginx(p.path);
       if (!safe) continue;
-      if (routePaths.has(safe)) {
+      if (routePaths.has(stripSlash(safe))) {
         conf += `    # Honeypot bait for ${safe} skipped — overridden by a sub-route.\n`;
         conf += `    # Non-whitelisted access is banned via honeypotBanAclViolations on the route's ACL.\n\n`;
         continue;
@@ -621,17 +627,27 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   }
 
   // Error pages — per-code custom pages with dynamic content.
-  // When wakeContainerId is set, 502/503/504 are reserved for the waking page (declared
-  // immediately below) and we skip them here so there's no overlap between the two
-  // `error_page` directives for those codes.
+  //
+  // Two exclusions:
+  //   - `wakeContainerId` reserves 502/503/504 for the waking page (declared below).
+  //   - When the ACL-violation honeypot trap is armed, we MUST NOT map 403 to the custom
+  //     error page. nginx last-definition-wins for a given code at the same scope, so a
+  //     later `error_page 403 /oblihub_err_..._403.html;` would override the earlier
+  //     `error_page 403 = @_oblihub_acl_honeypot;` and the trap would never fire.
+  //     Symptom: attacker gets the custom page but no log line, no ban. We skip 403 here
+  //     and let the trap own it — the trap ends with `return 404`, which then goes through
+  //     the custom 404 page below, so the attacker still sees the operator's editorial
+  //     content indistinguishable from a normal 404.
   if (host.errorPageId) {
+    const trapArmsFor403 = host.honeypotBanAclViolations && (hostHasIpAcl || routeHasIpAcl);
     const errorCodes = host.wakeContainerId
       ? [400, 401, 403, 404, 500]
       : [400, 401, 403, 404, 500, 502, 503, 504];
-    for (const code of errorCodes) {
+    const filteredCodes = trapArmsFor403 ? errorCodes.filter(c => c !== 403) : errorCodes;
+    for (const code of filteredCodes) {
       conf += `    error_page ${code} /oblihub_err_${host.errorPageId}_${code}.html;\n`;
     }
-    for (const code of errorCodes) {
+    for (const code of filteredCodes) {
       conf += `    location = /oblihub_err_${host.errorPageId}_${code}.html {\n`;
       conf += `        internal;\n`;
       conf += `        alias /etc/nginx/error_pages/page_${host.errorPageId}_${code}.html;\n`;
