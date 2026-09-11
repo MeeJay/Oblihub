@@ -471,6 +471,13 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     conf += `        proxy_pass $oblihub_fa_upstream/oauth2/auth;\n`;
     conf += `        proxy_pass_request_body off;\n`;
     conf += `        proxy_set_header Content-Length "";\n`;
+    // oauth2-proxy echoes X-Auth-Request-Groups on this subrequest — for users in many AAD
+    // groups (50+) that single header value alone blows past nginx's default 8k proxy_buffer_size
+    // and triggers "upstream sent too big header" → auth_request 502 → visible 500 to the user.
+    // 64k comfortably covers 200+ groups plus the other X-Auth-Request-* headers and cookies.
+    conf += `        proxy_buffer_size 64k;\n`;
+    conf += `        proxy_buffers 4 64k;\n`;
+    conf += `        proxy_busy_buffers_size 64k;\n`;
     // CRITICAL: forward Host + X-Forwarded-Host so oauth2-proxy (with REVERSE_PROXY=true)
     // reconstructs the original request URL as the user's domain, not "<sidecar-name>:4180".
     // Without this, the sidecar sees a Host it doesn't recognize, considers the session cookie
