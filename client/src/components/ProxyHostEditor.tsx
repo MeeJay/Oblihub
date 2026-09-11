@@ -682,12 +682,21 @@ function HoneypotTab({ editing, setEditing }: ProxyHostEditorProps) {
       <ToggleCell active={!!editing.honeypotEnabled} onToggle={() => setEditing(h => h ? { ...h, honeypotEnabled: !h.honeypotEnabled } : null)}
         icon={Shield} label="Enable honeypot on this host" />
 
-      <ToggleCell active={!!editing.honeypotBanAclViolations} disabled={!editing.accessListIds?.length && !editing.accessListId}
-        onToggle={() => setEditing(h => h ? { ...h, honeypotBanAclViolations: !h.honeypotBanAclViolations } : null)}
-        icon={Shield} label="Also ban IPs that fail this host's access list" />
-      <p className="-mt-3 text-[10px] text-text-muted">
-        Any request to this host from an IP not on the access list = auto-ban (globally). Only usable when the host has an access list configured in the Auth tab.
-      </p>
+      {(() => {
+        const hasHostAcl = (editing.accessListIds?.length ?? 0) > 0 || !!editing.accessListId;
+        const hasRouteAcl = (editing.routes || []).some(r => r.accessListMode === 'override' && r.accessListOverrideIds.length > 0);
+        const canArm = hasHostAcl || hasRouteAcl;
+        return (
+          <>
+            <ToggleCell active={!!editing.honeypotBanAclViolations} disabled={!canArm}
+              onToggle={() => setEditing(h => h ? { ...h, honeypotBanAclViolations: !h.honeypotBanAclViolations } : null)}
+              icon={Shield} label="Also ban IPs that fail an access list (host or route)" />
+            <p className="-mt-3 text-[10px] text-text-muted">
+              Any 403 from an <code>allow/deny</code> ACL — set at the host (Auth tab) OR on a sub-route (Routes tab, override mode) — becomes an auto-ban, globally. Perfect for a gated <code>/admin</code>: whitelisted IPs pass, everyone else gets trapped. Requires at least one ACL to be armed.
+            </p>
+          </>
+        );
+      })()}
 
       <div>
         <div className="text-sm font-medium text-text-primary mb-1 flex items-center gap-2">
@@ -766,7 +775,7 @@ function HoneypotTab({ editing, setEditing }: ProxyHostEditorProps) {
         {(editing.routes || []).some(r => paths.some(p => p.path === r.pathIn)) && (
           <p className="text-[10px] text-accent mt-2 leading-relaxed">
             Path shared with a sub-route (e.g. <code>/admin</code> on Vaultwarden): the bait is skipped so nginx can start.
-            To still trap non-whitelisted access on that path, put an <strong>access list</strong> on the sub-route (override or inherited) and keep <strong>&quot;Also ban IPs that fail this host&apos;s access list&quot;</strong> above ON. Whitelisted IPs pass through, everyone else 403s → banned globally, same as a bait hit.
+            To still trap non-whitelisted access on that path, put an <strong>access list</strong> on the sub-route (Routes tab → Access lists → Override) and keep <strong>&quot;Also ban IPs that fail an access list&quot;</strong> above ON. Whitelisted IPs pass through, everyone else 403s → banned globally, same as a bait hit.
           </p>
         )}
       </div>

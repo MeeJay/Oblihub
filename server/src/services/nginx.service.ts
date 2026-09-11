@@ -468,25 +468,43 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   const attachedIds = host.accessListIds && host.accessListIds.length > 0
     ? host.accessListIds
     : (host.accessListId ? [host.accessListId] : []);
-  if (attachedIds.length > 0) {
-    const attached = attachedIds
-      .map(id => accessLists.find(al => al.id === id))
-      .filter((al): al is AccessList => !!al);
+  const attached = attachedIds
+    .map(id => accessLists.find(al => al.id === id))
+    .filter((al): al is AccessList => !!al);
+  if (attached.length > 0) {
     conf += combinedAccessListBlock(attached, { htpasswdKey: `proxy_host_${host.id}`, indent: '    ' }) + '\n\n';
-    // ACL-violation honeypot: an IP failing the allow/deny check normally gets a nginx 403.
-    // With this flag, we intercept that 403 and route it through a named location that logs to
-    // the honeypot log — the worker then bans the source globally. Return 404 (not 403) so the
-    // attacker can't tell they hit an allowlist. Only wired when the ACL has an actual IP list
-    // (basic-auth alone doesn't reject at the ACL layer — nginx serves the challenge).
-    if (host.honeypotBanAclViolations && attached.some(al => al.clients.length > 0)) {
-      conf += `    # ACL violations are trapped as honeypot events → global ban. Same flag +\n`;
-      conf += `    # server-scope access_log pattern as the path honeypot above.\n`;
-      conf += `    error_page 403 = @_oblihub_acl_honeypot;\n`;
-      conf += `    location @_oblihub_acl_honeypot {\n`;
-      conf += `        set $oblihub_is_honeypot 1;\n`;
-      conf += `        return 404;\n`;
-      conf += `    }\n\n`;
-    }
+  }
+
+  // ACL-violation honeypot: any 403 from `allow/deny` (whether at server scope from the host
+  // ACL, or from a per-route override) gets intercepted and routed through the named location,
+  // which sets the honeypot flag → the server-scope access_log picks it up → worker bans the
+  // source IP globally. Returns 404 (not 403) so the attacker can't tell they hit an allowlist.
+  //
+  // The trap is armed whenever `honeypotBanAclViolations` is ON and AT LEAST ONE IP-based ACL
+  // source exists — host-level OR any route with `accessListMode='override'` whose selected
+  // lists have `clients.length > 0`. Basic-auth-only lists don't reject at the ACL layer
+  // (nginx serves the challenge), so an all-auth ACL wouldn't trigger the trap regardless.
+  //
+  // Why the trap is at server scope (not per-location): nginx inherits `error_page` from
+  // server → location unless the location declares its own. Emitting it once at server scope
+  // covers both host-level ACL violations AND route-level ones without duplication.
+  const routeHasIpAcl = (host.routes || []).some(r =>
+    r.accessListMode === 'override'
+    && r.accessListOverrideIds.length > 0
+    && r.accessListOverrideIds.some(id => {
+      const al = accessLists.find(a => a.id === id);
+      return al && al.clients.length > 0;
+    }),
+  );
+  const hostHasIpAcl = attached.some(al => al.clients.length > 0);
+  if (host.honeypotBanAclViolations && (hostHasIpAcl || routeHasIpAcl)) {
+    conf += `    # ACL violations are trapped as honeypot events → global ban. Same flag +\n`;
+    conf += `    # server-scope access_log pattern as the path honeypot above.\n`;
+    conf += `    error_page 403 = @_oblihub_acl_honeypot;\n`;
+    conf += `    location @_oblihub_acl_honeypot {\n`;
+    conf += `        set $oblihub_is_honeypot 1;\n`;
+    conf += `        return 404;\n`;
+    conf += `    }\n\n`;
   }
 
   // Azure AD forward-auth via oauth2-proxy sidecar. Emitted only when the proxy_host
