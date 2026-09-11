@@ -19,5 +19,6 @@ router.put('/honeypot/:hostId/paths',   requirePermission('proxy.manage'), honey
 router.post('/honeypot/:hostId/preset', requirePermission('proxy.manage'), honeypotController.addPreset);
 
 router.get('/obliguard/status',         requirePermission('proxy.view'),   obliguardController.status);
+router.post('/obliguard/test',          requirePermission('proxy.manage'), obliguardController.testPing);
 
 export default router;

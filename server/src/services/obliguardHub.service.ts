@@ -207,6 +207,61 @@ export const obliguardHubService = {
   },
 
   /**
+   * Propagate a local unban to Obliguard. Called from banService.unban(). Fire-and-forget:
+   * a failed delete never fails the local unban (audit trail already says the operator
+   * intended it). Obliguard's DELETE endpoint filters by origin_app so we can only delete
+   * bans that Oblihub originally pushed — an admin from one app can't wipe another app's
+   * bans, even sharing the same Obliguard master tenant.
+   */
+  async deleteBan(ip: string): Promise<void> {
+    const target = await resolveTarget();
+    if (!target) return;
+    const token = await mintDelegationToken();
+    if (!token) return;
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${target.url}/api/external-bans/${encodeURIComponent(ip)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      clearTimeout(t);
+      if (res.status === 401 || res.status === 403) cachedToken = null;
+    } catch (err) {
+      logger.warn({ ip, err: err instanceof Error ? err.message : String(err) }, 'Obliguard delete-through failed');
+    }
+  },
+
+  /**
+   * End-to-end connectivity test — mints a delegation token and calls Obliguard's ping
+   * endpoint. Returns { ok, reason } so the Settings pill's Test button can tell the operator
+   * exactly which step failed (mint / network / auth). More useful than getStatus() alone,
+   * which only mints — this actually posts to the guarded endpoint.
+   */
+  async testPing(): Promise<{ ok: boolean; reason: string; target?: string }> {
+    const target = await resolveTarget();
+    if (!target) return { ok: false, reason: 'No Obliguard target configured or discovered' };
+    const token = await mintDelegationToken();
+    if (!token) return { ok: false, reason: 'Delegation token mint failed — check Obligate config', target: target.url };
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${target.url}/api/external-bans/ping`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      clearTimeout(t);
+      if (res.ok) return { ok: true, reason: 'Ping OK — Obliguard accepted the delegation token', target: target.url };
+      const body = await res.text().catch(() => '');
+      return { ok: false, reason: `HTTP ${res.status}: ${body.slice(0, 200)}`, target: target.url };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err), target: target.url };
+    }
+  },
+
+  /**
    * Retry sync for any active bans that never made it upstream — called on a cron by the
    * honeypot worker so a temporary Obliguard outage self-heals without manual replay.
    */

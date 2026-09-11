@@ -403,7 +403,10 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
   // for /admin gets the same response as a real 404, so they can't tell whether they were
   // banned or the site simply doesn't have that path. Silently opaque = harder to script
   // around.
-  conf += `    if ($is_banned) { return 404; }\n\n`;
+  // Use the gated variant, not raw $is_banned — see the map declaration in nginx.conf for
+  // why (short version: raw $is_banned loops on the internal error-page redirect and nginx
+  // bails to its default 404 instead of the custom page).
+  conf += `    if ($oblihub_ban_gate) { return 404; }\n\n`;
 
   // ACME challenge (always serve) — `allow all` + `auth_basic off` are critical: without them
   // any attached access list (IP allowlist or basic auth) on the host would 403 the Let's
@@ -1061,8 +1064,36 @@ ${wakeMapBlock}
     # survives internal redirects and reading it at server scope with 'if=' sidesteps that.
     map $host $oblihub_is_honeypot { default ""; }
 
+    # Ban gate — a wrapping of $is_banned that ALSO checks $uri to skip the ban check on the
+    # internal error-page redirect. Without this, 'if ($is_banned) { return 404; }' at server
+    # scope fires on the ORIGINAL request (fine, redirects to /oblihub_err_X_404.html) AND
+    # AGAIN on the internal redirect (because 'if' re-runs the rewrite phase for every internal
+    # redirect). The second fire returns 404 too, which loops back to error_page 404, which
+    # loops back to the if... nginx caps this to a handful of redirects, then serves its
+    # DEFAULT 404 instead of the operator's custom page. Symptom: banned users get nginx's
+    # ugly 404 even when the vhost has a beautiful custom error page. This map short-circuits
+    # to 0 whenever $uri looks like our internal error page path, breaking the loop.
+    #
+    # $uri changes on internal redirect (unlike $request_uri, which stays as the original).
+    # Negative lookahead: matches "1:*" ONLY when the URI does NOT start with /oblihub_err_.
+    map "$is_banned:$uri" $oblihub_ban_gate {
+        default 0;
+        "~^1:(?!/oblihub_err_)" 1;
+    }
+
     access_log /var/log/nginx/access.log main;
     access_log /etc/nginx/oblihub_traffic.log oblihub_traffic;
+
+    # Allow error_page directives to chain. Default is OFF: nginx only follows ONE internal
+    # redirect from an error_page, then serves the raw error. Our honeypot trap needs two:
+    # ACL 403 -> error_page 403 = @_oblihub_acl_honeypot (redirect #1) -> set flag; return 404
+    # -> error_page 404 = /oblihub_err_*_404.html (redirect #2, blocked without this). Same
+    # goes for the ban check: 'if ($is_banned) { return 404; }' uses one redirect to hit the
+    # custom 404 page — fine in isolation, but if that request comes in via a URL that would
+    # otherwise cause its own error_page redirect, the two would compose to two hops. Turning
+    # this ON keeps the operator's custom pages visible everywhere. Depth is capped to 10 by
+    # nginx internally, so it's not a footgun.
+    recursive_error_pages on;
 
     sendfile on;
     tcp_nopush on;

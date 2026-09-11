@@ -52,4 +52,8 @@ export const obliguardApi = {
     const res = await apiClient.get<ApiResponse<ObliguardStatus>>('/obliguard/status');
     return res.data.data!;
   },
+  async testPing(): Promise<{ ok: boolean; reason: string; target?: string }> {
+    const res = await apiClient.post<ApiResponse<{ ok: boolean; reason: string; target?: string }>>('/obliguard/test');
+    return res.data.data!;
+  },
 };

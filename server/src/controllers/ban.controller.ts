@@ -91,4 +91,11 @@ export const obliguardController = {
       res.json({ success: true, data: status });
     } catch (err) { next(err); }
   },
+
+  async testPing(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await obliguardHubService.testPing();
+      res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  },
 };

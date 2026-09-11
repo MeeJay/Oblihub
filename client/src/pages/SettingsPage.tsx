@@ -44,6 +44,20 @@ function ObliguardStatusPill() {
     return { dot: 'bg-status-up', label: status.source === 'obligate' ? 'Auto (via Obligate)' : 'Manual', hint: `Syncing to ${status.url}` };
   })();
 
+  const runTest = async (): Promise<void> => {
+    setLoading(true);
+    try {
+      const result = await obliguardApi.testPing();
+      if (result.ok) toast.success(`Obliguard ping OK — ${result.target || 'target'}`);
+      else toast.error(`Obliguard ping failed: ${result.reason}`);
+    } catch (e) {
+      toast.error(`Test call errored: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoading(false);
+      await refresh();
+    }
+  };
+
   return (
     <div className="flex items-center gap-2" title={hint}>
       <span className={`w-2 h-2 rounded-full ${dot}`} />
@@ -56,6 +70,15 @@ function ObliguardStatusPill() {
         title="Re-check (reads the saved config)"
       >
         <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+      </button>
+      <button
+        type="button"
+        onClick={runTest}
+        disabled={loading || !status?.configured}
+        className="text-[10px] px-1.5 py-0.5 rounded border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover disabled:opacity-40"
+        title="Actually POST to Obliguard with a fresh delegation token — end-to-end auth chain check"
+      >
+        Test
       </button>
     </div>
   );
