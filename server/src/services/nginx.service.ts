@@ -226,13 +226,23 @@ function sslBlock(certPath: string, keyPath: string, http2: boolean): string {
  *     (most permissive interpretation, matches the "stack multiple lists for flexibility" mental
  *     model). Otherwise `satisfy all`.
  */
-function combinedAccessListBlock(hostId: number, lists: AccessList[]): string {
+/**
+ * Options for {@link combinedAccessListBlock}. `htpasswdKey` is the basename under
+ * `/etc/nginx/htpasswd/` that will hold the merged auth users for this scope — must match
+ * whatever the htpasswd writer produces on disk (see the regen loop below). `indent` is the
+ * leading whitespace applied to each emitted line — 4 spaces for server-scope, 8 for
+ * location-scope. Split from the block builder so per-route overrides can reuse it verbatim.
+ */
+interface CombinedAclOpts { htpasswdKey: string; indent: string; }
+
+function combinedAccessListBlock(lists: AccessList[], opts: CombinedAclOpts): string {
   if (lists.length === 0) return '';
   const allClients = lists.flatMap(l => l.clients.map(c => ({ ...c, listName: l.name })));
   const allAuth = lists.flatMap(l => l.auth);
   if (allClients.length === 0 && allAuth.length === 0) return '';
 
-  let conf = `\n    # Access lists (union): ${lists.map(l => l.name).join(', ')}\n`;
+  const I = opts.indent;
+  let conf = `\n${I}# Access lists (union): ${lists.map(l => l.name).join(', ')}\n`;
 
   if (allClients.length > 0) {
     // Deny rules first so they're evaluated before any explicit allow further down.
@@ -243,7 +253,7 @@ function combinedAccessListBlock(hostId: number, lists: AccessList[]): string {
       if (c.directive === 'deny') {
         if (seenDeny.has(addr)) continue;
         seenDeny.add(addr);
-        conf += `    deny ${addr};   # from "${c.listName}"\n`;
+        conf += `${I}deny ${addr};   # from "${c.listName}"\n`;
       }
     }
     for (const c of allClients) {
@@ -251,19 +261,19 @@ function combinedAccessListBlock(hostId: number, lists: AccessList[]): string {
       if (c.directive === 'allow') {
         if (seenAllow.has(addr)) continue;
         seenAllow.add(addr);
-        conf += `    allow ${addr};   # from "${c.listName}"\n`;
+        conf += `${I}allow ${addr};   # from "${c.listName}"\n`;
       }
     }
-    if (seenAllow.size > 0) conf += `    deny all;\n`;
+    if (seenAllow.size > 0) conf += `${I}deny all;\n`;
   }
 
   if (allAuth.length > 0) {
     const anySatisfyAny = lists.some(l => l.satisfyAny);
     if (allClients.length > 0) {
-      conf += `    satisfy ${anySatisfyAny ? 'any' : 'all'};\n`;
+      conf += `${I}satisfy ${anySatisfyAny ? 'any' : 'all'};\n`;
     }
-    conf += `    auth_basic "Restricted";\n`;
-    conf += `    auth_basic_user_file /etc/nginx/htpasswd/proxy_host_${hostId};\n`;
+    conf += `${I}auth_basic "Restricted";\n`;
+    conf += `${I}auth_basic_user_file /etc/nginx/htpasswd/${opts.htpasswdKey};\n`;
   }
 
   return conf;
@@ -404,19 +414,43 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
         auth_basic off;
     }\n\n`;
 
-  // Honeypot locations — one nginx location per enabled honeypot path. Each returns 404 but
-  // ALSO writes a line to the honeypot log the worker tails. The worker calls banService which
-  // regenerates the ban_map, and on the NEXT request from that IP the first `if ($is_banned)`
-  // above catches it → 404 everywhere.
+  // Honeypot locations — one nginx location per enabled honeypot path. Each sets the
+  // $oblihub_is_honeypot flag (read by the server-scope access_log below) and returns 404.
+  // Why the flag rather than an in-location access_log: any host with a custom 404 error_page
+  // triggers an internal redirect on `return 404`, and the log line is written against the
+  // error page's location instead of the honeypot's — the honeypot log stays empty, the
+  // worker never bans anyone. Server-scope `access_log if=$oblihub_is_honeypot` fires on the
+  // FINAL request close regardless of internal redirects.
   //
   // Order matters: honeypot locations come BEFORE the access list block. If we put ACL first,
-  // an IP not in the allowlist would hit ACL 403 before ever triggering the honeypot log.
-  if (host.honeypotEnabled && host.honeypotPaths && host.honeypotPaths.length > 0) {
-    for (const p of host.honeypotPaths) {
+  // an IP not in the allowlist would hit ACL 403 before ever triggering the flag.
+  //
+  // Route override: when the operator has declared a sub-route on the same path as a honeypot
+  // bait (e.g. Vaultwarden `/admin` is a REAL admin panel we want to gate with an ACL, not a
+  // scanner trap), the route wins — we skip the bait. Otherwise nginx would refuse to start
+  // with "duplicate location /admin". The security semantics still hold: put an ACL on the
+  // route and enable `honeypotBanAclViolations` on the host, and any non-whitelisted IP that
+  // touches /admin gets a 403 → intercepted by @_oblihub_acl_honeypot → same flag+ban.
+  // Whitelisted IPs pass through the ACL and reach the real backend. Best of both worlds.
+  const hasHoneypotPaths = host.honeypotEnabled && host.honeypotPaths && host.honeypotPaths.length > 0;
+  const hasAclHoneypot = host.honeypotBanAclViolations;
+  const routePaths = new Set((host.routes || []).map(r => r.pathIn));
+  if (hasHoneypotPaths || hasAclHoneypot) {
+    // Server-scope honeypot access_log — fires only when a honeypot location set the flag.
+    // Additive w/ other access_log directives at same scope (nginx allows multiple).
+    conf += `    access_log /etc/nginx/oblihub_honeypot.log oblihub_honeypot if=$oblihub_is_honeypot;\n\n`;
+  }
+  if (hasHoneypotPaths) {
+    for (const p of host.honeypotPaths!) {
       const safe = sanitizeForNginx(p.path);
       if (!safe) continue;
+      if (routePaths.has(safe)) {
+        conf += `    # Honeypot bait for ${safe} skipped — overridden by a sub-route.\n`;
+        conf += `    # Non-whitelisted access is banned via honeypotBanAclViolations on the route's ACL.\n\n`;
+        continue;
+      }
       conf += `    location ${safe} {\n`;
-      conf += `        access_log /etc/nginx/oblihub_honeypot.log oblihub_honeypot;\n`;
+      conf += `        set $oblihub_is_honeypot 1;\n`;
       conf += `        return 404;\n`;
       conf += `    }\n\n`;
     }
@@ -438,17 +472,18 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
     const attached = attachedIds
       .map(id => accessLists.find(al => al.id === id))
       .filter((al): al is AccessList => !!al);
-    conf += combinedAccessListBlock(host.id, attached) + '\n\n';
+    conf += combinedAccessListBlock(attached, { htpasswdKey: `proxy_host_${host.id}`, indent: '    ' }) + '\n\n';
     // ACL-violation honeypot: an IP failing the allow/deny check normally gets a nginx 403.
     // With this flag, we intercept that 403 and route it through a named location that logs to
     // the honeypot log — the worker then bans the source globally. Return 404 (not 403) so the
     // attacker can't tell they hit an allowlist. Only wired when the ACL has an actual IP list
     // (basic-auth alone doesn't reject at the ACL layer — nginx serves the challenge).
     if (host.honeypotBanAclViolations && attached.some(al => al.clients.length > 0)) {
-      conf += `    # ACL violations are trapped as honeypot events → global ban.\n`;
+      conf += `    # ACL violations are trapped as honeypot events → global ban. Same flag +\n`;
+      conf += `    # server-scope access_log pattern as the path honeypot above.\n`;
       conf += `    error_page 403 = @_oblihub_acl_honeypot;\n`;
       conf += `    location @_oblihub_acl_honeypot {\n`;
-      conf += `        access_log /etc/nginx/oblihub_honeypot.log oblihub_honeypot;\n`;
+      conf += `        set $oblihub_is_honeypot 1;\n`;
       conf += `        return 404;\n`;
       conf += `    }\n\n`;
     }
@@ -660,12 +695,38 @@ function generateProxyHostConfig(host: ProxyHost, accessLists: AccessList[] = []
       //               so this is not a hermetic bypass — document that access-list bypass on a
       //               route only makes sense when the host uses basic-auth OR when the parent
       //               ACL has no explicit `deny all`).
-      //   'override'→ same v1 fallback story as auth override.
+      //   'override'→ emit the route's OWN access-list block. Two nginx inheritance rules to
+      //               keep straight:
+      //                 - `allow`/`deny`: as soon as the location has ANY allow/deny of its
+      //                   own, ALL server-scope allow/deny are dropped for that location
+      //                   (nginx replaces, doesn't stack). So a route override with its own
+      //                   IP rules is fully independent — can be broader OR narrower than the
+      //                   host, doesn't matter. This is what makes "host=ACL1, /admin=ACL2"
+      //                   just work.
+      //                 - `auth_basic`: also replacement, but we emit `auth_basic off` FIRST
+      //                   so operators overriding IP-only lists don't inadvertently inherit
+      //                   the host's basic-auth realm on top of their route rules.
+      //               Edge case: if the override lists have ONLY auth users and ZERO IP
+      //               clients, combinedAccessListBlock() emits no allow/deny, and server-scope
+      //               allow/deny then still apply via inheritance. That's usually fine (the
+      //               host's ACL still filters as intended), but if the host had `deny all`
+      //               and the operator meant to widen access via route override, they'd need
+      //               to add at least one dummy `allow` (e.g. include the range they want) to
+      //               force nginx to drop the parent block.
       if (route.accessListMode === 'none') {
         conf += `        auth_basic off;\n`;
         conf += `        allow all;\n`;
-      } else if (route.accessListMode === 'override') {
-        logger.warn({ hostId: host.id, routeId: route.id }, 'route.accessListMode=override not yet supported — treating as inherit');
+      } else if (route.accessListMode === 'override' && route.accessListOverrideIds.length > 0) {
+        const overrideAttached = route.accessListOverrideIds
+          .map(id => accessLists.find(al => al.id === id))
+          .filter((al): al is AccessList => !!al);
+        if (overrideAttached.length > 0) {
+          conf += `        auth_basic off;\n`;
+          conf += combinedAccessListBlock(overrideAttached, {
+            htpasswdKey: `proxy_host_${host.id}_route_${route.id}`,
+            indent: '        ',
+          });
+        }
       }
       conf += `        proxy_pass ${rUpstream};\n`;
       conf += `        proxy_set_header Host $host;\n`;
@@ -955,6 +1016,17 @@ ${wakeMapBlock}
         include /etc/nginx/ban_map.conf;
     }
 
+    # Honeypot flag — set to "1" inside honeypot locations (path bait + ACL-violation named
+    # location) and read by a server-scope 'access_log ... if=$oblihub_is_honeypot' in each
+    # vhost. Rationale: putting the access_log directly inside the honeypot location works
+    # only when the response is 404 straight from 'return 404;'. As soon as the host has a
+    # custom error_page for 404, nginx does an internal redirect to the error page's location
+    # and — per nginx's rules — the access_log used for the FINAL log line is the one from
+    # the location that actually served the response, not the honeypot one. Result: the log
+    # line silently disappears and the worker never sees the hit. Using a variable flag that
+    # survives internal redirects and reading it at server scope with 'if=' sidesteps that.
+    map $host $oblihub_is_honeypot { default ""; }
+
     access_log /var/log/nginx/access.log main;
     access_log /etc/nginx/oblihub_traffic.log oblihub_traffic;
 
@@ -1198,6 +1270,33 @@ export const nginxService = {
       }
       const merged = [...byUser.entries()].map(([u, h]) => `${u}:${h}`).join('\n');
       fs.writeFileSync(path_, merged);
+    }
+
+    // Per-route combined htpasswd for routes with accessListMode='override'. Same union +
+    // last-wins-by-username as per-host; scoped by `proxy_host_<hid>_route_<rid>` so a route
+    // override with its own set of auth users doesn't collide with the host's file. When a
+    // route no longer uses override (or has no auth users in its override lists), unlink the
+    // file so stale credentials don't linger on disk.
+    for (const host of allProxyHosts) {
+      if (!host.routes) continue;
+      for (const route of host.routes) {
+        const routePath = path.join(HTPASSWD_DIR, `proxy_host_${host.id}_route_${route.id}`);
+        if (route.accessListMode !== 'override' || route.accessListOverrideIds.length === 0) {
+          try { fs.unlinkSync(routePath); } catch { /* not there, fine */ }
+          continue;
+        }
+        const byUser = new Map<string, string>();
+        for (const id of route.accessListOverrideIds) {
+          const rows = await db('access_list_auth').where({ access_list_id: id });
+          for (const r of rows) byUser.set(r.username as string, r.password_hash as string);
+        }
+        if (byUser.size === 0) {
+          try { fs.unlinkSync(routePath); } catch { /* not there, fine */ }
+          continue;
+        }
+        const merged = [...byUser.entries()].map(([u, h]) => `${u}:${h}`).join('\n');
+        fs.writeFileSync(routePath, merged);
+      }
     }
 
     logger.info({ proxyHosts: allProxyHosts.length, redirections: redirections.length, streams: streams.length }, 'Nginx configs regenerated');

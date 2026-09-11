@@ -104,7 +104,7 @@ export function RouteEditor({
               </span>
               <div className="ml-auto flex items-center gap-1">
                 {r.authMode !== 'inherit' && <span className={`text-[9px] px-1 py-0.5 rounded ${r.authMode === 'none' ? 'bg-status-down/10 text-status-down' : 'bg-accent/10 text-accent'}`}>auth: {r.authMode}</span>}
-                {r.accessListMode !== 'inherit' && <span className={`text-[9px] px-1 py-0.5 rounded ${r.accessListMode === 'none' ? 'bg-status-down/10 text-status-down' : 'bg-accent/10 text-accent'}`}>ACL: {r.accessListMode}</span>}
+                {r.accessListMode !== 'inherit' && <span className={`text-[9px] px-1 py-0.5 rounded ${r.accessListMode === 'none' ? 'bg-status-down/10 text-status-down' : 'bg-accent/10 text-accent'}`}>ACL: {r.accessListMode}{r.accessListMode === 'override' ? ` (${r.accessListOverrideIds.length})` : ''}</span>}
                 <button onClick={() => move(idx, -1)} disabled={idx === 0} className="p-1 rounded text-text-muted hover:text-text-primary disabled:opacity-30"><ArrowUp size={12} /></button>
                 <button onClick={() => move(idx, 1)} disabled={idx === routes.length - 1} className="p-1 rounded text-text-muted hover:text-text-primary disabled:opacity-30"><ArrowDown size={12} /></button>
                 <button onClick={() => remove(idx)} className="p-1 rounded text-text-muted hover:text-status-down"><Trash2 size={12} /></button>
@@ -181,7 +181,7 @@ export function RouteEditor({
                       className="w-full rounded border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-accent">
                       <option value="inherit">Inherit (host default)</option>
                       <option value="none">None (bypass)</option>
-                      <option value="override" disabled>Override (coming soon)</option>
+                      <option value="override">Override (use this route&#39;s lists)</option>
                     </select>
                     {r.accessListMode === 'override' && (
                       <div className="mt-1 rounded border border-border bg-bg-tertiary p-1 max-h-24 overflow-y-auto space-y-0.5">

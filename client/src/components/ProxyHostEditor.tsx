@@ -740,16 +740,34 @@ function HoneypotTab({ editing, setEditing }: ProxyHostEditorProps) {
           </div>
         ) : (
           <div className="rounded-lg border border-border bg-bg-tertiary max-h-72 overflow-auto">
-            {paths.map((p, i) => (
-              <div key={p.path} className="flex items-center gap-2 px-3 py-1.5 text-xs border-b border-border/40 last:border-b-0">
-                <input type="checkbox" checked={p.enabled} onChange={() => togglePath(i)} className="cursor-pointer" />
-                <span className={`font-mono flex-1 ${p.enabled ? 'text-text-primary' : 'text-text-muted line-through'}`}>{p.path}</span>
-                <button onClick={() => removePath(i)} className="text-text-muted hover:text-status-down p-1">
-                  <Trash2 size={11} />
-                </button>
-              </div>
-            ))}
+            {paths.map((p, i) => {
+              // A sub-route on the same path (Routes tab) overrides the bait — nginx would
+              // otherwise fail with "duplicate location". Show the operator this is happening
+              // so they don't wonder why their bait isn't firing on that path.
+              const overriddenByRoute = (editing.routes || []).some(r => r.pathIn === p.path);
+              return (
+                <div key={p.path} className="flex items-center gap-2 px-3 py-1.5 text-xs border-b border-border/40 last:border-b-0">
+                  <input type="checkbox" checked={p.enabled} onChange={() => togglePath(i)} disabled={overriddenByRoute} className="cursor-pointer disabled:opacity-40" />
+                  <span className={`font-mono flex-1 ${overriddenByRoute ? 'text-text-muted line-through' : p.enabled ? 'text-text-primary' : 'text-text-muted line-through'}`}>{p.path}</span>
+                  {overriddenByRoute && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent" title="A sub-route claims this path — the bait is skipped. Use the route's ACL + Ban on ACL violation to still trap non-whitelisted access.">
+                      overridden by route
+                    </span>
+                  )}
+                  <button onClick={() => removePath(i)} className="text-text-muted hover:text-status-down p-1">
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
+        )}
+
+        {(editing.routes || []).some(r => paths.some(p => p.path === r.pathIn)) && (
+          <p className="text-[10px] text-accent mt-2 leading-relaxed">
+            Path shared with a sub-route (e.g. <code>/admin</code> on Vaultwarden): the bait is skipped so nginx can start.
+            To still trap non-whitelisted access on that path, put an <strong>access list</strong> on the sub-route (override or inherited) and keep <strong>&quot;Also ban IPs that fail this host&apos;s access list&quot;</strong> above ON. Whitelisted IPs pass through, everyone else 403s → banned globally, same as a bait hit.
+          </p>
         )}
       </div>
 
