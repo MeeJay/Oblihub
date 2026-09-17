@@ -68,13 +68,15 @@ export function StackResourcesTab({ stackId }: Props) {
   const save = async () => {
     setSaving(true);
     try {
-      const { powerLimitErrors } = await stacksApi.setStackResources(stackId, limits);
-      if (powerLimitErrors.length === 0) {
-        toast.success('Resource limits applied');
-      } else {
-        const msg = powerLimitErrors.map(e => `GPU ${e.gpuIndex} → ${e.watts}W: ${e.error}`).join('; ');
-        toast.error(`Saved, but ${powerLimitErrors.length} GPU power limit${powerLimitErrors.length > 1 ? 's' : ''} failed: ${msg}`, { duration: 8000 });
-      }
+      // Power limits are strictly host-wide (nvidia-smi -pl affects any container using the
+      // GPU). Editing them from the per-stack tab was misleading UX — two stacks would show
+      // the same value and appear to "own" it. The slider on this tab is now read-only, and
+      // we strip powerLimitWatts from the save payload so nothing here can mutate host state.
+      // Edits happen on /resources dashboard exclusively.
+      const { powerLimitWatts: _stripped, ...payload } = limits;
+      void _stripped;
+      await stacksApi.setStackResources(stackId, payload as ResourceLimits);
+      toast.success('Resource limits applied');
       await load();
     } catch { toast.error('Failed to save limits'); }
     finally { setSaving(false); }
@@ -99,19 +101,6 @@ export function StackResourcesTab({ stackId }: Props) {
       ? Array.from(new Set([...cur, idx]))
       : cur.filter(i => i !== idx);
     setLimits({ ...limits, visibleGpuIds: next });
-  };
-
-  const setPowerWatts = (idx: string, watts: number) => {
-    const cur = { ...(limits.powerLimitWatts ?? {}) };
-    cur[idx] = watts;
-    setLimits({ ...limits, powerLimitWatts: cur });
-  };
-
-  const clearPowerWatts = (idx: string) => {
-    if (!limits.powerLimitWatts) return;
-    const cur = { ...limits.powerLimitWatts };
-    delete cur[idx];
-    setLimits({ ...limits, powerLimitWatts: Object.keys(cur).length === 0 ? null : cur });
   };
 
   if (loading || !state) {
@@ -231,10 +220,10 @@ export function StackResourcesTab({ stackId }: Props) {
         </button>
       </div>
 
-      {/* GPU visibility + power limits */}
+      {/* GPU visibility — per-stack. Power limit shown for reference only (edit on /resources). */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <div className="text-xs font-medium text-text-muted uppercase tracking-wider">GPU visibility &amp; power</div>
+          <div className="text-xs font-medium text-text-muted uppercase tracking-wider">GPU visibility</div>
           <button
             onClick={refreshGpus}
             disabled={refreshingGpus}
@@ -253,16 +242,17 @@ export function StackResourcesTab({ stackId }: Props) {
         ) : (
           <>
             <div className="text-[11px] text-text-muted mb-2 leading-relaxed">
-              Sets <code className="font-mono">NVIDIA_VISIBLE_DEVICES</code> for every service in the stack.
+              Sets <code className="font-mono">NVIDIA_VISIBLE_DEVICES</code> for every service in this stack.
               Leave <span className="text-text-primary">all checked</span> for full visibility (default).
               Leave <span className="text-text-primary">all unchecked</span> to expose no GPUs to the container.
+              Power limit is <span className="text-text-primary">shown for reference</span> — edit it in the
+              <a href="/resources" className="text-accent hover:underline mx-1">Resources dashboard</a>
+              since it's a host-wide setting.
             </div>
             <div className="rounded-lg border border-border bg-bg-tertiary p-3 space-y-3">
               {state.hostGpus.map(g => {
                 const checked = limits.visibleGpuIds == null || limits.visibleGpuIds.includes(g.index);
-                const configuredWatts = limits.powerLimitWatts?.[g.index];
-                const sliderValue = configuredWatts ?? g.powerLimitCurrentWatts;
-                const appliedWatts = state.currentPowerLimits?.[g.index];
+                const appliedWatts = state.currentPowerLimits?.[g.index] ?? g.powerLimitCurrentWatts;
                 const minW = Math.max(1, Math.round(g.powerLimitMinWatts));
                 const maxW = Math.max(minW + 1, Math.round(g.powerLimitMaxWatts));
                 return (
@@ -279,38 +269,26 @@ export function StackResourcesTab({ stackId }: Props) {
                       </label>
                       <div className="font-mono text-text-muted">
                         {(g.memoryTotalMb / 1024).toFixed(1)} GB · range {minW}–{maxW}W
-                        {appliedWatts != null && (
-                          <span className="ml-2">
-                            · applied <span className="text-text-primary">{Math.round(appliedWatts)}W</span>
-                          </span>
-                        )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 opacity-70" title="Read-only here — edit in Resources dashboard">
                       <input
                         type="range"
                         min={minW}
                         max={maxW}
                         step={5}
-                        value={Math.max(minW, Math.min(maxW, Math.round(sliderValue)))}
-                        onChange={e => setPowerWatts(g.index, parseInt(e.target.value, 10))}
-                        className="flex-1"
+                        value={Math.max(minW, Math.min(maxW, Math.round(appliedWatts)))}
+                        readOnly
+                        disabled
+                        className="flex-1 cursor-not-allowed"
                       />
                       <div className="w-16 text-right font-mono text-xs text-text-primary">
-                        {configuredWatts != null ? Math.round(configuredWatts) : Math.round(g.powerLimitCurrentWatts)}W
+                        {Math.round(appliedWatts)}W
                       </div>
-                      <button
-                        onClick={() => clearPowerWatts(g.index)}
-                        disabled={configuredWatts == null}
-                        className="text-[10px] text-text-muted hover:text-text-primary disabled:opacity-40"
-                        title="Don't set a power limit from this stack"
-                      >
-                        reset
-                      </button>
                     </div>
                     <div className="flex items-start gap-1.5 text-[10px] text-text-muted">
                       <AlertTriangle size={10} className="shrink-0 mt-0.5" />
-                      <span>Host-wide — affects any container using this GPU.</span>
+                      <span>Host-wide power limit — configured in <a href="/resources" className="text-accent hover:underline">Resources dashboard</a>.</span>
                     </div>
                   </div>
                 );

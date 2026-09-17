@@ -9,6 +9,8 @@ export interface GpuLiveStat {
   memoryTotalMb: number;
   powerDrawWatts: number;
   powerLimitWatts: number;
+  temperatureCelsius: number | null;
+  fanSpeedPercent: number | null;
 }
 
 export interface DashHost {
@@ -20,6 +22,8 @@ export interface DashHost {
   currentPowerLimits: Record<string, number>;
   platform: string;
   arch: string;
+  cpuModel: string | null;
+  cpuTemperatureCelsius: number | null;
 }
 
 export interface DashStack {
@@ -56,6 +60,12 @@ export interface ResourcesDashboardResponse {
 export const resourcesApi = {
   async getResourcesDashboard(): Promise<ResourcesDashboardResponse> {
     const res = await apiClient.get<ApiResponse<ResourcesDashboardResponse>>('/resources/dashboard');
+    return res.data.data!;
+  },
+  /** Host-wide power limit for a GPU. Returns the actually-applied wattage (nvidia-smi may
+   *  clamp differently than requested in edge cases). */
+  async setGpuPowerLimit(index: string, watts: number): Promise<{ index: string; watts: number }> {
+    const res = await apiClient.put<ApiResponse<{ index: string; watts: number }>>(`/resources/gpus/${encodeURIComponent(index)}/power-limit`, { watts });
     return res.data.data!;
   },
 };

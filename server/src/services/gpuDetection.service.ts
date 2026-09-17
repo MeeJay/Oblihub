@@ -79,6 +79,11 @@ export interface GpuLiveStat {
   memoryTotalMb: number;
   powerDrawWatts: number;
   powerLimitWatts: number;
+  /** Core temperature in °C. Null when nvidia-smi returned [N/A] (unusual — most cards report). */
+  temperatureCelsius: number | null;
+  /** Physical fan speed as percentage. Null on passively-cooled datacenter cards (L40S, A100 etc.
+   *  return [N/A]) — a null here does NOT mean "broken", it means "no fan to measure". */
+  fanSpeedPercent: number | null;
 }
 
 /**
@@ -90,7 +95,7 @@ export async function getGpuLiveStats(): Promise<GpuLiveStat[]> {
     const { stdout } = await execFileP(
       'nvidia-smi',
       [
-        '--query-gpu=index,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,power.limit',
+        '--query-gpu=index,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,power.limit,temperature.gpu,fan.speed',
         '--format=csv,noheader,nounits',
       ],
       { timeout: 10_000 },
@@ -101,6 +106,14 @@ export async function getGpuLiveStats(): Promise<GpuLiveStat[]> {
       if (!line) continue;
       const parts = line.split(',').map(p => p.trim());
       if (parts.length < 7) continue;
+      // Fields 7 (temp) and 8 (fan) are recent additions — tolerate missing on older nvidia-smi.
+      const tempRaw = parts[7];
+      const fanRaw = parts[8];
+      const parseOpt = (v: string | undefined): number | null => {
+        if (!v || v === '[N/A]' || v === 'N/A') return null;
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : null;
+      };
       out.push({
         index: parts[0],
         utilizationGpuPercent: parseFloat(parts[1]) || 0,
@@ -109,6 +122,8 @@ export async function getGpuLiveStats(): Promise<GpuLiveStat[]> {
         memoryTotalMb: parseInt(parts[4], 10) || 0,
         powerDrawWatts: parseFloat(parts[5]) || 0,
         powerLimitWatts: parseFloat(parts[6]) || 0,
+        temperatureCelsius: parseOpt(tempRaw),
+        fanSpeedPercent: parseOpt(fanRaw),
       });
     }
     return out;

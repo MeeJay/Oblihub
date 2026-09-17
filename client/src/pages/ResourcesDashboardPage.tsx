@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Cpu, MemoryStick, Zap, RefreshCw, Activity, Pause, Play, Ban, ExternalLink } from 'lucide-react';
+import { Cpu, MemoryStick, Zap, RefreshCw, Activity, Pause, Play, Ban, ExternalLink, Save } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { resourcesApi, type ResourcesDashboardResponse, type DashStack } from '@/api/resources.api';
-import type { StackPriority } from '@oblihub/shared';
+import type { StackPriority, GpuInfo } from '@oblihub/shared';
 
 const POLL_MS = 5000;
 
@@ -93,6 +94,17 @@ export function ResourcesDashboardPage() {
     return () => { cancelled = true; mounted.current = false; clearInterval(t); };
   }, []);
 
+  // Manual reload trigger — fired after a host-wide power-limit save so the UI reflects the
+  // applied value without waiting for the next poll tick.
+  const forceReload = async () => {
+    try {
+      const d = await resourcesApi.getResourcesDashboard();
+      if (!mounted.current) return;
+      setData(d);
+      setLastAt(Date.now());
+    } catch { /* soft — next poll will retry */ }
+  };
+
   const stacksSorted = useMemo(() => {
     if (!data) return [];
     // Sort: Critical > Opportunistic > Normal, then busy first, then name.
@@ -137,7 +149,7 @@ export function ResourcesDashboardPage() {
         <>
           <HostSummary data={data} />
           <StacksTable stacks={stacksSorted} />
-          <GpuUtilization data={data} />
+          <GpuUtilization data={data} onSaved={forceReload} />
         </>
       )}
     </div>
@@ -152,8 +164,21 @@ function HostSummary({ data }: { data: ResourcesDashboardResponse }) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-lg border border-border bg-bg-secondary p-4">
           <div className="mb-1 flex items-center gap-2 text-xs text-text-muted"><Cpu size={13} /> CPU cores</div>
-          <div className="text-2xl font-semibold text-text-primary">{host.cpuCount}</div>
-          <div className="mt-1 font-mono text-[11px] text-text-muted">{host.arch} · {host.platform}</div>
+          <div className="flex items-baseline gap-2">
+            <div className="text-2xl font-semibold text-text-primary">{host.cpuCount}</div>
+            {host.cpuTemperatureCelsius != null && (
+              <div className={`font-mono text-sm ${
+                host.cpuTemperatureCelsius >= 85 ? 'text-status-down'
+                : host.cpuTemperatureCelsius >= 75 ? 'text-status-warning'
+                : 'text-text-muted'
+              }`}>
+                🌡 {host.cpuTemperatureCelsius.toFixed(0)}°C
+              </div>
+            )}
+          </div>
+          <div className="mt-1 font-mono text-[11px] text-text-muted truncate" title={host.cpuModel || undefined}>
+            {host.cpuModel || `${host.arch} · ${host.platform}`}
+          </div>
         </div>
         <div className="rounded-lg border border-border bg-bg-secondary p-4">
           <div className="mb-1 flex items-center gap-2 text-xs text-text-muted"><MemoryStick size={13} /> Total RAM</div>
@@ -302,7 +327,155 @@ function ConsoBars({ s }: { s: DashStack }) {
   );
 }
 
-function GpuUtilization({ data }: { data: ResourcesDashboardResponse }) {
+/** Per-GPU card. Kept as its own component because it holds local state for the editable
+ *  power-limit slider (pending wattage before Save + saving-in-flight flag). */
+function GpuCard({
+  gpu,
+  live,
+  appliedWatts,
+  onSaved,
+}: {
+  gpu: GpuInfo;
+  live: ResourcesDashboardResponse['host']['gpuLive'][number] | undefined;
+  appliedWatts: number;
+  onSaved: () => void;
+}) {
+  const minW = Math.max(1, Math.round(gpu.powerLimitMinWatts));
+  const maxW = Math.max(minW + 1, Math.round(gpu.powerLimitMaxWatts));
+  const [pending, setPending] = useState<number>(Math.round(appliedWatts));
+  const [saving, setSaving] = useState(false);
+
+  // Re-sync pending whenever the applied wattage moves (fresh poll or external change).
+  const lastApplied = useRef<number>(Math.round(appliedWatts));
+  useEffect(() => {
+    if (Math.round(appliedWatts) !== lastApplied.current) {
+      lastApplied.current = Math.round(appliedWatts);
+      setPending(Math.round(appliedWatts));
+    }
+  }, [appliedWatts]);
+
+  const dirty = pending !== Math.round(appliedWatts);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const { watts } = await resourcesApi.setGpuPowerLimit(gpu.index, pending);
+      toast.success(`GPU ${gpu.index} power limit set to ${Math.round(watts)}W`);
+      onSaved();
+    } catch (e) {
+      toast.error(`Failed to set power limit: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const util = live?.utilizationGpuPercent ?? 0;
+  const memUsed = live?.memoryUsedMb ?? 0;
+  const memTotal = live?.memoryTotalMb ?? gpu.memoryTotalMb;
+  const memPct = memTotal > 0 ? (memUsed / memTotal) * 100 : 0;
+  const powerDraw = live?.powerDrawWatts ?? 0;
+  const powerPct = appliedWatts > 0 ? (powerDraw / appliedWatts) * 100 : 0;
+  const utilTone: 'accent' | 'warning' | 'down' = util > 90 ? 'down' : util > 60 ? 'warning' : 'accent';
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-secondary p-4">
+      <div className="mb-3 flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <GpuChip id={gpu.index} />
+            <span className="text-sm font-medium text-text-primary">{gpu.name}</span>
+          </div>
+          <div className="mt-1 font-mono text-[11px] text-text-muted">
+            {memTotal} MB VRAM · applied {appliedWatts.toFixed(0)}W ({gpu.powerLimitMinWatts.toFixed(0)}–{gpu.powerLimitMaxWatts.toFixed(0)}W range)
+          </div>
+          {/* Temp + fan on their own line — only shown when nvidia-smi returned a value. Passive
+           *  L40S/A100 cards show temp but no fan (null), silently omitted. */}
+          {(live?.temperatureCelsius != null || live?.fanSpeedPercent != null) && (
+            <div className="mt-1 flex items-center gap-3 font-mono text-[11px]">
+              {live?.temperatureCelsius != null && (
+                <span className={
+                  live.temperatureCelsius >= 85 ? 'text-status-down'
+                  : live.temperatureCelsius >= 75 ? 'text-status-warning'
+                  : 'text-text-muted'
+                }>
+                  🌡 {live.temperatureCelsius.toFixed(0)}°C
+                </span>
+              )}
+              {live?.fanSpeedPercent != null && (
+                <span className="text-text-muted">🌀 {live.fanSpeedPercent.toFixed(0)}%</span>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="text-right">
+          <div className={`text-2xl font-semibold ${util > 90 ? 'text-status-down' : util > 60 ? 'text-status-warning' : 'text-accent'}`}>
+            {util.toFixed(0)}%
+          </div>
+          <div className="text-[10px] font-mono text-text-muted">GPU util</div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div>
+          <div className="mb-0.5 flex justify-between font-mono text-[10px] text-text-muted">
+            <span>Compute</span><span>{util.toFixed(0)}%</span>
+          </div>
+          <Bar value={util} tone={utilTone} />
+        </div>
+        <div>
+          <div className="mb-0.5 flex justify-between font-mono text-[10px] text-text-muted">
+            <span>VRAM</span><span>{memUsed}/{memTotal} MB · {memPct.toFixed(0)}%</span>
+          </div>
+          <Bar value={memPct} tone={memPct > 90 ? 'warning' : 'accent'} />
+        </div>
+        <div>
+          <div className="mb-0.5 flex justify-between font-mono text-[10px] text-text-muted">
+            <span>Power draw</span><span>{powerDraw.toFixed(0)}W / {appliedWatts.toFixed(0)}W · {powerPct.toFixed(0)}%</span>
+          </div>
+          <Bar value={powerPct} tone={powerPct > 95 ? 'down' : powerPct > 80 ? 'warning' : 'up'} />
+        </div>
+      </div>
+
+      {/* Editable host-wide power limit. Live throughout the app: any container using this GPU
+       *  is throttled the moment nvidia-smi -pl returns. Discourage micro-tuning by requiring
+       *  an explicit Save (avoids driver spam during slider drag). */}
+      <div className="mt-4 border-t border-border pt-3">
+        <div className="mb-1.5 flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-text-muted">
+          <span>Host-wide power limit</span>
+          <span className="text-text-primary">
+            {pending}W {dirty && <span className="text-status-warning">(unsaved)</span>}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={minW}
+            max={maxW}
+            step={5}
+            value={pending}
+            onChange={e => setPending(parseInt(e.target.value, 10))}
+            disabled={saving}
+            className="flex-1"
+          />
+          <button
+            type="button"
+            onClick={save}
+            disabled={!dirty || saving}
+            className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-[11px] text-accent hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Apply via nvidia-smi -pl on the host"
+          >
+            <Save size={11} /> {saving ? 'Applying…' : 'Save'}
+          </button>
+        </div>
+        <div className="mt-1 text-[10px] text-text-muted">
+          Range {minW}–{maxW}W. Affects any container using this GPU — including stacks not managed by Oblihub.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GpuUtilization({ data, onSaved }: { data: ResourcesDashboardResponse; onSaved: () => void }) {
   const { host } = data;
   if (host.gpus.length === 0) {
     return (
@@ -322,56 +495,15 @@ function GpuUtilization({ data }: { data: ResourcesDashboardResponse }) {
       <h2 className="mb-3 text-sm font-mono uppercase tracking-[0.14em] text-text-muted">GPU utilization</h2>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {host.gpus.map(g => {
-          const live = liveByIdx.get(g.index);
-          const util = live?.utilizationGpuPercent ?? 0;
-          const memUsed = live?.memoryUsedMb ?? 0;
-          const memTotal = live?.memoryTotalMb ?? g.memoryTotalMb;
-          const memPct = memTotal > 0 ? (memUsed / memTotal) * 100 : 0;
-          const powerDraw = live?.powerDrawWatts ?? 0;
-          const powerLimit = host.currentPowerLimits[g.index] ?? g.powerLimitCurrentWatts;
-          const powerPct = powerLimit > 0 ? (powerDraw / powerLimit) * 100 : 0;
-          const utilTone: 'accent' | 'warning' | 'down' = util > 90 ? 'down' : util > 60 ? 'warning' : 'accent';
+          const applied = host.currentPowerLimits[g.index] ?? g.powerLimitCurrentWatts;
           return (
-            <div key={g.index} className="rounded-lg border border-border bg-bg-secondary p-4">
-              <div className="mb-3 flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <GpuChip id={g.index} />
-                    <span className="text-sm font-medium text-text-primary">{g.name}</span>
-                  </div>
-                  <div className="mt-1 font-mono text-[11px] text-text-muted">
-                    {memTotal} MB VRAM · limit {powerLimit.toFixed(0)}W ({g.powerLimitMinWatts.toFixed(0)}–{g.powerLimitMaxWatts.toFixed(0)}W range)
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-2xl font-semibold ${util > 90 ? 'text-status-down' : util > 60 ? 'text-status-warning' : 'text-accent'}`}>
-                    {util.toFixed(0)}%
-                  </div>
-                  <div className="text-[10px] font-mono text-text-muted">GPU util</div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div>
-                  <div className="mb-0.5 flex justify-between font-mono text-[10px] text-text-muted">
-                    <span>Compute</span><span>{util.toFixed(0)}%</span>
-                  </div>
-                  <Bar value={util} tone={utilTone} />
-                </div>
-                <div>
-                  <div className="mb-0.5 flex justify-between font-mono text-[10px] text-text-muted">
-                    <span>VRAM</span><span>{memUsed}/{memTotal} MB · {memPct.toFixed(0)}%</span>
-                  </div>
-                  <Bar value={memPct} tone={memPct > 90 ? 'warning' : 'accent'} />
-                </div>
-                <div>
-                  <div className="mb-0.5 flex justify-between font-mono text-[10px] text-text-muted">
-                    <span>Power</span><span>{powerDraw.toFixed(0)}W / {powerLimit.toFixed(0)}W · {powerPct.toFixed(0)}%</span>
-                  </div>
-                  <Bar value={powerPct} tone={powerPct > 95 ? 'down' : powerPct > 80 ? 'warning' : 'up'} />
-                </div>
-              </div>
-            </div>
+            <GpuCard
+              key={g.index}
+              gpu={g}
+              live={liveByIdx.get(g.index)}
+              appliedWatts={applied}
+              onSaved={onSaved}
+            />
           );
         })}
       </div>

@@ -32,10 +32,24 @@ export interface HostGpuStat {
   memoryPercent: number | null;
   powerDrawWatts: number | null;
   powerLimitWatts: number | null;
+  /** Core temp in °C. Null when nvidia-smi returned [N/A] — rare on modern cards. */
+  temperatureCelsius: number | null;
+  /** Fan speed %. Null on passively-cooled datacenter cards (L40S / A100 / H100) — not a
+   *  failure, just no fan. */
+  fanSpeedPercent: number | null;
 }
 
 export interface HostStats {
-  cpu: { percent: number | null; cores: number };
+  cpu: {
+    percent: number | null;
+    cores: number;
+    /** Best-effort model name from /proc/cpuinfo. Null when unreadable (rare — the pseudo-fs
+     *  is usually mounted even in containers). */
+    model: string | null;
+    /** °C, hottest CPU thermal zone available. Null on VMs and other environments where
+     *  /sys/class/thermal exposes no zone with a CPU-shaped label (or all read 0). */
+    temperatureCelsius: number | null;
+  };
   ram: { used: number; total: number; percent: number | null };
   disk: { used: number; total: number; percent: number | null; path: string };
   gpus: HostGpuStat[];
@@ -51,6 +65,61 @@ async function sampleCpuTimes(): Promise<{ total: number; idle: number }> {
     idle += c.times.idle;
   }
   return { total, idle };
+}
+
+/**
+ * Best-effort CPU temperature via /sys/class/thermal. Requires the kernel thermal-zone driver
+ * to expose a "cpu-shaped" zone type (x86_pkg_temp on Intel, k10temp/k8temp on AMD, cpu_thermal
+ * on ARM boards). On VMs and other environments where no such zone exists — or where all zones
+ * read 0 — we return null so the UI hides the readout instead of showing a nonsense 0°C.
+ *
+ * We pick the HOTTEST matching zone as a conservative "package temperature" proxy. Different
+ * distros expose the same die under different names; grabbing the max lets us reflect thermal
+ * stress no matter which zone the operator's kernel populates.
+ */
+function readCpuTemperature(): number | null {
+  try {
+    const root = '/sys/class/thermal';
+    if (!fs.existsSync(root)) return null;
+    const entries = fs.readdirSync(root).filter(e => e.startsWith('thermal_zone'));
+    let hottest: number | null = null;
+    let hottestCpuLike: number | null = null;
+    const cpuNameRe = /pkg|core|cpu|k1[0-9]temp|k8temp/i;
+    for (const e of entries) {
+      const typePath = `${root}/${e}/type`;
+      const tempPath = `${root}/${e}/temp`;
+      if (!fs.existsSync(typePath) || !fs.existsSync(tempPath)) continue;
+      const type = fs.readFileSync(typePath, 'utf8').trim();
+      const raw = fs.readFileSync(tempPath, 'utf8').trim();
+      const milliC = parseInt(raw, 10);
+      if (!Number.isFinite(milliC) || milliC <= 0) continue;
+      const celsius = milliC / 1000;
+      if (celsius < 5 || celsius > 150) continue; // filter obvious bogus readings
+      if (cpuNameRe.test(type)) {
+        if (hottestCpuLike == null || celsius > hottestCpuLike) hottestCpuLike = celsius;
+      }
+      if (hottest == null || celsius > hottest) hottest = celsius;
+    }
+    // Prefer a CPU-labeled zone when present; otherwise fall back to the hottest zone which is
+    // usually the CPU package on server boards. On pure-VM environments both are null.
+    return hottestCpuLike ?? hottest;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort CPU model from /proc/cpuinfo. Container-safe (procfs is mounted by default). */
+function readCpuModel(): string | null {
+  try {
+    const raw = fs.readFileSync('/proc/cpuinfo', 'utf8');
+    const line = raw.split('\n').find(l => l.startsWith('model name'));
+    if (!line) return null;
+    const idx = line.indexOf(':');
+    if (idx < 0) return null;
+    return line.slice(idx + 1).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 async function readDiskStats(pathToCheck: string): Promise<{ used: number; total: number; percent: number | null; path: string }> {
@@ -111,13 +180,20 @@ export const hostStatsService = {
         memoryPercent: g.memoryTotalMb > 0 ? (g.memoryUsedMb / g.memoryTotalMb) * 100 : null,
         powerDrawWatts: g.powerDrawWatts,
         powerLimitWatts: g.powerLimitWatts,
+        temperatureCelsius: g.temperatureCelsius,
+        fanSpeedPercent: g.fanSpeedPercent,
       }));
     } catch (err) {
       logger.debug({ err: err instanceof Error ? err.message : String(err) }, 'GPU live stats unavailable');
     }
 
     const snap: HostStats = {
-      cpu: { percent: cpuPercent, cores },
+      cpu: {
+        percent: cpuPercent,
+        cores,
+        model: readCpuModel(),
+        temperatureCelsius: readCpuTemperature(),
+      },
       ram: { used: usedMem, total: totalMem, percent: totalMem > 0 ? (usedMem / totalMem) * 100 : null },
       disk,
       gpus,

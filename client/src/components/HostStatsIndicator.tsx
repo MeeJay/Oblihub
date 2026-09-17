@@ -63,7 +63,12 @@ export function HostStatsIndicator() {
       <Bar
         icon={Cpu}
         pct={cpu.percent}
-        tooltip={`CPU: ${cpu.percent == null ? 'n/a' : `${cpu.percent.toFixed(1)}%`} of ${cpu.cores} core${cpu.cores === 1 ? '' : 's'}\nLoad avg: ${stats.loadAvg.map(l => l.toFixed(2)).join(' / ')}`}
+        tooltip={[
+          cpu.model ? `CPU: ${cpu.model}` : `CPU`,
+          `${cpu.percent == null ? 'n/a' : `${cpu.percent.toFixed(1)}%`} of ${cpu.cores} core${cpu.cores === 1 ? '' : 's'}`,
+          cpu.temperatureCelsius != null ? `Temp: ${cpu.temperatureCelsius.toFixed(0)}°C` : null,
+          `Load avg: ${stats.loadAvg.map(l => l.toFixed(2)).join(' / ')}`,
+        ].filter(Boolean).join('\n')}
       />
       <Bar
         icon={MemoryStick}
@@ -77,17 +82,23 @@ export function HostStatsIndicator() {
       />
       {/* One bar per detected GPU. Suffix the GPU index on multi-GPU hosts so the operator can
        *  tell them apart without hovering — a single-GPU host renders just the icon.
-       *  Percent shown = compute utilization; tooltip carries VRAM + power detail. */}
-      {gpus && gpus.length > 0 && gpus.map(g => (
-        <div key={g.index} className="flex items-center gap-1">
-          <Bar
-            icon={Zap}
-            pct={g.utilPercent}
-            tooltip={`GPU ${g.index} — ${g.name}\nCompute: ${g.utilPercent == null ? 'n/a' : `${g.utilPercent.toFixed(0)}%`}\nVRAM: ${fmtBytes(g.memoryUsedMb * 1024 * 1024)} / ${fmtBytes(g.memoryTotalMb * 1024 * 1024)}${g.memoryPercent == null ? '' : ` (${g.memoryPercent.toFixed(0)}%)`}${g.powerDrawWatts != null && g.powerLimitWatts != null ? `\nPower: ${g.powerDrawWatts.toFixed(0)}W / ${g.powerLimitWatts.toFixed(0)}W` : ''}`}
-          />
-          {gpus.length > 1 && <span className="text-[9px] text-text-muted -ml-0.5">{g.index}</span>}
-        </div>
-      ))}
+       *  Percent shown = compute utilization; tooltip carries VRAM + power + temp + fan. */}
+      {gpus && gpus.length > 0 && gpus.map(g => {
+        const tooltip = [
+          `GPU ${g.index} — ${g.name}`,
+          `Compute: ${g.utilPercent == null ? 'n/a' : `${g.utilPercent.toFixed(0)}%`}`,
+          `VRAM: ${fmtBytes(g.memoryUsedMb * 1024 * 1024)} / ${fmtBytes(g.memoryTotalMb * 1024 * 1024)}${g.memoryPercent == null ? '' : ` (${g.memoryPercent.toFixed(0)}%)`}`,
+          g.powerDrawWatts != null && g.powerLimitWatts != null ? `Power: ${g.powerDrawWatts.toFixed(0)}W / ${g.powerLimitWatts.toFixed(0)}W` : null,
+          g.temperatureCelsius != null ? `Temp: ${g.temperatureCelsius.toFixed(0)}°C` : null,
+          g.fanSpeedPercent != null ? `Fan: ${g.fanSpeedPercent.toFixed(0)}%` : null,
+        ].filter(Boolean).join('\n');
+        return (
+          <div key={g.index} className="flex items-center gap-1">
+            <Bar icon={Zap} pct={g.utilPercent} tooltip={tooltip} />
+            {gpus.length > 1 && <span className="text-[9px] text-text-muted -ml-0.5">{g.index}</span>}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -3,7 +3,8 @@ import os from 'node:os';
 import { db } from '../db';
 import { requireAuth } from '../middleware/auth';
 import { stackService } from '../services/stack.service';
-import { detectGpus, getGpuLiveStats, getCurrentPowerLimits } from '../services/gpuDetection.service';
+import { detectGpus, getGpuLiveStats, getCurrentPowerLimits, setPowerLimit } from '../services/gpuDetection.service';
+import { hostStatsService } from '../services/hostStats.service';
 import { snapshotActivity } from '../state/criticalActivity.state';
 import { getYieldedStackIds } from '../workers/PriorityWatchdogWorker';
 import { logger } from '../utils/logger';
@@ -53,11 +54,12 @@ router.get('/dashboard', async (_req, res, next) => {
     const cpuCount = os.cpus().length;
     const totalRam = os.totalmem();
 
-    const [hostGpus, liveGpus, currentPowerLimits, stacks] = await Promise.all([
+    const [hostGpus, liveGpus, currentPowerLimits, stacks, hostSnap] = await Promise.all([
       detectGpus(),
       getGpuLiveStats(),
       getCurrentPowerLimits(),
       stackService.getAll(),
+      hostStatsService.get(),
     ]);
 
     // Latest container_stats row per docker_id — one query, fold in memory.
@@ -158,6 +160,10 @@ router.get('/dashboard', async (_req, res, next) => {
           currentPowerLimits,
           platform: process.platform,
           arch: process.arch,
+          // From hostStatsService.get() — model name from /proc/cpuinfo, temp best-effort via
+          // /sys/class/thermal. Null on VMs / hosts where the thermal zone doesn't exist.
+          cpuModel: hostSnap.cpu.model,
+          cpuTemperatureCelsius: hostSnap.cpu.temperatureCelsius,
         },
         stacks: dashStacks,
         activity,
@@ -167,6 +173,46 @@ router.get('/dashboard', async (_req, res, next) => {
     logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'dashboard aggregation failed');
     next(err);
   }
+});
+
+/**
+ * PUT /api/resources/gpus/:index/power-limit
+ * Body: { watts: number }
+ *
+ * Host-wide GPU power limit. Not tied to any stack — the underlying nvidia-smi -pl call
+ * affects any container using this GPU. Placed on the Resources dashboard so the operator
+ * always knows they're editing global state, not the stack they happened to be on. Per-stack
+ * Resources tab shows the applied value as read-only.
+ */
+router.put('/gpus/:index/power-limit', async (req, res, next) => {
+  try {
+    const index = String(req.params.index || '').trim();
+    const watts = Number((req.body || {}).watts);
+    if (!index) { res.status(400).json({ success: false, error: 'gpu index required' }); return; }
+    if (!Number.isFinite(watts) || watts <= 0) { res.status(400).json({ success: false, error: 'watts must be a positive number' }); return; }
+
+    // Bounds check against detected min/max — nvidia-smi accepts silently and returns a driver
+    // error at apply time otherwise, which is a worse UX than a crisp 400.
+    const catalog = await detectGpus();
+    const gpu = catalog.find(g => g.index === index);
+    if (!gpu) { res.status(404).json({ success: false, error: `GPU ${index} not detected` }); return; }
+    const minW = Math.max(1, Math.round(gpu.powerLimitMinWatts));
+    const maxW = Math.max(minW + 1, Math.round(gpu.powerLimitMaxWatts));
+    if (watts < minW || watts > maxW) {
+      res.status(400).json({ success: false, error: `watts must be within ${minW}–${maxW} for GPU ${index}` });
+      return;
+    }
+
+    const result = await setPowerLimit(index, watts);
+    if (!result.ok) {
+      res.status(500).json({ success: false, error: result.error || 'nvidia-smi -pl failed' });
+      return;
+    }
+    // Return the fresh applied value so the UI can reflect what actually stuck (nvidia-smi may
+    // clamp differently than the request in edge cases).
+    const current = await getCurrentPowerLimits();
+    res.json({ success: true, data: { index, watts: current[index] ?? watts } });
+  } catch (err) { next(err); }
 });
 
 export default router;

@@ -9,10 +9,17 @@ export interface HostGpuStat {
   memoryPercent: number | null;
   powerDrawWatts: number | null;
   powerLimitWatts: number | null;
+  temperatureCelsius: number | null;
+  fanSpeedPercent: number | null;
 }
 
 export interface HostStats {
-  cpu: { percent: number | null; cores: number };
+  cpu: {
+    percent: number | null;
+    cores: number;
+    model: string | null;
+    temperatureCelsius: number | null;
+  };
   ram: { used: number; total: number; percent: number | null };
   disk: { used: number; total: number; percent: number | null; path: string };
   gpus: HostGpuStat[];
