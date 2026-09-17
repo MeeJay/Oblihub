@@ -1,11 +1,27 @@
 import type { Request, Response, NextFunction } from 'express';
+import os from 'node:os';
 import { db } from '../db';
 import { stackService } from '../services/stack.service';
 import { updateService } from '../services/update.service';
 import { schedulerService } from '../services/scheduler.service';
+import { detectGpus, getCurrentPowerLimits } from '../services/gpuDetection.service';
 import { AppError } from '../middleware/errorHandler';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import type { ResourceLimits } from '@oblihub/shared';
+import { appConfigService } from '../services/appConfig.service';
+import { markCriticalBusy, clearCriticalBusy, snapshotActivity } from '../state/criticalActivity.state';
+import crypto from 'node:crypto';
+
+const WEBHOOK_SECRET_KEY = 'priority_webhook_secret';
+
+async function getOrCreateWebhookSecret(): Promise<string> {
+  const existing = await appConfigService.get(WEBHOOK_SECRET_KEY);
+  if (existing && existing.length >= 32) return existing;
+  const generated = crypto.randomBytes(32).toString('hex');
+  await appConfigService.set(WEBHOOK_SECRET_KEY, generated);
+  return generated;
+}
 
 export const stackController = {
   async list(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -374,6 +390,142 @@ export const stackController = {
           },
         },
       });
+    } catch (err) { next(err); }
+  },
+
+  async getResources(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const stack = await stackService.getById(id);
+      if (!stack) throw new AppError(404, 'Stack not found');
+      const [hostGpus, criticalRows, currentPowerLimits] = await Promise.all([
+        detectGpus(),
+        db('stacks').select('id', 'name').whereRaw("resource_limits->>'priority' = ?", ['critical']),
+        getCurrentPowerLimits(),
+      ]);
+      res.json({
+        success: true,
+        data: {
+          limits: stack.resourceLimits,
+          hostGpus,
+          hostCpuCount: os.cpus().length,
+          hostRamGb: Math.round(os.totalmem() / (1024 ** 3)),
+          currentPowerLimits,
+          criticalStacks: criticalRows
+            .filter((r: { id: number }) => r.id !== id)
+            .map((r: { id: number; name: string }) => ({ id: r.id, name: r.name })),
+        },
+      });
+    } catch (err) { next(err); }
+  },
+
+  async setResources(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const body = req.body as Partial<ResourceLimits>;
+      if (!body || typeof body !== 'object') throw new AppError(400, 'Body required');
+      if (!body.priority || !['critical', 'normal', 'opportunistic'].includes(body.priority)) {
+        throw new AppError(400, 'priority must be critical | normal | opportunistic');
+      }
+      const clamp = (v: unknown, min: number, max: number): number | null => {
+        if (v == null) return null;
+        const n = Number(v);
+        if (!Number.isFinite(n)) return null;
+        return Math.max(min, Math.min(max, n));
+      };
+      const limits: ResourceLimits = {
+        priority: body.priority,
+        cpuPercent: clamp(body.cpuPercent, 0, 100),
+        ramPercent: clamp(body.ramPercent, 0, 100),
+        cpuShares: body.cpuShares != null ? Math.max(2, Math.min(262144, Number(body.cpuShares))) : null,
+        visibleGpuIds: Array.isArray(body.visibleGpuIds) ? body.visibleGpuIds.map(String) : null,
+        powerLimitWatts: body.powerLimitWatts && typeof body.powerLimitWatts === 'object'
+          ? Object.fromEntries(
+              Object.entries(body.powerLimitWatts as Record<string, unknown>)
+                .map(([k, v]) => [String(k), Number(v)])
+                .filter(([, v]) => Number.isFinite(v as number)),
+            ) as Record<string, number>
+          : null,
+        yieldsToStackIds: Array.isArray(body.yieldsToStackIds)
+          ? body.yieldsToStackIds.map(Number).filter(Number.isFinite)
+          : null,
+        yieldSignalSource: body.yieldSignalSource && ['nginx-traffic', 'gpu-util', 'webhook'].includes(body.yieldSignalSource)
+          ? body.yieldSignalSource
+          : null,
+        yieldIdleTimeoutSeconds: body.yieldIdleTimeoutSeconds != null
+          ? Math.max(1, Math.min(86400, Number(body.yieldIdleTimeoutSeconds)))
+          : null,
+        yieldMode: body.yieldMode && ['pause', 'stop'].includes(body.yieldMode) ? body.yieldMode : null,
+      };
+      const { powerLimitErrors } = await stackService.setResourceLimits(id, limits);
+      const stack = await stackService.getById(id);
+      res.json({ success: true, data: stack, powerLimitErrors });
+    } catch (err) { next(err); }
+  },
+
+  /**
+   * POST /:id/notify-busy — Critical apps that can't be watched via nginx or GPU (e.g. a
+   * background LLM inference burst behind a non-proxied port) call this to stamp themselves
+   * busy so Opportunistic stacks yielding to them get paused. Header: X-Oblihub-Priority-Token.
+   */
+  async notifyBusy(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const provided = String(req.header('x-oblihub-priority-token') || '');
+      const secret = await getOrCreateWebhookSecret();
+      // Constant-time compare — token length is fixed so timingSafeEqual is safe.
+      const ok = provided.length === secret.length
+        && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+      if (!ok) { res.status(401).json({ success: false, error: 'Invalid priority token' }); return; }
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) throw new AppError(400, 'Invalid stack id');
+      markCriticalBusy(id);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  async notifyIdle(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const provided = String(req.header('x-oblihub-priority-token') || '');
+      const secret = await getOrCreateWebhookSecret();
+      const ok = provided.length === secret.length
+        && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(secret));
+      if (!ok) { res.status(401).json({ success: false, error: 'Invalid priority token' }); return; }
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) throw new AppError(400, 'Invalid stack id');
+      clearCriticalBusy(id);
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  /** GET /activity — snapshot of critical-stack busy timestamps for the dashboard. */
+  async getActivity(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json({ success: true, data: snapshotActivity() });
+    } catch (err) { next(err); }
+  },
+
+  /** GET /webhook-secret — admin-only, so the operator can copy it into a Critical app config. */
+  async getWebhookSecret(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const secret = await getOrCreateWebhookSecret();
+      res.json({ success: true, data: { secret } });
+    } catch (err) { next(err); }
+  },
+
+  /** POST /webhook-secret/rotate — admin-only, generates a fresh secret. */
+  async rotateWebhookSecret(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const generated = crypto.randomBytes(32).toString('hex');
+      await appConfigService.set(WEBHOOK_SECRET_KEY, generated);
+      res.json({ success: true, data: { secret: generated } });
+    } catch (err) { next(err); }
+  },
+
+  async clearResources(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = parseInt(req.params.id, 10);
+      await stackService.clearResourceLimits(id);
+      res.json({ success: true });
     } catch (err) { next(err); }
   },
 

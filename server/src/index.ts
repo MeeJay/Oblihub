@@ -19,6 +19,8 @@ import { startTrafficLogWorker, stopTrafficLogWorker } from './workers/TrafficLo
 import { startTrafficDownsampleWorker, stopTrafficDownsampleWorker } from './workers/TrafficDownsampleWorker';
 import { startHoneypotWorker, stopHoneypotWorker } from './workers/HoneypotWorker';
 import { startSleepWorker, stopSleepWorker } from './workers/SleepWorker';
+import { startPriorityWatchdogWorker, stopPriorityWatchdogWorker } from './workers/PriorityWatchdogWorker';
+import { startGpuUtilPoller, stopGpuUtilPoller } from './workers/GpuUtilPoller';
 import { startActivityTracker, stopActivityTracker } from './workers/ActivityTracker';
 import { schedulerService } from './services/scheduler.service';
 import { dockerService } from './services/docker.service';
@@ -136,6 +138,14 @@ async function main() {
   // Start sleep worker (idle container detection)
   startSleepWorker();
 
+  // Priority watchdog — tails the same nginx traffic log as TrafficLogWorker to detect activity
+  // on Critical stacks, then pauses/stops any Opportunistic stack that yields to them. Runs even
+  // when allowNginx=false: without a proxy the traffic log won't exist and the tailer no-ops,
+  // but future signal sources (gpu-util, webhook) still work.
+  startPriorityWatchdogWorker(io);
+  // GPU-util signal source for the priority watchdog. Silently no-ops when nvidia-smi is missing.
+  startGpuUtilPoller();
+
   // Start activity tracker (tails nginx access log → updates last_active_at)
   if (config.allowNginx) startActivityTracker();
 
@@ -169,6 +179,8 @@ async function main() {
     stopTrafficDownsampleWorker();
     stopHoneypotWorker();
     stopSleepWorker();
+    stopPriorityWatchdogWorker();
+    stopGpuUtilPoller();
     stopActivityTracker();
     schedulerService.stopAll();
     server.close();

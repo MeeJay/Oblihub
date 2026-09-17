@@ -21,6 +21,7 @@ import tailscaleRoutes from './tailscale.routes';
 import automationRoutes from './automation.routes';
 import trafficRoutes from './traffic.routes';
 import bansRoutes from './bans.routes';
+import resourcesRoutes from './resources.routes';
 
 const router = Router();
 
@@ -46,5 +47,6 @@ router.use('/templates', templatesRoutes);
 router.use('/teams', teamsRoutes);
 router.use('/engines', enginesRoutes);
 router.use('/tailscale', tailscaleRoutes);
+router.use('/resources', resourcesRoutes);
 
 export { router as routes };

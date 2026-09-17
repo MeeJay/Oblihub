@@ -84,6 +84,33 @@ export type ContainerStatus = 'up_to_date' | 'update_available' | 'updating' | '
 export type SleepMode = 'stop' | 'pause';
 export type SleepState = 'awake' | 'sleeping' | 'waking' | 'wake_failed';
 
+// ── Resource limits + priority tiers ──
+export type StackPriority = 'critical' | 'normal' | 'opportunistic';
+export type YieldMode = 'pause' | 'stop';
+export type YieldSignalSource = 'nginx-traffic' | 'gpu-util' | 'webhook';
+
+export interface ResourceLimits {
+  priority: StackPriority;
+  cpuPercent: number | null;
+  ramPercent: number | null;
+  cpuShares: number | null;
+  visibleGpuIds: string[] | null;
+  powerLimitWatts: Record<string, number> | null;
+  yieldsToStackIds: number[] | null;
+  yieldSignalSource: YieldSignalSource | null;
+  yieldIdleTimeoutSeconds: number | null;
+  yieldMode: YieldMode | null;
+}
+
+export interface GpuInfo {
+  index: string;
+  name: string;
+  memoryTotalMb: number;
+  powerLimitCurrentWatts: number;
+  powerLimitMaxWatts: number;
+  powerLimitMinWatts: number;
+}
+
 export interface Stack {
   id: number;
   name: string;
@@ -99,6 +126,7 @@ export interface Stack {
   lastCheckedAt: string | null;
   lastUpdatedAt: string | null;
   containers: Container[];
+  resourceLimits: ResourceLimits | null;
   createdAt: string;
   updatedAt: string;
 }

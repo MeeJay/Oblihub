@@ -11,6 +11,7 @@ import type { ContainerStats as ContainerStatsType } from '@oblihub/shared';
 import { ContainerLogs } from '@/components/ContainerLogs';
 import { ContainerConsole } from '@/components/ContainerConsole';
 import { NotificationBindingsPanel } from '@/components/NotificationBindingsPanel';
+import { StackResourcesTab } from '@/components/StackResourcesTab';
 import type { Stack, Container, UpdateHistoryEntry, ManagedStack, ProxyHost } from '@oblihub/shared';
 import toast from 'react-hot-toast';
 
@@ -852,6 +853,11 @@ export function StackDetailPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Resources — priority tier, CPU/RAM caps, GPU visibility */}
+      <div className="mb-6">
+        <StackResourcesTab stackId={stack.id} />
       </div>
 
       {/* History */}

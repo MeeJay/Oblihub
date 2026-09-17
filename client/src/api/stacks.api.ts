@@ -1,5 +1,14 @@
 import apiClient from './client';
-import type { ApiResponse, Stack, UpdateHistoryEntry, Container, SleepMode, SleepState } from '@oblihub/shared';
+import type { ApiResponse, Stack, UpdateHistoryEntry, Container, SleepMode, SleepState, ResourceLimits, GpuInfo } from '@oblihub/shared';
+
+export interface StackResourcesResponse {
+  limits: ResourceLimits | null;
+  hostGpus: GpuInfo[];
+  hostCpuCount: number;
+  hostRamGb: number;
+  currentPowerLimits: Record<string, number>;
+  criticalStacks: { id: number; name: string }[];
+}
 
 export const stacksApi = {
   async list(): Promise<Stack[]> {
@@ -32,6 +41,20 @@ export const stacksApi = {
   async getHistory(id: number, limit = 50, offset = 0): Promise<UpdateHistoryEntry[]> {
     const res = await apiClient.get<ApiResponse<UpdateHistoryEntry[]>>(`/stacks/${id}/history?limit=${limit}&offset=${offset}`);
     return res.data.data!;
+  },
+  async getStackResources(id: number): Promise<StackResourcesResponse> {
+    const res = await apiClient.get<ApiResponse<StackResourcesResponse>>(`/stacks/${id}/resources`);
+    return res.data.data!;
+  },
+  async setStackResources(
+    id: number,
+    limits: ResourceLimits,
+  ): Promise<{ stack: Stack; powerLimitErrors: { gpuIndex: string; watts: number; error: string }[] }> {
+    const res = await apiClient.put<ApiResponse<Stack> & { powerLimitErrors?: { gpuIndex: string; watts: number; error: string }[] }>(`/stacks/${id}/resources`, limits);
+    return { stack: res.data.data!, powerLimitErrors: res.data.powerLimitErrors ?? [] };
+  },
+  async clearStackResources(id: number): Promise<void> {
+    await apiClient.delete(`/stacks/${id}/resources`);
   },
 };
 

@@ -1,7 +1,9 @@
 import { db } from '../db';
-import type { Stack, Container, ContainerStatus, SleepMode, SleepState } from '@oblihub/shared';
+import type { Stack, Container, ContainerStatus, SleepMode, SleepState, ResourceLimits } from '@oblihub/shared';
 import type { DiscoveredContainer } from './docker.service';
 import { logger } from '../utils/logger';
+import { writeStackOverride, removeStackOverride, applyStackOverride } from './resourceOverride.service';
+import { setPowerLimit } from './gpuDetection.service';
 
 interface StackRow {
   id: number;
@@ -17,6 +19,7 @@ interface StackRow {
   notify_delay: number | null;
   last_checked_at: Date | null;
   last_updated_at: Date | null;
+  resource_limits: unknown;
   created_at: Date;
   updated_at: Date;
 }
@@ -92,6 +95,15 @@ function rowToContainer(row: ContainerRow): Container {
   };
 }
 
+function parseResourceLimits(raw: unknown): ResourceLimits | null {
+  if (raw == null) return null;
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) as ResourceLimits; } catch { return null; }
+  }
+  if (typeof raw === 'object') return raw as ResourceLimits;
+  return null;
+}
+
 function rowToStack(row: StackRow, containers: Container[] = []): Stack {
   return {
     id: row.id,
@@ -108,6 +120,7 @@ function rowToStack(row: StackRow, containers: Container[] = []): Stack {
     lastCheckedAt: row.last_checked_at?.toISOString() ?? null,
     lastUpdatedAt: row.last_updated_at?.toISOString() ?? null,
     containers,
+    resourceLimits: parseResourceLimits(row.resource_limits),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -316,5 +329,137 @@ export const stackService = {
   /** Update container docker_id after recreation */
   async updateContainerDockerId(containerId: number, newDockerId: string): Promise<void> {
     await db('containers').where({ id: containerId }).update({ docker_id: newDockerId, updated_at: new Date() });
+  },
+
+  /** Read the resource_limits blob for one stack. */
+  async getResourceLimits(stackId: number): Promise<ResourceLimits | null> {
+    const row = await db<StackRow>('stacks').where({ id: stackId }).first();
+    if (!row) return null;
+    return parseResourceLimits(row.resource_limits);
+  },
+
+  /**
+   * Persist resource limits, regenerate the compose override, re-apply the stack, and push any
+   * requested per-GPU power caps to the host.
+   *
+   * The stack's folder is derived from its compose_project label — that's where discovery
+   * expects `docker-compose.yml` to live. Standalone (project=null) stacks can't be capped this
+   * way because they have no compose file; callers should skip them at the route level.
+   *
+   * Non-fatal failures (missing folder, docker compose error, nvidia-smi missing) are logged and
+   * swallowed so the DB write survives — the operator can retry from the UI.
+   */
+  async setResourceLimits(
+    stackId: number,
+    limits: ResourceLimits,
+  ): Promise<{ powerLimitErrors: { gpuIndex: string; watts: number; error: string }[] }> {
+    const powerLimitErrors: { gpuIndex: string; watts: number; error: string }[] = [];
+    await db('stacks').where({ id: stackId }).update({
+      resource_limits: JSON.stringify(limits),
+      updated_at: new Date(),
+    });
+
+    const stack = await this.getById(stackId);
+    if (!stack) return { powerLimitErrors };
+
+    if (stack.composeProject) {
+      // Compose names containers `<project>[-_]<service>[-_]<index>` — strip both ends to recover
+      // the service name. Best-effort; if the container was renamed manually the override just
+      // won't match it. Phase B stores compose.service on the container row so we can be exact.
+      const projectPrefix = new RegExp(`^${stack.composeProject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[-_]`);
+      const indexSuffix = /[-_]\d+$/;
+      const serviceNames = Array.from(new Set(
+        stack.containers
+          .map(c => c.containerName.replace(projectPrefix, '').replace(indexSuffix, ''))
+          .filter(Boolean),
+      ));
+      try {
+        await writeStackOverride(stack.composeProject, serviceNames, limits);
+        const result = await applyStackOverride(stack.composeProject);
+        if (!result.ok) {
+          logger.warn({ stackId, stderr: result.stderr }, 'Applying compose override failed');
+        }
+      } catch (err) {
+        logger.warn({ stackId, err }, 'writeStackOverride failed');
+      }
+    } else {
+      logger.info({ stackId }, 'Standalone stack — resource_limits stored but no compose override written');
+    }
+
+    if (limits.powerLimitWatts) {
+      for (const [idx, watts] of Object.entries(limits.powerLimitWatts)) {
+        const res = await setPowerLimit(idx, watts);
+        if (!res.ok) {
+          logger.warn({ stackId, gpuIndex: idx, watts, error: res.error }, 'setPowerLimit failed');
+          powerLimitErrors.push({ gpuIndex: idx, watts, error: res.error || 'unknown error' });
+        }
+      }
+    }
+    return { powerLimitErrors };
+  },
+
+  /**
+   * List every Opportunistic stack that yields to at least one other stack — the input the
+   * priority watchdog needs to decide which stacks to pause/resume on Critical traffic. Shape is
+   * kept minimal (id / composeProject / engineId / limits) so the watchdog doesn't accidentally
+   * become a full stack-hydration hotspot when it re-reads this every 30s.
+   */
+  async getOpportunisticStacksWithYields(): Promise<Array<{
+    id: number;
+    composeProject: string | null;
+    engineId: number | null;
+    resourceLimits: ResourceLimits;
+  }>> {
+    const rows = await db<StackRow>('stacks').whereNotNull('resource_limits');
+    const out: Array<{ id: number; composeProject: string | null; engineId: number | null; resourceLimits: ResourceLimits }> = [];
+    for (const row of rows) {
+      const limits = parseResourceLimits(row.resource_limits);
+      if (!limits) continue;
+      if (limits.priority !== 'opportunistic') continue;
+      if (!limits.yieldsToStackIds || limits.yieldsToStackIds.length === 0) continue;
+      out.push({
+        id: row.id,
+        composeProject: row.compose_project,
+        engineId: row.engine_id,
+        resourceLimits: limits,
+      });
+    }
+    return out;
+  },
+
+  /**
+   * Reverse-lookup for the watchdog: given a batch of proxy_host_ids seen in the traffic log,
+   * return a Map[proxy_host_id → stack_id] for every host row that has a stack link. Rows whose
+   * `stack_id` is null are omitted — a proxy_host with no owning stack can't trigger yielding.
+   */
+  async getStackIdsByProxyHostIds(proxyHostIds: number[]): Promise<Map<number, number>> {
+    const out = new Map<number, number>();
+    if (proxyHostIds.length === 0) return out;
+    const rows = await db('proxy_hosts')
+      .whereIn('id', proxyHostIds)
+      .whereNotNull('stack_id')
+      .select('id', 'stack_id');
+    for (const r of rows as Array<{ id: number; stack_id: number }>) out.set(r.id, r.stack_id);
+    return out;
+  },
+
+  /** Nullify the column, unlink the override file, and re-apply the plain compose file. */
+  async clearResourceLimits(stackId: number): Promise<void> {
+    const stack = await this.getById(stackId);
+    await db('stacks').where({ id: stackId }).update({
+      resource_limits: null,
+      updated_at: new Date(),
+    });
+    if (stack?.composeProject) {
+      try {
+        await removeStackOverride(stack.composeProject);
+        const result = await applyStackOverride(stack.composeProject);
+        if (!result.ok) {
+          logger.warn({ stackId, stderr: result.stderr }, 'Re-applying plain compose failed after clear');
+        }
+      } catch (err) {
+        logger.warn({ stackId, err }, 'clearResourceLimits cleanup failed');
+      }
+    }
   },
 };

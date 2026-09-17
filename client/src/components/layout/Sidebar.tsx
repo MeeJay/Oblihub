@@ -24,6 +24,7 @@ import {
   ChevronsRight,
   KeyRound,
   Zap,
+  Gauge,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { cn } from '@/utils/cn';
@@ -75,6 +76,7 @@ export function Sidebar({ allowStack, allowNginx }: SidebarProps) {
   const mainNav: NavItem[] = [
     { label: 'Dashboard', path: '/', icon: <LayoutDashboard size={18} /> },
     { label: 'App Store', path: '/app-store', icon: <Package size={18} /> },
+    { label: 'Resources', path: '/resources', icon: <Gauge size={18} /> },
   ];
 
   const stackNav: NavItem[] = allowStack
