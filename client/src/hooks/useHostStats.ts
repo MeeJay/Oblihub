@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react';
 
+export interface HostGpuStat {
+  index: string;
+  name: string;
+  utilPercent: number | null;
+  memoryUsedMb: number;
+  memoryTotalMb: number;
+  memoryPercent: number | null;
+  powerDrawWatts: number | null;
+  powerLimitWatts: number | null;
+}
+
 export interface HostStats {
   cpu: { percent: number | null; cores: number };
   ram: { used: number; total: number; percent: number | null };
   disk: { used: number; total: number; percent: number | null; path: string };
+  gpus: HostGpuStat[];
   loadAvg: [number, number, number];
   measuredAt: string;
 }

@@ -1,5 +1,5 @@
 import { useHostStats } from '@/hooks/useHostStats';
-import { Cpu, MemoryStick, HardDrive } from 'lucide-react';
+import { Cpu, MemoryStick, HardDrive, Zap } from 'lucide-react';
 
 function fmtBytes(n: number): string {
   if (!isFinite(n) || n <= 0) return '0';
@@ -57,7 +57,7 @@ function Bar({ icon: Icon, pct, tooltip }: { icon: typeof Cpu; pct: number | nul
 export function HostStatsIndicator() {
   const stats = useHostStats(5000);
   if (!stats) return null;
-  const { cpu, ram, disk } = stats;
+  const { cpu, ram, disk, gpus } = stats;
   return (
     <div className="hidden md:flex items-center gap-1.5">
       <Bar
@@ -75,6 +75,19 @@ export function HostStatsIndicator() {
         pct={disk.percent}
         tooltip={`Disk (${disk.path}): ${fmtBytes(disk.used)} / ${fmtBytes(disk.total)}${disk.percent == null ? '' : ` (${disk.percent.toFixed(1)}%)`}\nWatch during builds — build cache lives here.`}
       />
+      {/* One bar per detected GPU. Suffix the GPU index on multi-GPU hosts so the operator can
+       *  tell them apart without hovering — a single-GPU host renders just the icon.
+       *  Percent shown = compute utilization; tooltip carries VRAM + power detail. */}
+      {gpus && gpus.length > 0 && gpus.map(g => (
+        <div key={g.index} className="flex items-center gap-1">
+          <Bar
+            icon={Zap}
+            pct={g.utilPercent}
+            tooltip={`GPU ${g.index} — ${g.name}\nCompute: ${g.utilPercent == null ? 'n/a' : `${g.utilPercent.toFixed(0)}%`}\nVRAM: ${fmtBytes(g.memoryUsedMb * 1024 * 1024)} / ${fmtBytes(g.memoryTotalMb * 1024 * 1024)}${g.memoryPercent == null ? '' : ` (${g.memoryPercent.toFixed(0)}%)`}${g.powerDrawWatts != null && g.powerLimitWatts != null ? `\nPower: ${g.powerDrawWatts.toFixed(0)}W / ${g.powerLimitWatts.toFixed(0)}W` : ''}`}
+          />
+          {gpus.length > 1 && <span className="text-[9px] text-text-muted -ml-0.5">{g.index}</span>}
+        </div>
+      ))}
     </div>
   );
 }

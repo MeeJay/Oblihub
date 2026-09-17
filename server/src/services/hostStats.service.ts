@@ -1,6 +1,7 @@
 import * as os from 'os';
 import * as fs from 'fs';
 import { logger } from '../utils/logger';
+import { getGpuLiveStats, detectGpus } from './gpuDetection.service';
 
 /**
  * Snapshot of the Docker host's resource state — CPU %, RAM used/total, disk used/total on
@@ -22,10 +23,22 @@ import { logger } from '../utils/logger';
  * All fields are best-effort; failures return null values so the UI can render gracefully.
  */
 
+export interface HostGpuStat {
+  index: string;
+  name: string;
+  utilPercent: number | null;
+  memoryUsedMb: number;
+  memoryTotalMb: number;
+  memoryPercent: number | null;
+  powerDrawWatts: number | null;
+  powerLimitWatts: number | null;
+}
+
 export interface HostStats {
   cpu: { percent: number | null; cores: number };
   ram: { used: number; total: number; percent: number | null };
   disk: { used: number; total: number; percent: number | null; path: string };
+  gpus: HostGpuStat[];
   loadAvg: [number, number, number];
   measuredAt: string;
 }
@@ -81,10 +94,33 @@ export const hostStatsService = {
     const disk = await readDiskStats('/');
     const loadAvg = os.loadavg() as [number, number, number];
 
+    // GPUs — nvidia-smi live snapshot when available. Empty array on hosts without GPUs OR
+    // when nvidia-smi isn't callable from this container (missing runtime: nvidia, missing
+    // libc compat, etc.). The header indicator omits GPU bars entirely on empty. detectGpus is
+    // cached (60s TTL) so it's cheap to call every 3s alongside the live stats.
+    let gpus: HostGpuStat[] = [];
+    try {
+      const [live, catalog] = await Promise.all([getGpuLiveStats(), detectGpus()]);
+      const nameByIndex = new Map(catalog.map(g => [g.index, g.name] as const));
+      gpus = live.map(g => ({
+        index: g.index,
+        name: nameByIndex.get(g.index) || `GPU ${g.index}`,
+        utilPercent: g.utilizationGpuPercent,
+        memoryUsedMb: g.memoryUsedMb,
+        memoryTotalMb: g.memoryTotalMb,
+        memoryPercent: g.memoryTotalMb > 0 ? (g.memoryUsedMb / g.memoryTotalMb) * 100 : null,
+        powerDrawWatts: g.powerDrawWatts,
+        powerLimitWatts: g.powerLimitWatts,
+      }));
+    } catch (err) {
+      logger.debug({ err: err instanceof Error ? err.message : String(err) }, 'GPU live stats unavailable');
+    }
+
     const snap: HostStats = {
       cpu: { percent: cpuPercent, cores },
       ram: { used: usedMem, total: totalMem, percent: totalMem > 0 ? (usedMem / totalMem) * 100 : null },
       disk,
+      gpus,
       loadAvg,
       measuredAt: new Date().toISOString(),
     };
