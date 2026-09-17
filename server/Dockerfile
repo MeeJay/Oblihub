@@ -18,7 +18,11 @@ FROM node:24-alpine AS production
 # - docker CLI shells out to `ssh` when the host scheme is ssh, so openssh-client is mandatory.
 # - git is required for the build-pipeline "clone from repo" source type (managed stacks
 #   created from a git URL). Installed unconditionally because the binary is ~12 MB.
-RUN apk add --no-cache docker-cli docker-cli-compose openssh-client git
+# - gcompat + libc6-compat provide glibc shim so glibc-linked binaries injected by the
+#   nvidia-container-toolkit (e.g. nvidia-smi from the host) can exec on Alpine's musl. Without
+#   these, `exec /usr/bin/nvidia-smi: no such file or directory` appears even though the file
+#   is present — kernel returns ENOENT when the dynamic linker can't be resolved.
+RUN apk add --no-cache docker-cli docker-cli-compose openssh-client git gcompat libc6-compat
 
 WORKDIR /app
 
