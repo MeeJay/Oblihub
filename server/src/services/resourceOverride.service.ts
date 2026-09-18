@@ -129,9 +129,32 @@ export async function writeStackOverride(
   }
 
   const doc = { services };
-  const body = yaml.dump(doc, { noRefs: true, lineWidth: 120 });
+  const body = injectOverrideTags(yaml.dump(doc, { noRefs: true, lineWidth: 120 }));
   await fs.writeFile(filePath, HEADER + body, 'utf8');
   logger.info({ stackFolderName, serviceCount: serviceNames.length }, 'Wrote resource override file');
+}
+
+/**
+ * Post-process the js-yaml output to inject Compose Spec `!override` tags on array fields that
+ * MUST fully replace the base rather than append. Docker Compose 2.x APPENDS list values by
+ * default when the same key exists in base + override — for `deploy.resources.reservations.devices`
+ * that's catastrophic (base says `count: all`, override says `device_ids: ["1"]` → docker sees
+ * BOTH requests → gives all GPUs anyway). The `!override` tag (compose 2.24+) tells the merge to
+ * REPLACE the sequence wholesale.
+ *
+ * js-yaml doesn't emit custom tags cleanly without registering a full Type + schema, and even
+ * then the emit is finicky when the tag applies to a nested sequence. A single-line regex on the
+ * canonical multi-line block form is deterministic and cheap, so we run it as a final pass.
+ *
+ * Idempotent — only rewrites lines that don't already carry the tag.
+ */
+function injectOverrideTags(body: string): string {
+  // Two shapes js-yaml can emit for the devices key:
+  //   block style   → `        devices:\n            - driver: nvidia\n...`
+  //   flow style    → `        devices: []`   (empty array on a single line, revoke-all case)
+  return body
+    .replace(/^(\s+)devices:\n/gm, (_m, indent) => `${indent}devices: !override\n`)
+    .replace(/^(\s+)devices: \[\]$/gm, (_m, indent) => `${indent}devices: !override []`);
 }
 
 export async function removeStackOverride(stackFolderName: string): Promise<void> {
