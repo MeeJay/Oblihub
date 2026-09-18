@@ -79,7 +79,15 @@ services:
       DOCKERHUB_TOKEN: ${DOCKERHUB_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - stacks_data:/data/stacks
+      # Stacks directory — bind mount so the operator can inspect / edit compose files
+      # over ssh without exec-ing into the container. The default `/data/stacks` matches the
+      # in-container `STACKS_DIR` env above, keeping paths symmetric between host and container
+      # (docker compose labels containers with `working_dir` at start, so this symmetry avoids
+      # broken labels the moment you exec `docker inspect` from the host).
+      # Override with `STACKS_HOST_DIR=/some/where` in your .env if `/data/stacks` doesn't fit.
+      - ${STACKS_HOST_DIR:-/data/stacks}:/data/stacks
+      # `_proxy` stays as a named volume — nginx config + logs are Oblihub-managed and don't
+      # normally need to be edited from host. Exec into `oblihub-proxy-1` for a tail/cat.
       - proxy_data:/data/stacks/_proxy
       # Tailscale LocalAPI socket — read-only is enough for status queries.
       # The volume is always declared but only populated when the tailscale
@@ -147,7 +155,6 @@ networks:
 
 volumes:
   postgres_data:
-  stacks_data:
   proxy_data:
   client_ssl:
   tailscale_state:

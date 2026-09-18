@@ -27,7 +27,8 @@ services:
       DEFAULT_CHECK_INTERVAL: ${DEFAULT_CHECK_INTERVAL:-60}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - stacks_data:/data/stacks
+      # See main docker-compose.yml — bind mount for host-visible stack files.
+      - ${STACKS_HOST_DIR:-/data/stacks}:/data/stacks
       - proxy_data:/data/stacks/_proxy
 
   client:
@@ -43,6 +44,5 @@ services:
       - client_ssl:/etc/nginx/ssl
 
 volumes:
-  stacks_data:
   proxy_data:
   client_ssl:

@@ -1,6 +1,6 @@
 import { db } from '../db';
 import type { Stack, Container, ContainerStatus, SleepMode, SleepState, ResourceLimits } from '@oblihub/shared';
-import type { DiscoveredContainer } from './docker.service';
+import { dockerService, type DiscoveredContainer } from './docker.service';
 import { logger } from '../utils/logger';
 import { writeStackOverride, removeStackOverride, applyStackOverride } from './resourceOverride.service';
 import { setPowerLimit } from './gpuDetection.service';
@@ -363,24 +363,35 @@ export const stackService = {
     if (!stack) return { powerLimitErrors };
 
     if (stack.composeProject) {
-      // Compose names containers `<project>[-_]<service>[-_]<index>` — strip both ends to recover
-      // the service name. Best-effort; if the container was renamed manually the override just
-      // won't match it. Phase B stores compose.service on the container row so we can be exact.
-      const projectPrefix = new RegExp(`^${stack.composeProject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[-_]`);
-      const indexSuffix = /[-_]\d+$/;
-      const serviceNames = Array.from(new Set(
-        stack.containers
-          .map(c => c.containerName.replace(projectPrefix, '').replace(indexSuffix, ''))
-          .filter(Boolean),
-      ));
-      try {
-        await writeStackOverride(stack.composeProject, serviceNames, limits);
-        const result = await applyStackOverride(stack.composeProject);
-        if (!result.ok) {
-          logger.warn({ stackId, stderr: result.stderr }, 'Applying compose override failed');
+      // Read the exact compose service names from docker labels (com.docker.compose.service).
+      // Container names can diverge arbitrarily from the compose_project prefix — an image that
+      // sets container_name explicitly (e.g. compose project 'suricata-v' running a container
+      // named 'jetski-miner-v' as service 'miner') breaks the old strip-project-prefix heuristic
+      // and would target a non-existent service in the override, silently ignored by compose.
+      // Live-inspect is cheap (only fires on Save) and always reflects reality.
+      const serviceNamesSet = new Set<string>();
+      for (const c of stack.containers) {
+        try {
+          const info = await dockerService.inspectContainer(c.dockerId, c.engineId);
+          const svc = info.Config?.Labels?.['com.docker.compose.service'];
+          if (svc) serviceNamesSet.add(svc);
+        } catch (err) {
+          logger.debug({ stackId, dockerId: c.dockerId, err }, 'inspect for compose.service label failed — skipping this container');
         }
-      } catch (err) {
-        logger.warn({ stackId, err }, 'writeStackOverride failed');
+      }
+      const serviceNames = Array.from(serviceNamesSet);
+      if (serviceNames.length === 0) {
+        logger.warn({ stackId, composeProject: stack.composeProject }, 'No com.docker.compose.service labels found on any container — override would target nothing, skipping write');
+      } else {
+        try {
+          await writeStackOverride(stack.composeProject, serviceNames, limits);
+          const result = await applyStackOverride(stack.composeProject);
+          if (!result.ok) {
+            logger.warn({ stackId, stderr: result.stderr }, 'Applying compose override failed');
+          }
+        } catch (err) {
+          logger.warn({ stackId, err }, 'writeStackOverride failed');
+        }
       }
     } else {
       logger.info({ stackId }, 'Standalone stack — resource_limits stored but no compose override written');
