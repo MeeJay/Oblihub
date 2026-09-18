@@ -30,7 +30,10 @@ function formatMemoryBytes(bytes: number): string {
 
 function buildServiceOverride(limits: ResourceLimits): Record<string, unknown> {
   const service: Record<string, unknown> = {};
-  const resources: { limits?: Record<string, unknown> } = {};
+  const resources: {
+    limits?: Record<string, unknown>;
+    reservations?: { devices?: Array<Record<string, unknown>> };
+  } = {};
   const limitsBlock: Record<string, unknown> = {};
 
   if (limits.cpuPercent != null) {
@@ -45,23 +48,47 @@ function buildServiceOverride(limits: ResourceLimits): Record<string, unknown> {
 
   if (Object.keys(limitsBlock).length > 0) {
     resources.limits = limitsBlock;
-    service.deploy = { resources };
   }
 
   const shares = limits.cpuShares != null ? limits.cpuShares : defaultCpuShares(limits.priority);
   service.cpu_shares = shares;
 
-  // NVIDIA_VISIBLE_DEVICES semantics:
-  //   null   → 'all'   (default; expose every GPU the runtime knows about)
-  //   []     → 'none'  (deliberately hide all GPUs from the container)
-  //   [...]  → csv     (expose only the listed indices, e.g. "0,1")
+  // GPU visibility — TWO channels because nvidia-container-toolkit resolves them differently
+  // depending on how the base compose declares GPUs:
+  //
+  //  - `NVIDIA_VISIBLE_DEVICES` env — the LEGACY channel, honored by nvidia-container-runtime
+  //    when the container is launched without a CDI/`--gpus` request. If the base compose uses
+  //    ONLY `runtime: nvidia` + this env, our override wins.
+  //
+  //  - `deploy.resources.reservations.devices[].device_ids` — the CDI channel (docker >= 19.03
+  //    with modern nvidia-container-toolkit). If the base compose declares any `devices` block
+  //    (even `count: all`), the runtime IGNORES `NVIDIA_VISIBLE_DEVICES` entirely and only the
+  //    CDI request matters. Without overriding this array here, the base's `count: all` wins
+  //    and the container sees every GPU — the classic "I set NVIDIA_VISIBLE_DEVICES=0, why do
+  //    I still see both GPUs" bug.
+  //
+  // We emit BOTH so we're correct regardless of which style the operator's base compose uses.
+  // Compose arrays are REPLACED (not merged) — our `devices` block wholly overrides the base's.
+  //
+  // Semantics:
+  //   null   → 'all'    (env) + no deploy.devices override (base decides — usually count:all)
+  //   []     → 'none'   (env) + deploy.devices=[] (revoke ALL GPUs even from CDI-style bases)
+  //   [...]  → csv      (env) + deploy.devices=[{driver:nvidia, device_ids:[...], caps:[gpu]}]
   const env: Record<string, string> = {};
   if (limits.visibleGpuIds == null) {
     env.NVIDIA_VISIBLE_DEVICES = 'all';
   } else if (limits.visibleGpuIds.length === 0) {
     env.NVIDIA_VISIBLE_DEVICES = 'none';
+    resources.reservations = { devices: [] };
   } else {
     env.NVIDIA_VISIBLE_DEVICES = limits.visibleGpuIds.join(',');
+    resources.reservations = {
+      devices: [{
+        driver: 'nvidia',
+        device_ids: [...limits.visibleGpuIds],
+        capabilities: ['gpu'],
+      }],
+    };
   }
   service.environment = env;
 
@@ -69,6 +96,10 @@ function buildServiceOverride(limits: ResourceLimits): Record<string, unknown> {
   // NVIDIA_VISIBLE_DEVICES=none is harmless but noisy; skipping it keeps the override minimal.
   if (limits.visibleGpuIds == null || limits.visibleGpuIds.length > 0) {
     service.runtime = 'nvidia';
+  }
+
+  if (Object.keys(resources).length > 0) {
+    service.deploy = { resources };
   }
 
   return service;
