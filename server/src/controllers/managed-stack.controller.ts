@@ -4,6 +4,7 @@ import { composeService } from '../services/compose.service';
 import { dockerService } from '../services/docker.service';
 import { sourceManagerService } from '../services/sourceManager.service';
 import { volumeMigrationService } from '../services/volumeMigration.service';
+import { stackVolumesService } from '../services/stackVolumes.service';
 import { config } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
@@ -122,17 +123,45 @@ export const managedStackController = {
       if (await isSelfStack(stack.composeProject)) throw new AppError(403, 'Cannot delete Oblihub\'s own stack');
       // `?volumes=true` → also wipe the named volumes (DESTRUCTIVE: deletes all data the stack
       // wrote to its volumes). Defaults to false so an accidental click doesn't nuke a database.
-      const removeVolumes = req.query.volumes === 'true';
+      let removeVolumes = req.query.volumes === 'true';
+      // `?forEngine=<id|null>` — sent by a discovered stack's page, which links managed stacks by
+      // project name only. Several engines can run a project with the same name: wipe volumes only
+      // when this managed stack runs on that very daemon (null and 'local'-type rows are the same).
+      if (removeVolumes && typeof req.query.forEngine === 'string') {
+        const forEngine = req.query.forEngine === 'null' ? null : Number(req.query.forEngine);
+        const ownEngine = stack.engineId ?? null;
+        const sameDaemon = forEngine === ownEngine
+          || ((forEngine === null || Number.isInteger(forEngine))
+            && await stackVolumesService.isLocalEngine(ownEngine) && await stackVolumesService.isLocalEngine(forEngine));
+        if (!sameDaemon) removeVolumes = false;
+      }
+      const hasVolumeData = stack.volumePlacements.some(p => p.mode === 'bind');
+      let downResult: Awaited<ReturnType<typeof composeService.down>> | null = null;
       if (stack.status === 'deployed') {
-        await composeService.down(stack.composeProject, removeVolumes, stack.engineId);
+        downResult = await composeService.down(stack.composeProject, removeVolumes, stack.engineId);
       } else if (removeVolumes) {
         // Not deployed but operator asked for volume wipe → run `down -v` anyway to GC any
         // volumes left from a previous deploy.
-        await composeService.down(stack.composeProject, true, stack.engineId);
+        downResult = await composeService.down(stack.composeProject, true, stack.engineId);
+      }
+      // Volume data under <stacksDir>/.volumes survives `down -v` (Docker only drops the volume
+      // reference) — delete it ourselves, but only once the containers and volumes are gone.
+      const keptVolumeData = removeVolumes ? [] as string[] : stack.volumePlacements.flatMap(p => p.hostPath ? [p.hostPath] : []);
+      if (removeVolumes && hasVolumeData) {
+        if (!downResult || downResult.exitCode !== 0) {
+          throw new AppError(500, `docker compose down -v failed — nothing was deleted and the volume data is intact. ${(downResult?.stderr || '').slice(0, 500)}`);
+        }
+        // Containers are gone whatever purgeData does next.
+        await managedStackService.setStatus(id, 'stopped');
+        const purge = await stackVolumesService.purgeData(id);
+        if (purge.kept.length > 0) {
+          // Deleting the row would drop the only record of those folders — keep the stack.
+          throw new AppError(409, `Containers removed, but the stack was NOT deleted: these data folders are still used by another container or volume and were kept: ${purge.kept.join(', ')}. Free them, then delete again.`);
+        }
       }
       composeService.removeStackFiles(stack.composeProject);
       await managedStackService.delete(id);
-      res.json({ success: true, data: { removedVolumes: removeVolumes } });
+      res.json({ success: true, data: { removedVolumes: removeVolumes, keptVolumeData } });
     } catch (err) { next(err); }
   },
 
@@ -240,7 +269,10 @@ export const managedStackController = {
         throw new AppError(500, result.stderr || 'Down failed');
       }
       await managedStackService.setStatus(id, 'stopped');
-      res.json({ success: true });
+      // `down -v` only drops the Docker reference of volumes stored under .volumes — delete
+      // their folders too so the next deploy really starts from empty volumes.
+      const volumeData = removeVolumes ? await stackVolumesService.purgeData(id) : { removed: [], kept: [] };
+      res.json({ success: true, data: { removedVolumeData: volumeData.removed, keptVolumeData: volumeData.kept } });
     } catch (err) { next(err); }
   },
 
@@ -252,7 +284,7 @@ export const managedStackController = {
       if (!stack) throw new AppError(404, 'Managed stack not found');
 
       // Ensure files exist on disk
-      composeService.writeStackFiles(stack.composeProject, stack.composeContent, stack.envContent);
+      await composeService.writeStackFiles(stack.composeProject, stack.composeContent, stack.envContent);
       const result = await composeService.pull(stack.composeProject, stack.engineId);
       res.json({ success: true, data: { exitCode: result.exitCode, output: result.stdout + result.stderr } });
     } catch (err) { next(err); }
@@ -547,10 +579,10 @@ export const managedStackController = {
   },
 
   /**
-   * Return Oblihub-generated files that live on disk alongside the operator's compose — right
-   * now that's just `docker-compose.override.yml`, but this is the natural place to surface
-   * anything else we auto-write in the future. Read-only. Exists so the operator can see WHY
-   * a service is (or isn't) on the proxy network without having to SSH into the server.
+   * Return Oblihub-generated files that live on disk alongside the operator's compose —
+   * `docker-compose.override.yml` (proxy network) and `.oblihub/docker-compose.volumes.yml`
+   * (volumes stored under .volumes). Read-only. Exists so the operator can see WHY a service is
+   * (or isn't) on the proxy network, or where its volumes live, without SSH-ing into the server.
    */
   async getGeneratedFiles(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -564,8 +596,11 @@ export const managedStackController = {
       const baseDir = pathMod.join(stacksDir, stack.composeProject);
       const composeDir = stack.composePath ? pathMod.join(baseDir, pathMod.dirname(stack.composePath)) : baseDir;
       const generated: Array<{ name: string; path: string; content: string | null; exists: boolean }> = [];
-      for (const name of ['docker-compose.override.yml']) {
-        const full = pathMod.join(composeDir, name);
+      const candidates = [
+        { name: 'docker-compose.override.yml', full: pathMod.join(composeDir, 'docker-compose.override.yml') },
+        { name: 'docker-compose.volumes.yml', full: pathMod.join(baseDir, stackVolumesService.overrideRelativePath()) },
+      ];
+      for (const { name, full } of candidates) {
         const exists = fs.existsSync(full);
         generated.push({
           name,
@@ -651,6 +686,20 @@ export const managedStackController = {
       }
 
       const { db } = await import('../db');
+
+      if (stack.volumePlacements.some(p => p.mode === 'bind')) {
+        // The data lives in host folders on this server. Between the implicit local engine and a
+        // 'local'-type engine row (same daemon) only the DB reference changes; anything else would
+        // leave the data behind — neither the tar-stream migration nor a re-target carries it.
+        if (await stackVolumesService.isLocalEngine(sourceEngineId) && await stackVolumesService.isLocalEngine(targetEngineId)) {
+          await db('managed_stacks').where({ id }).update({ engine_id: targetEngineId, updated_at: new Date() });
+          const updated = await managedStackService.getById(id);
+          // engineOnly: nothing was stopped, migrated or redeployed, whatever the strategy asked.
+          res.json({ success: true, data: { stack: updated, migrated: [], skippedBinds: [], engineOnly: true } });
+          return;
+        }
+        throw new AppError(409, 'This stack stores its volume data on this server (.volumes). Engine migration is not supported for it.');
+      }
       const { setComposeServiceIO } = await import('../services/compose.service');
       void setComposeServiceIO;
 

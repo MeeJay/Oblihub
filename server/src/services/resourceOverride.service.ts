@@ -7,6 +7,7 @@ import yaml from 'js-yaml';
 import type { ResourceLimits } from '@oblihub/shared';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { stackVolumesService } from './stackVolumes.service';
 
 const execFileP = promisify(execFile);
 
@@ -184,16 +185,29 @@ export async function applyStackOverride(
     hasOverride = true;
   } catch { /* no override — plain up */ }
 
-  const args = ['compose', '-f', 'docker-compose.yml'];
+  // Explicit -p: callers pass the stack's compose project label. Without it, a top-level `name:`
+  // or COMPOSE_PROJECT_NAME in the stack's .env would address ANOTHER project — duplicate
+  // containers, and for stacks with volumes in .volumes, a second volume on the same data folder.
+  const args = ['compose', '-p', stackFolderName, '-f', 'docker-compose.yml'];
   if (hasOverride) args.push('-f', OVERRIDE_FILENAME);
-  args.push('up', '-d');
 
+  let cleanupVolumes = () => {};
   try {
-    const { stdout, stderr } = await execFileP('docker', args, { cwd: dir, timeout: 60_000 });
+    // Managed stacks with volumes under <stacksDir>/.volumes: without this override, `up`
+    // would see a different volume config than the one the volume was created with.
+    const volumeFiles = await stackVolumesService.prepareComposeFilesForFolder(stackFolderName, 'up');
+    cleanupVolumes = volumeFiles.cleanup;
+    args.push(...volumeFiles.args, 'up', '-d');
+    const pending = execFileP('docker', args, { cwd: dir, timeout: 60_000 });
+    // Close stdin so a Compose prompt answers "no" instead of blocking until the timeout.
+    pending.child.stdin?.end();
+    const { stdout, stderr } = await pending;
     return { ok: true, stdout, stderr };
   } catch (err: unknown) {
     const e = err as { stdout?: string; stderr?: string; message?: string };
     logger.warn({ stackFolderName, err: e?.message }, 'docker compose up failed');
     return { ok: false, stdout: e?.stdout || '', stderr: e?.stderr || e?.message || '' };
+  } finally {
+    cleanupVolumes();
   }
 }

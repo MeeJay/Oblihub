@@ -8,6 +8,8 @@ import { SOCKET_EVENTS } from '@oblihub/shared';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { dockerService } from './docker.service';
+import { stackVolumesService, type PreparedComposeFiles } from './stackVolumes.service';
+import { isSafeStackFolder } from '../utils/composeProject';
 import { db } from '../db';
 
 interface ComposeResult {
@@ -29,6 +31,9 @@ function ensureStacksDir(): void {
 }
 
 function getStackDir(projectName: string): string {
+  // An empty/malformed project would resolve to the stacks dir itself (or outside it): a
+  // removeStackFiles() would then wipe every stack, including the `.volumes` data folder.
+  if (!isSafeStackFolder(projectName)) throw new Error(`Invalid compose project name "${projectName}"`);
   return path.join(config.stacksDir, projectName);
 }
 
@@ -78,6 +83,10 @@ export const composeService = {
 
   /** Remove stack files from disk */
   removeStackFiles(projectName: string): void {
+    if (!isSafeStackFolder(projectName)) {
+      logger.warn({ projectName }, 'Refusing to remove stack files: invalid compose project name');
+      return;
+    }
     const stackDir = getStackDir(projectName);
     if (fs.existsSync(stackDir)) {
       fs.rmSync(stackDir, { recursive: true, force: true });
@@ -299,6 +308,27 @@ export const composeService = {
     const composeFileArgs = includeOverride
       ? ['-f', composeFileArg, '-f', 'docker-compose.override.yml']
       : ['-f', composeFileArg];
+
+    // Volumes stored under <stacksDir>/.volumes (new stacks only): the override must ride along
+    // on EVERY command, and container-creating verbs are refused when they could detach data.
+    const volumeLogLines: string[] = [];
+    let volumeFiles: PreparedComposeFiles;
+    try {
+      volumeFiles = await stackVolumesService.prepareComposeFiles({
+        projectName,
+        engineId,
+        verb: args[0] ?? '',
+        log: (line) => volumeLogLines.push(line),
+      });
+      composeFileArgs.push(...volumeFiles.args);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error({ projectName, engineId, err: message }, 'Compose command refused by volume placement check');
+      _io?.emit(SOCKET_EVENTS.COMPOSE_STARTED, { projectName, cmd: `docker compose ${args.join(' ')}` });
+      _io?.emit(SOCKET_EVENTS.COMPOSE_LOG, { projectName, stream: 'stderr', chunk: `${message}\n` });
+      _io?.emit(SOCKET_EVENTS.COMPOSE_FINISHED, { projectName, exitCode: 1, durationMs: 0 });
+      return { exitCode: 1, stdout: '', stderr: message };
+    }
     const cmdString = `docker compose -p "${projectName}" ${composeFileArgs.join(' ')} ${args.join(' ')}`;
 
     let envInjection: { env: Record<string, string>; cleanup: () => void };
@@ -307,6 +337,7 @@ export const composeService = {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.warn({ projectName, engineId, err: message }, 'Compose engine env resolution failed');
+      volumeFiles.cleanup();
       _io?.emit(SOCKET_EVENTS.COMPOSE_FINISHED, { projectName, exitCode: 1, durationMs: 0 });
       return { exitCode: 1, stdout: '', stderr: message };
     }
@@ -353,15 +384,23 @@ export const composeService = {
         childEnv.DOCKER_CONFIG = registryAuth.dockerConfigDir;
       }
 
+      // stdin = /dev/null: any Compose prompt (e.g. "Volume … exists but doesn't match
+      // configuration. Recreate (data will be lost)?") reads EOF and gets the safe default "no"
+      // instead of hanging forever on an open pipe. Never pass --yes.
       const child = spawn('docker', spawnArgs, {
         cwd: stackDir,
         env: childEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       activeProcesses.set(projectName, child);
       _io?.emit(SOCKET_EVENTS.COMPOSE_STARTED, { projectName, cmd: cmdString });
+      for (const line of volumeLogLines) {
+        _io?.emit(SOCKET_EVENTS.COMPOSE_LOG, { projectName, stream: 'stdout', chunk: `${line}\n` });
+      }
 
-      let stdoutBuf = '';
+      // [volumes] lines lead the output so they also land in the stack's "Deploy Output".
+      let stdoutBuf = volumeLogLines.map((line) => `${line}\n`).join('');
       let stderrBuf = '';
       // Cap retained buffer to 5 MB per stream so very long-running commands don't OOM the server.
       // Live output still streams to clients in real time; this only affects the final result blob.
@@ -398,6 +437,7 @@ export const composeService = {
         activeProcesses.delete(projectName);
         envInjection.cleanup();
         registryAuth.cleanup();
+        volumeFiles.cleanup();
         const message = err.message;
         _io?.emit(SOCKET_EVENTS.COMPOSE_FINISHED, { projectName, exitCode: 1, durationMs: Date.now() - startedAt });
         logger.warn({ projectName, err: message }, 'Compose spawn error');
@@ -409,9 +449,17 @@ export const composeService = {
         activeProcesses.delete(projectName);
         envInjection.cleanup();
         registryAuth.cleanup();
+        volumeFiles.cleanup();
         const killedByCancel = (child as ChildProcess & { _cancelled?: boolean })._cancelled === true;
         const exitCode = killedByCancel ? 130 : (code ?? (signal ? 1 : 0));
         const durationMs = Date.now() - startedAt;
+        if (/exists but doesn't match configuration/i.test(stdoutBuf + stderrBuf)) {
+          // Compose kept the existing volume (the prompt got "no" from the closed stdin).
+          const warning = '[volumes] Compose kept an existing volume whose configuration differs from the compose file (answered "no" to recreating it — data untouched).\n';
+          stdoutBuf += warning;
+          _io?.emit(SOCKET_EVENTS.COMPOSE_LOG, { projectName, stream: 'stdout', chunk: warning });
+          logger.warn({ projectName }, 'Compose reported a volume whose configuration differs from the compose file — existing volume kept');
+        }
         _io?.emit(SOCKET_EVENTS.COMPOSE_FINISHED, { projectName, exitCode, durationMs });
         logger.info({ projectName, exitCode, signal, durationMs, cancelled: killedByCancel }, 'Compose command finished');
         resolve({

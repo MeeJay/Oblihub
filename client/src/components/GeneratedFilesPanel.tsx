@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FileCog, ChevronDown, ChevronRight, RefreshCw, Layers } from 'lucide-react';
+import { FileCog, ChevronDown, ChevronRight, RefreshCw, Layers, HardDrive } from 'lucide-react';
 import { managedStacksApi } from '@/api/managed-stacks.api';
 import type { ManagedStack } from '@oblihub/shared';
 
@@ -15,6 +15,7 @@ export function GeneratedFilesPanel({ stack }: { stack: ManagedStack }) {
   const [effective, setEffective] = useState<{ config: string | null; error: string | null } | null>(null);
   const [showOverride, setShowOverride] = useState(false);
   const [showEffective, setShowEffective] = useState(false);
+  const [showVolumes, setShowVolumes] = useState(false);
   const [loading, setLoading] = useState(true);
   const [effectiveLoading, setEffectiveLoading] = useState(false);
 
@@ -25,7 +26,8 @@ export function GeneratedFilesPanel({ stack }: { stack: ManagedStack }) {
       .catch(() => setFiles([]))
       .finally(() => setLoading(false));
   };
-  useEffect(load, [stack.id]);
+  // Reload when a deploy finishes too — the volumes override is only written at deploy time.
+  useEffect(load, [stack.id, stack.status]);
 
   const loadEffective = () => {
     setEffectiveLoading(true);
@@ -36,6 +38,8 @@ export function GeneratedFilesPanel({ stack }: { stack: ManagedStack }) {
   };
 
   const override = files.find(f => f.name === 'docker-compose.override.yml');
+  const volumesOverride = files.find(f => f.name === 'docker-compose.volumes.yml');
+  const boundVolumes = stack.volumePlacements.filter(p => p.hostPath).length;
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary overflow-hidden">
@@ -74,6 +78,55 @@ export function GeneratedFilesPanel({ stack }: { stack: ManagedStack }) {
                   <code className="bg-bg-tertiary px-1 rounded mx-1">networks: proxy</code>
                   (Oblihub steps aside), or no proxy_host targets any service in this stack.
                 </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Volume storage */}
+        <div className="border-t border-border pt-3">
+          <button
+            onClick={() => setShowVolumes(v => !v)}
+            className="flex items-center gap-2 text-xs text-text-secondary hover:text-text-primary"
+          >
+            {showVolumes ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <HardDrive size={12} />
+            <span>Volume storage</span>
+            <span className="text-[10px] uppercase tracking-wider text-text-muted">
+              {boundVolumes > 0 ? `stacks dir (.volumes) · ${boundVolumes}` : stack.volumesInStacksDir && stack.volumePlacements.length === 0 ? 'decided at deploy' : 'docker default'}
+            </span>
+          </button>
+          {showVolumes && (
+            <div className="mt-2 space-y-2">
+              {!stack.volumesInStacksDir ? (
+                <p className="text-xs text-text-muted italic">
+                  This stack was created before volumes moved to the stacks dir — its named volumes stay in
+                  Docker's default location.
+                </p>
+              ) : stack.volumePlacements.length === 0 ? (
+                <p className="text-xs text-text-muted italic">
+                  Named volumes will be created under
+                  <code className="bg-bg-tertiary px-1 rounded mx-1">.volumes/{stack.composeProject}/</code>
+                  in the stacks dir at the next deploy — local engine only, and only when the stacks dir is a
+                  host folder (otherwise they stay in Docker's default location; the deploy log says why).
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {stack.volumePlacements.map(p => (
+                    <li key={p.volume} className="text-xs flex items-center gap-2">
+                      <code className="font-mono text-text-primary">{p.volume}</code>
+                      <span className="text-text-muted">→</span>
+                      {p.hostPath
+                        ? <code className="font-mono text-text-secondary break-all">{p.hostPath}</code>
+                        : <span className="text-text-muted italic">Docker default location (volume existed before the first deploy)</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {volumesOverride?.exists && volumesOverride.content && (
+                <pre className="max-h-64 overflow-auto rounded bg-bg-primary border border-border p-3 font-mono text-[11px] text-text-secondary leading-relaxed">
+{volumesOverride.content}
+                </pre>
               )}
             </div>
           )}

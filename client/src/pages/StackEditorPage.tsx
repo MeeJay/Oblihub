@@ -15,6 +15,7 @@ import { RestartPolicyControl } from '@/components/RestartPolicyControl';
 import yaml from 'js-yaml';
 import { SOCKET_EVENTS, type ManagedStack, type ManagedStackStatus } from '@oblihub/shared';
 import toast from 'react-hot-toast';
+import { apiErrorMessage } from '@/utils/apiError';
 
 const STATUS_STYLES: Record<ManagedStackStatus, string> = {
   draft: 'bg-bg-tertiary text-text-muted',
@@ -269,10 +270,11 @@ export function StackEditorPage() {
     loading: boolean;
   }>(null);
 
-  const handleSave = async () => {
-    if (!name.trim()) { toast.error('Stack name is required'); return; }
-    if (!composeContent.trim()) { toast.error('Compose content is required'); return; }
-    if (isNew && !isAdmin && !selectedTeamId) { toast.error('Select a team for this stack'); return; }
+  /** Returns true only when the stack was actually saved — callers must not deploy otherwise. */
+  const handleSave = async (): Promise<boolean> => {
+    if (!name.trim()) { toast.error('Stack name is required'); return false; }
+    if (!composeContent.trim()) { toast.error('Compose content is required'); return false; }
+    if (isNew && !isAdmin && !selectedTeamId) { toast.error('Select a team for this stack'); return false; }
 
     // If the operator changed the target engine on a stack that's actually deployed, surface
     // the migration modal before doing anything destructive. The 3 choices map to different
@@ -295,10 +297,10 @@ export function StackEditorPage() {
           loading: false,
         });
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to inspect volumes');
+        toast.error(apiErrorMessage(err, 'Failed to inspect volumes'));
         setEngineMigration(null);
       }
-      return;
+      return false;
     }
 
     setSaving(true);
@@ -315,9 +317,10 @@ export function StackEditorPage() {
         toast.success('Stack saved');
       }
       setDirty(false);
+      return true;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Save failed';
-      toast.error(msg);
+      toast.error(apiErrorMessage(err, 'Save failed'));
+      return false;
     }
     finally { setSaving(false); }
   };
@@ -341,12 +344,13 @@ export function StackEditorPage() {
       setStack(result.stack);
       setSelectedEngineId(result.stack.engineId ?? null);
       setDirty(false);
-      const stratLabel = strategy === 'just-save' ? 'saved (old containers orphaned)'
+      const stratLabel = result.engineOnly ? 'same local daemon — engine reference updated, nothing redeployed'
+        : strategy === 'just-save' ? 'saved (old containers orphaned)'
         : strategy === 'stop-and-deploy' ? 'stopped on old engine + redeployed'
         : `migrated ${result.migrated.length} volume(s) + redeployed`;
       toast.success(`Engine migration: ${stratLabel}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Migration failed');
+      toast.error(apiErrorMessage(err, 'Migration failed'));
     } finally { setSaving(false); }
   };
 
@@ -361,8 +365,8 @@ export function StackEditorPage() {
       ? '⚠️ You are about to redeploy OBLIHUB ITSELF.\n\nIf the compose is invalid, you will lose access to this interface.\n\nAre you absolutely sure?'
       : 'Deploy this stack? This will create/recreate containers.';
     if (!confirm(confirmMsg)) return;
-    // Save first if dirty
-    if (dirty) await handleSave();
+    // Save first if dirty — and don't deploy the old version when the save was refused.
+    if (dirty && !(await handleSave())) return;
     try {
       await managedStacksApi.deploy(stack.id);
       toast.success('Deploying...');
@@ -385,11 +389,26 @@ export function StackEditorPage() {
   const handleDown = async () => {
     if (!stack) return;
     if (!confirm('This will stop and remove all containers for this stack. Continue?')) return;
+    // Down is routine and keeps data by default: wiping the volumes needs the stack name typed.
+    const dataPaths = stack.volumePlacements.flatMap(p => p.hostPath ? [p.hostPath] : []);
+    const typed = prompt(
+      `Volumes are KEPT by default — just press OK.\n\n` +
+      `To also WIPE all data the stack wrote (the next deploy starts from empty volumes), type the stack name "${stack.name}"` +
+      (dataPaths.length > 0 ? `:\n  ${dataPaths.join('\n  ')}` : '.'),
+      '',
+    );
+    if (typed === null) return;
+    const wipeVolumes = typed.trim() === stack.name;
+    if (typed.trim() && !wipeVolumes) { toast.error('Stack name did not match — nothing was done'); return; }
     try {
-      await managedStacksApi.down(stack.id);
-      toast.success('Stack downed');
+      const result = await managedStacksApi.down(stack.id, wipeVolumes);
+      if (result.keptVolumeData.length > 0) {
+        toast.error(`Stack downed, but these data folders are still used elsewhere and were kept: ${result.keptVolumeData.join(', ')}`);
+      } else {
+        toast.success(wipeVolumes ? 'Stack downed, volumes removed' : 'Stack downed');
+      }
       load();
-    } catch { toast.error('Down failed'); }
+    } catch (err) { toast.error(apiErrorMessage(err, 'Down failed')); }
   };
 
   const handleDelete = async () => {
@@ -397,22 +416,25 @@ export function StackEditorPage() {
     if (!confirm(`Delete "${stack.name}"?\n\nThis stops & removes its containers if deployed.`)) return;
     // Second prompt isolates the destructive volume wipe — answering by mistake on the first
     // confirm never costs you data.
+    const dataPaths = stack.volumePlacements.flatMap(p => p.hostPath ? [p.hostPath] : []);
     const wipeVolumes = confirm(
       `Also remove "${stack.name}"'s volumes ?\n\n` +
       `[OK]     = WIPE all data the stack wrote (databases, uploads, caches…).\n` +
-      `[Cancel] = keep volumes orphaned on the engine (you can ` +
-      `clean them up later from the Volumes page).`
+      (dataPaths.length > 0
+        ? `[Cancel] = keep the data on the server, in:\n  ${dataPaths.join('\n  ')}`
+        : `[Cancel] = keep volumes orphaned on the engine (you can ` +
+          `clean them up later from the Volumes page).`)
     );
     try {
       await managedStacksApi.delete(stack.id, wipeVolumes);
       toast.success(wipeVolumes ? 'Stack purged (containers + volumes)' : 'Stack deleted (volumes preserved)');
       navigate('/managed-stacks');
-    } catch { toast.error('Delete failed'); }
+    } catch (err) { toast.error(apiErrorMessage(err, 'Delete failed')); load(); }
   };
 
   const handleRedeploy = async () => {
     if (!stack) return;
-    if (dirty) await handleSave();
+    if (dirty && !(await handleSave())) return;
     try {
       await managedStacksApi.redeploy(stack.id);
       toast.success('Redeploying (pull + up)...');

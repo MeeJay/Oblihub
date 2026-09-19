@@ -7,6 +7,7 @@ import { db } from '../db';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
+import { isSafeStackFolder } from '../utils/composeProject';
 import { managedStackService } from './managed-stack.service';
 import type { Server as SocketIOServer } from 'socket.io';
 import { SOCKET_EVENTS } from '@oblihub/shared';
@@ -49,6 +50,9 @@ const PRESERVE_DIRS = new Set(['.oblihub']);
 const COMPOSE_CANDIDATES = ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml'];
 
 function stackDir(composeProject: string): string {
+  // An empty project would resolve to the stacks dir itself — a wipe would then take every
+  // stack and the `.volumes` data folder with it.
+  if (!isSafeStackFolder(composeProject)) throw new AppError(400, `Invalid compose project name "${composeProject}"`);
   return path.join(config.stacksDir, composeProject);
 }
 

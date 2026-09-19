@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { dockerService } from '../services/docker.service';
 import { engineService } from '../services/engine.service';
+import { stackVolumesService } from '../services/stackVolumes.service';
 import { config } from '../config';
 import { AppError } from '../middleware/errorHandler';
 import type { DockerImage, DockerNetwork, DockerVolume } from '@oblihub/shared';
@@ -224,6 +225,7 @@ export const dockerController = {
             composeProject: labels['com.docker.compose.project'] || null,
             created: (v as unknown as { CreatedAt?: string }).CreatedAt || '',
             usageSize: (v as unknown as { UsageData?: { Size?: number } }).UsageData?.Size ?? null,
+            bindDevice: stackVolumesService.bindDeviceOf(v),
             engineId: label.id,
             engineName: label.name,
           };

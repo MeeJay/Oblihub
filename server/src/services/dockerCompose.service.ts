@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { stackVolumesService } from './stackVolumes.service';
 
 /**
  * Thin `docker compose` CLI wrappers used by the priority watchdog to yield or resume
@@ -23,8 +24,11 @@ async function fileExists(p: string): Promise<boolean> {
   try { await fs.stat(p); return true; } catch { return false; }
 }
 
-async function buildComposeArgs(stackDir: string): Promise<string[]> {
-  const args = ['compose', '-f', 'docker-compose.yml'];
+async function buildComposeArgs(stackFolderName: string, stackDir: string): Promise<string[]> {
+  // Explicit -p: callers pass the stack's compose project label. Without it, a top-level `name:`
+  // or COMPOSE_PROJECT_NAME in the stack's .env would address ANOTHER project — duplicate
+  // containers, and for stacks with volumes in .volumes, a second volume on the same data folder.
+  const args = ['compose', '-p', stackFolderName, '-f', 'docker-compose.yml'];
   if (await fileExists(path.join(stackDir, OBLIHUB_OVERRIDE))) {
     args.push('-f', OBLIHUB_OVERRIDE);
   }
@@ -36,13 +40,23 @@ async function runCompose(
   verb: string[],
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   const dir = path.join(config.stacksDir, stackFolderName);
-  const args = [...(await buildComposeArgs(dir)), ...verb];
+  let cleanupVolumes = () => {};
   try {
-    const { stdout, stderr } = await execFileP('docker', args, { cwd: dir, timeout: COMPOSE_TIMEOUT_MS });
+    // Managed stacks with volumes under <stacksDir>/.volumes: same override as every other
+    // runner, and the same refusal when the command could detach their data.
+    const volumeFiles = await stackVolumesService.prepareComposeFilesForFolder(stackFolderName, verb[0] ?? '');
+    cleanupVolumes = volumeFiles.cleanup;
+    const args = [...(await buildComposeArgs(stackFolderName, dir)), ...volumeFiles.args, ...verb];
+    const pending = execFileP('docker', args, { cwd: dir, timeout: COMPOSE_TIMEOUT_MS });
+    // Close stdin so a Compose prompt answers "no" instead of blocking until the timeout.
+    pending.child.stdin?.end();
+    const { stdout, stderr } = await pending;
     return { ok: true, stdout, stderr };
   } catch (err: unknown) {
     const e = err as { stdout?: string; stderr?: string; message?: string };
     return { ok: false, stdout: e?.stdout || '', stderr: e?.stderr || e?.message || '' };
+  } finally {
+    cleanupVolumes();
   }
 }
 

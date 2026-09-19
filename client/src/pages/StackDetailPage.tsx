@@ -14,6 +14,7 @@ import { NotificationBindingsPanel } from '@/components/NotificationBindingsPane
 import { StackResourcesTab } from '@/components/StackResourcesTab';
 import type { Stack, Container, UpdateHistoryEntry, ManagedStack, ProxyHost } from '@oblihub/shared';
 import toast from 'react-hot-toast';
+import { apiErrorMessage } from '@/utils/apiError';
 
 type PanelType = 'logs' | 'console' | 'inspect' | 'sleep';
 
@@ -270,16 +271,24 @@ export function StackDetailPage() {
                 const c = choice.trim().toLowerCase();
                 if (!['remove', 'delete', 'purge'].includes(c)) { toast.error('Invalid choice'); return; }
                 try {
+                  let keptVolumeData: string[] = [];
                   if (managedStack) {
-                    await managedStacksApi.delete(managedStack.id);
+                    // "purge" also wipes the managed stack's volumes (incl. .volumes folders). The
+                    // link above matches by project name only, so the server checks the managed
+                    // stack really runs on this stack's engine before wiping anything.
+                    ({ keptVolumeData } = await managedStacksApi.delete(managedStack.id, c === 'purge', stack.engineId));
                   }
                   await stacksApi.delete(stack.id, {
                     containers: c === 'delete' || c === 'purge',
                     volumes: c === 'purge',
                   });
-                  toast.success(c === 'remove' ? 'Stack removed from Oblihub' : c === 'delete' ? 'Stack & containers deleted' : 'Stack, containers & volumes purged');
+                  if (c === 'purge' && keptVolumeData.length > 0) {
+                    toast.success(`Stack & containers purged — volume data kept on the server in: ${keptVolumeData.join(', ')}`);
+                  } else {
+                    toast.success(c === 'remove' ? 'Stack removed from Oblihub' : c === 'delete' ? 'Stack & containers deleted' : 'Stack, containers & volumes purged');
+                  }
                   navigate('/');
-                } catch { toast.error('Failed to delete stack'); }
+                } catch (err) { toast.error(apiErrorMessage(err, 'Failed to delete stack')); }
               }}
               className="p-1.5 rounded-lg text-text-muted hover:text-status-down hover:bg-bg-hover"
               title="Delete stack"

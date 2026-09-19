@@ -53,7 +53,13 @@ export function VolumesPage() {
   };
 
   const handleRemove = async (vol: WithEngine<DockerVolume>) => {
-    if (!confirm(`Remove volume "${vol.name}" on ${vol.engineName}? This will delete all data in this volume!`)) return;
+    const warning = vol.bindDevice
+      ? `Remove volume "${vol.name}" on ${vol.engineName}?\n\nIt is bound to the host folder ${vol.bindDevice}: only the Docker reference is removed, the data in that folder is KEPT` +
+        (vol.bindDevice.includes('/.volumes/')
+          ? ` (a managed stack reattaches it on its next deploy — wipe it with that stack's Down or Delete + remove volumes).`
+          : ` — delete that folder by hand to free the space.`)
+      : `Remove volume "${vol.name}" on ${vol.engineName}? This will delete all data in this volume!`;
+    if (!confirm(warning)) return;
     try {
       await dockerApi.removeVolume(vol.name, true, vol.engineId ?? null);
       toast.success(`Volume ${vol.name} removed from ${vol.engineName}`);

@@ -6,6 +6,7 @@ import { stacksApi } from '@/api/stacks.api';
 import { enginesApi } from '@/api/engines.api';
 import type { ManagedStack, ManagedStackStatus, Stack, DockerEngine } from '@oblihub/shared';
 import toast from 'react-hot-toast';
+import { apiErrorMessage } from '@/utils/apiError';
 
 const STATUS_STYLES: Record<ManagedStackStatus, string> = {
   draft: 'bg-bg-tertiary text-text-muted',
@@ -121,17 +122,20 @@ export function ManagedStacksPage() {
     if (!confirm(`Delete "${s.name}"?\n\nThis stops & removes its containers if deployed.`)) return;
     // Second prompt for the destructive step — explicit so a typo on the first dialog never
     // accidentally wipes a database.
+    const dataPaths = s.volumePlacements.flatMap(p => p.hostPath ? [p.hostPath] : []);
     const wipeVolumes = confirm(
       `Also remove "${s.name}"'s volumes ?\n\n` +
       `[OK]     = WIPE all data the stack wrote (databases, uploads, caches…).\n` +
-      `[Cancel] = keep volumes orphaned on the engine (you can ` +
-      `clean them up later from the Volumes page).`
+      (dataPaths.length > 0
+        ? `[Cancel] = keep the data on the server, in:\n  ${dataPaths.join('\n  ')}`
+        : `[Cancel] = keep volumes orphaned on the engine (you can ` +
+          `clean them up later from the Volumes page).`)
     );
     try {
       await managedStacksApi.delete(s.id, wipeVolumes);
       toast.success(wipeVolumes ? `${s.name} purged (containers + volumes)` : `${s.name} deleted (volumes preserved)`);
       load();
-    } catch { toast.error('Delete failed'); }
+    } catch (err) { toast.error(apiErrorMessage(err, 'Delete failed')); load(); }
   };
 
   if (loading) return <div className="flex items-center justify-center h-full"><div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" /></div>;

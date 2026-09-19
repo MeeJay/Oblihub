@@ -269,8 +269,21 @@ export interface ManagedStack {
   // registries (Gitea, GHCR, GitLab, Quay, Harbor, …) without touching the host-level
   // ~/.docker/config.json. Passwords are stored AES-256-GCM encrypted server-side.
   registryCredentials: RegistryCredential[];
+  // Named volumes of stacks created after this feature live under `<stacks dir>/.volumes/<project>/`
+  // instead of Docker's default location. False for stacks that pre-date it (never touched).
+  volumesInStacksDir: boolean;
+  // Where each named volume actually lives — decided at the first deploy that sees it.
+  volumePlacements: ManagedStackVolumePlacement[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ManagedStackVolumePlacement {
+  volume: string;            // top-level compose volume key
+  // 'bind'  = data in a host folder under `<stacks dir>/.volumes/`
+  // 'plain' = Docker volume that already existed before the first deploy — left where it was
+  mode: 'bind' | 'plain';
+  hostPath: string | null;   // host folder when mode === 'bind'
 }
 
 /** Rollback timeline — one entry per successful deploy for a managed stack. */
@@ -322,6 +335,9 @@ export interface DockerVolume {
   composeProject: string | null;
   created: string;
   usageSize: number | null;
+  // Host folder when the volume is a local bind (e.g. a managed stack's `.volumes/` folder):
+  // removing such a volume only drops the Docker reference — the data stays in the folder.
+  bindDevice: string | null;
 }
 
 // ── Proxy types ──
